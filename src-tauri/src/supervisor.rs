@@ -67,6 +67,7 @@ struct Runtime {
 struct SupervisorInner {
     app: AppHandle,
     paths: AppPaths,
+    start_lock: Mutex<()>,
     runtime: Mutex<Option<Runtime>>,
     pending: Mutex<PendingRequests>,
     state: RwLock<EngineConnectionState>,
@@ -88,6 +89,7 @@ impl EngineSupervisor {
             inner: Arc::new(SupervisorInner {
                 app,
                 paths,
+                start_lock: Mutex::new(()),
                 runtime: Mutex::new(None),
                 pending: Mutex::new(HashMap::new()),
                 state: RwLock::new(EngineConnectionState::Offline),
@@ -134,6 +136,7 @@ impl EngineSupervisor {
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<(), SupervisorError>> + Send + '_>> {
         Box::pin(async move {
+            let _start_guard = self.inner.start_lock.lock().await;
             if self.inner.runtime.lock().await.is_some() {
                 return Ok(());
             }
