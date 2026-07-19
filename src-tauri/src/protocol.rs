@@ -137,4 +137,25 @@ mod tests {
         assert_eq!(envelope.message_type, IncomingType::Event);
         assert_eq!(envelope.event.as_deref(), Some("segment.persisted"));
     }
+
+    #[test]
+    fn shared_response_and_event_fixtures_deserialize() {
+        let response: IncomingEnvelope = serde_json::from_str(include_str!(
+            "../../protocol/fixtures/response.engine-get-state.json"
+        ))
+        .unwrap();
+        let event: IncomingEnvelope = serde_json::from_str(include_str!(
+            "../../protocol/fixtures/event.segment-persisted.json"
+        ))
+        .unwrap();
+        let request: serde_json::Value = serde_json::from_str(include_str!(
+            "../../protocol/fixtures/request.engine-get-state.json"
+        ))
+        .unwrap();
+
+        assert_eq!(response.message_type, IncomingType::Response);
+        assert_eq!(event.message_type, IncomingType::Event);
+        assert_eq!(request["command"], "engine.getState");
+        assert_eq!(request["protocolVersion"], PROTOCOL_VERSION);
+    }
 }
