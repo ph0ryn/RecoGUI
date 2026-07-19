@@ -1,12 +1,20 @@
 import { readFile, readdir } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 
+import addFormats from "ajv-formats";
+import Ajv2020 from "ajv/dist/2020.js";
+
 const root = resolve(import.meta.dirname, "..");
 const schema = JSON.parse(
   await readFile(resolve(root, "protocol/reco-protocol.schema.json"), "utf8"),
 );
 const fixtureDirectory = resolve(root, "protocol/fixtures");
 const fixtureNames = (await readdir(fixtureDirectory)).filter((name) => name.endsWith(".json"));
+const ajv = new Ajv2020({ allErrors: true, strict: true });
+
+addFormats(ajv);
+
+const validate = ajv.compile(schema);
 
 const fail = (fixtureName, message) => {
   throw new Error(`${basename(fixtureName)}: ${message}`);
@@ -15,22 +23,8 @@ const fail = (fixtureName, message) => {
 for (const fixtureName of fixtureNames) {
   const message = JSON.parse(await readFile(resolve(fixtureDirectory, fixtureName), "utf8"));
 
-  if (message.protocolVersion !== 1) {
-    fail(fixtureName, "protocolVersion must be 1");
-  }
-
-  if (!schema.$defs[message.type]) {
-    fail(fixtureName, `unsupported message type ${String(message.type)}`);
-  }
-
-  for (const field of ["requestId", "sessionId", "sequence", "payload"]) {
-    if (!(field in message)) {
-      fail(fixtureName, `missing ${field}`);
-    }
-  }
-
-  if (!Number.isInteger(message.sequence) || message.sequence < 1) {
-    fail(fixtureName, "sequence must be a positive integer");
+  if (!validate(message)) {
+    fail(fixtureName, ajv.errorsText(validate.errors, { separator: "; " }));
   }
 }
 

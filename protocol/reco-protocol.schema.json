@@ -32,6 +32,7 @@
       "additionalProperties": false
     },
     "request": {
+      "type": "object",
       "allOf": [
         { "$ref": "#/$defs/base" },
         {
@@ -46,6 +47,7 @@
       "unevaluatedProperties": false
     },
     "response": {
+      "type": "object",
       "allOf": [
         { "$ref": "#/$defs/base" },
         {
@@ -61,6 +63,7 @@
       "unevaluatedProperties": false
     },
     "event": {
+      "type": "object",
       "allOf": [
         { "$ref": "#/$defs/base" },
         {
