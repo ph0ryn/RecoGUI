@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="RecoGUI">
+  <rect width="64" height="64" rx="14" fill="#1fa987"/>
+  <path d="M18 49V15h15.5C42 15 47 19.4 47 26.4c0 5-2.7 8.7-7.4 10.3L48 49h-9.2l-7.1-10.9h-5V49H18Zm8.7-18.1h6c3.6 0 5.6-1.5 5.6-4.2 0-2.8-2-4.2-5.6-4.2h-6v8.4Z" fill="#fff"/>
+</svg>

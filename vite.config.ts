@@ -17,11 +17,12 @@ if (host !== undefined) {
     port: 1421,
     protocol: "ws",
   };
+
   server.host = host;
 }
 
 export default defineConfig({
-  plugins: [react()],
   clearScreen: false,
+  plugins: [react()],
   server,
 });
