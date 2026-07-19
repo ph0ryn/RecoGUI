@@ -781,16 +781,49 @@ function App() {
   }
 
   const appStyle = { "--history-width": `${paneWidth}px` } as CSSProperties;
+  const visibleSessionCount = orderedSessions.length;
 
   return (
     <main className="app-shell" style={appStyle}>
-      <aside aria-label="文字起こし履歴" className="history-pane">
-        <div className="history-toolbar">
+      <header className="topbar" data-tauri-drag-region>
+        <div className="topbar-left" data-tauri-drag-region>
           <div className="brand-row">
             <span aria-hidden="true" className="brand-mark">
-              R
+              <i />
+              <i />
+              <i />
             </span>
-            <strong>Reco</strong>
+            <strong>RECO</strong>
+          </div>
+          <span className="mode-label">LOCAL TRANSCRIBER</span>
+        </div>
+        <div className="topbar-right" data-tauri-drag-region>
+          <div className="machine-state">
+            <i aria-hidden="true" />
+            {fatalError ? "ENGINE OFFLINE" : "ENGINE READY"}
+          </div>
+          <label className="search-field">
+            <span aria-hidden="true">FIND</span>
+            <span className="sr-only">履歴を検索</span>
+            <input
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="TITLE / TRANSCRIPT"
+              type="search"
+              value={query}
+            />
+            {query && (
+              <button aria-label="検索をクリア" onClick={() => setQuery("")} type="button">
+                ×
+              </button>
+            )}
+          </label>
+        </div>
+      </header>
+      <aside aria-label="文字起こし履歴" className="history-pane">
+        <div className="history-toolbar">
+          <div className="history-heading">
+            <span>SESSIONS</span>
+            <span>{visibleSessionCount.toString().padStart(3, "0")}</span>
             <button
               aria-label="設定を開く"
               className="icon-button settings-button"
@@ -801,29 +834,6 @@ function App() {
               ⚙
             </button>
           </div>
-          <button
-            className="primary-button new-button"
-            onClick={() => openDialog("new")}
-            ref={newButtonRef}
-            type="button"
-          >
-            <span aria-hidden="true">＋</span> 新規文字起こし
-          </button>
-          <label className="search-field">
-            <span aria-hidden="true">⌕</span>
-            <span className="sr-only">履歴を検索</span>
-            <input
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="履歴を検索…"
-              type="search"
-              value={query}
-            />
-            {query && (
-              <button aria-label="検索をクリア" onClick={() => setQuery("")} type="button">
-                ×
-              </button>
-            )}
-          </label>
           <div className="filters">
             <label>
               <span className="sr-only">状態で絞り込み</span>
@@ -920,6 +930,18 @@ function App() {
               {isHistoryLoading ? "読み込み中…" : "さらに読み込む"}
             </button>
           )}
+        </div>
+        <button
+          aria-label="新規文字起こし"
+          className="record-button"
+          onClick={() => openDialog("new")}
+          ref={newButtonRef}
+          title="新規文字起こし"
+          type="button"
+        />
+        <div className="input-status">
+          <span>INPUT</span>
+          <strong>{selectedDeviceId ? "SELECTED MICROPHONE" : "DEFAULT MICROPHONE"}</strong>
         </div>
       </aside>
 
