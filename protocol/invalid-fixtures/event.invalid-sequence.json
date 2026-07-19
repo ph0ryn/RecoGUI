@@ -1,0 +1,9 @@
+{
+  "protocolVersion": 1,
+  "type": "event",
+  "requestId": null,
+  "sessionId": null,
+  "sequence": 0,
+  "event": "engine.heartbeat",
+  "payload": {}
+}

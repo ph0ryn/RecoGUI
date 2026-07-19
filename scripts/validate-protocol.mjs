@@ -9,7 +9,11 @@ const schema = JSON.parse(
   await readFile(resolve(root, "protocol/reco-protocol.schema.json"), "utf8"),
 );
 const fixtureDirectory = resolve(root, "protocol/fixtures");
+const invalidFixtureDirectory = resolve(root, "protocol/invalid-fixtures");
 const fixtureNames = (await readdir(fixtureDirectory)).filter((name) => name.endsWith(".json"));
+const invalidFixtureNames = (await readdir(invalidFixtureDirectory)).filter((name) =>
+  name.endsWith(".json"),
+);
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 
 addFormats(ajv);
@@ -28,4 +32,14 @@ for (const fixtureName of fixtureNames) {
   }
 }
 
-console.log(`Validated ${fixtureNames.length} protocol fixtures.`);
+for (const fixtureName of invalidFixtureNames) {
+  const message = JSON.parse(await readFile(resolve(invalidFixtureDirectory, fixtureName), "utf8"));
+
+  if (validate(message)) {
+    fail(fixtureName, "invalid fixture unexpectedly passed validation");
+  }
+}
+
+console.log(
+  `Validated ${fixtureNames.length} valid and ${invalidFixtureNames.length} invalid protocol fixtures.`,
+);

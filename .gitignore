@@ -11,6 +11,24 @@ node_modules
 dist
 dist-ssr
 *.local
+.rumdl_cache
+
+# Python
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.coverage
+src-python/dist
+
+# Rust
+src-tauri/target
+
+# Local application state
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
 
 # Editor directories and files
 .vscode/*
