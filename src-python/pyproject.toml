@@ -1,0 +1,87 @@
+[build-system]
+build-backend = "hatchling.build"
+requires = [ "hatchling" ]
+
+[project]
+name = "reco"
+version = "0.2.0"
+description = "Realtime speech-to-text CLI using Silero VAD and local MLX ASR"
+readme = "README.md"
+requires-python = ">=3.12"
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+  "huggingface-hub>=0.34.0",
+  "mlx-audio[stt]>=0.4.3",
+  "numpy>=2.4.5",
+  "onnxruntime>=1.23.2",
+  "rapidfuzz>=3.14.5",
+  "rich>=15.0.0",
+  "sounddevice>=0.5.5",
+  "soundfile>=0.13.1",
+  "soxr>=1.1.0",
+]
+[project.scripts]
+reco = "reco.main:main"
+reco-evaluate = "reco.evaluation:main"
+reco-engine = "reco.sidecar:main"
+
+[dependency-groups]
+dev = [
+  "pre-commit>=4.6.0",
+  "pyproject-fmt>=2.21.2",
+  "pytest>=9.0.3",
+  "ruff>=0.15.12",
+  "taskipy>=1.14.1",
+  "ty>=0.0.35",
+]
+
+[tool.hatch]
+[tool.hatch.build]
+artifacts = [ "src/reco/assets/*.onnx" ]
+targets.wheel.packages = [ "src/reco" ]
+
+[tool.hatch.build.targets.wheel.force-include]
+"SOURCE.md" = "reco/SOURCE.md"
+"THIRD_PARTY_NOTICES.md" = "reco/THIRD_PARTY_NOTICES.md"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+indent-width = 2
+[tool.ruff.format]
+indent-style = "space"
+quote-style = "double"
+line-ending = "lf"
+skip-magic-trailing-comma = false
+[tool.ruff.lint]
+select = [
+  "ANN", # flake8-annotations
+  "E",   # pycodestyle errors
+  "F",   # pyflakes
+  "I",   # import sort
+  "B",   # bugbear
+  "UP",  # pyupgrade
+  "SIM", # simplify
+  "RUF", # ruff-specific
+]
+ignore = [ "ANN401" ]
+
+[tool.pyproject-fmt]
+keep_full_version = true
+table_format = "long"
+
+[tool.taskipy]
+[tool.taskipy.tasks]
+init = "uv run pre-commit install -f"
+lint = "uv run ruff check ."
+format = "uv run ruff format ."
+typecheck = "uv run ty check"
+test = "uv run pytest"
+build = "uv build"
+verify = "uv run task lint && uv run task typecheck && uv run task test && uv run task build"
+fix = "uv run task lint --fix --unsafe-fixes && uv run task format && uv run task typecheck"
