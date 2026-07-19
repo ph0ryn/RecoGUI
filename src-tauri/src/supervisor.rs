@@ -269,6 +269,13 @@ impl EngineSupervisor {
         }
     }
 
+    pub async fn force_terminate(&self) {
+        *self.inner.intentionally_stopping.write().await = true;
+        if let Some(runtime) = self.inner.runtime.lock().await.as_ref() {
+            let _ = runtime.child.lock().await.kill().await;
+        }
+    }
+
     async fn read_stdout(&self, stdout: tokio::process::ChildStdout) {
         let mut reader = BufReader::new(stdout);
         let mut buffer = Vec::new();
