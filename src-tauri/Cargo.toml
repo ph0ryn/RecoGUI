@@ -1,9 +1,9 @@
 [package]
 name = "reco-gui"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-edition = "2021"
+description = "Native host for RecoGUI"
+authors = ["ph0ryn"]
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -19,7 +19,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "macros", "process", "sync", "time"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+rfd = "0.15"
