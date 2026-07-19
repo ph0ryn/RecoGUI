@@ -1,0 +1,9 @@
+{
+  "protocolVersion": 1,
+  "type": "request",
+  "requestId": "84f56d4a-e209-4fcb-904a-87ca9fa4662d",
+  "sessionId": null,
+  "sequence": 1,
+  "command": "engine.getState",
+  "payload": {}
+}

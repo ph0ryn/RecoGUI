@@ -7,7 +7,7 @@ export default defineConfig(
     ignores: ["dist/**"],
   },
   {
-    files: ["src/**/*.ts"],
+    files: ["src/**/*.{ts,tsx}"],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {
@@ -26,16 +26,16 @@ export default defineConfig(
           selector: "typeLike",
         },
         {
-          format: ["strictCamelCase", "UPPER_CASE"],
+          format: ["strictCamelCase", "StrictPascalCase", "UPPER_CASE"],
           modifiers: ["const"],
           selector: "variable",
         },
         {
-          format: ["strictCamelCase"],
+          format: ["strictCamelCase", "StrictPascalCase"],
           selector: "variable",
         },
         {
-          format: ["strictCamelCase"],
+          format: ["strictCamelCase", "StrictPascalCase"],
           selector: "function",
         },
         {

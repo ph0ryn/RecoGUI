@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ph0ryn.dev/recogui/reco-protocol.schema.json",
+  "title": "RecoGUI protocol message",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/response" },
+    { "$ref": "#/$defs/event" }
+  ],
+  "$defs": {
+    "base": {
+      "type": "object",
+      "required": ["protocolVersion", "type", "requestId", "sessionId", "sequence", "payload"],
+      "properties": {
+        "protocolVersion": { "const": 1 },
+        "type": { "enum": ["request", "response", "event"] },
+        "requestId": { "type": ["string", "null"], "format": "uuid" },
+        "sessionId": { "type": ["string", "null"], "format": "uuid" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "payload": { "type": "object" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "recoverable", "details"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "recoverable": { "type": "boolean" },
+        "details": { "type": ["object", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "request": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "properties": {
+            "type": { "const": "request" },
+            "requestId": { "type": "string", "format": "uuid" },
+            "command": { "type": "string", "minLength": 1 }
+          },
+          "required": ["command"]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "response": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "properties": {
+            "type": { "const": "response" },
+            "requestId": { "type": "string", "format": "uuid" },
+            "ok": { "type": "boolean" },
+            "error": { "oneOf": [{ "$ref": "#/$defs/error" }, { "type": "null" }] }
+          },
+          "required": ["ok", "error"]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "event": {
+      "allOf": [
+        { "$ref": "#/$defs/base" },
+        {
+          "properties": {
+            "type": { "const": "event" },
+            "event": { "type": "string", "minLength": 1 }
+          },
+          "required": ["event"]
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  }
+}

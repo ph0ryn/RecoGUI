@@ -1,0 +1,16 @@
+{
+  "protocolVersion": 1,
+  "type": "event",
+  "requestId": null,
+  "sessionId": "5a81b956-1134-411f-9551-735270a7c83e",
+  "sequence": 2,
+  "event": "segment.persisted",
+  "payload": {
+    "segment": {
+      "sequence": 0,
+      "startSample": 0,
+      "endSample": 16000,
+      "text": "テスト"
+    }
+  }
+}

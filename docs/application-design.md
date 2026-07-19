@@ -516,18 +516,15 @@ internalError
 - sidecar と native library を含む code signing と notarization
 - モデル取得、再起動、アプリ更新後の既存 SQLite 読み込み
 
-## 未決定事項
+## 実装時に確定した事項
 
-次の項目は、実装前に製品仕様として確定する。
-
-- マイク入力の元音声を恒久保存するか。
-- アプリ管理下の音声を保存する場合、履歴削除時に同時削除するか。
-- 履歴タイトルと文字起こし本文を GUI から編集可能にするか。
-- Export の正式な対応形式と、構造化データに含める診断情報の既定値。
-- ファイル入力の元ファイルを再度開くための参照情報を保持するか。
-- モデルを初回 download とするか、別の配布方法を採用するか。
-- モデル選択を許可する範囲と、複数モデルの保存容量管理。
-- 履歴検索へ FTS5 を使用するか。
-- アプリ管理データの backup、restore、import の UI と保存周期。
-- 完成版で対象とする macOS の最低バージョン。
-- 日本語以外の UI localization を対象に含めるか。
+- マイク入力の元音声は恒久保存しない。
+- 履歴タイトルと文字起こし本文は編集不可とする。
+- Export は TXT、Markdown、JSON、SRT、WebVTT、CSV と複数選択時の ZIP を正式対応とする。
+- ファイル入力は basename と fingerprint だけを保存し、絶対 path と再度開くための参照は保持しない。
+- モデルは固定 revision を初回 download し、アプリ管理領域へ保存する。複数モデルの選択は提供しない。
+- 履歴検索には FTS5 を使用する。
+- migration 前の自動 backup は行うが、backup、restore、import の UI と定期 backup は提供しない。
+- 対象は Apple Silicon の macOS 14 以降とする。
+- UI は日本語だけを対象とする。
+- 署名、notarization、DMG と CLI 配布物の作成は、ユーザー指示により今回の実装対象から除外する。

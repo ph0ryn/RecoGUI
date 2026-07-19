@@ -1,7 +1,7 @@
 import { defineConfig } from "oxlint";
 
 interface ImportMeta {
-  resolve(specifier: string): string;
+  resolve: (specifier: string) => string;
 }
 
 export default defineConfig({
@@ -14,6 +14,7 @@ export default defineConfig({
     suspicious: "off",
   },
   env: {
+    browser: true,
     node: true,
   },
   ignorePatterns: ["src-tauri/**"],

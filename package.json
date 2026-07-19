@@ -4,13 +4,29 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "build": "tsc && vite build",
     "dev": "vite",
     "fix": "oxlint --type-aware --type-check --fix && pnpm run format",
     "format": "oxfmt",
-    "build": "tsc && vite build",
+    "format:check": "oxfmt --check",
     "lint": "eslint && oxlint --type-aware --type-check",
+    "precommit": "pnpm lint && pnpm typecheck && pnpm test",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "protocol:check": "node scripts/validate-protocol.mjs",
+    "python:build": "uv build --project src-python --clear",
+    "python:format": "uv run --project src-python task format",
+    "python:lint": "uv run --project src-python task lint",
+    "python:test": "uv run --project src-python task test",
+    "python:typecheck": "uv run --project src-python task typecheck",
+    "python:verify": "pnpm python:format && pnpm python:lint && pnpm python:typecheck && pnpm python:test && pnpm python:build",
+    "rust:format": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
+    "rust:lint": "cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets --all-features -- -D warnings",
+    "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets --all-features",
+    "rust:verify": "pnpm rust:format && pnpm rust:lint && pnpm rust:test",
+    "tauri": "tauri",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm protocol:check && pnpm build && pnpm python:verify && pnpm rust:verify"
   },
   "dependencies": {
     "@tauri-apps/api": "catalog:",
@@ -21,12 +37,17 @@
   "devDependencies": {
     "@stylistic/eslint-plugin": "catalog:",
     "@tauri-apps/cli": "catalog:",
+    "@testing-library/jest-dom": "catalog:",
+    "@testing-library/react": "catalog:",
+    "@testing-library/user-event": "catalog:",
+    "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@typescript/native-preview": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "eslint": "catalog:",
     "eslint-plugin-oxlint": "catalog:",
+    "jsdom": "catalog:",
     "lint-staged": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
@@ -34,7 +55,8 @@
     "sort-package-json": "catalog:",
     "typescript": "catalog:",
     "typescript-eslint": "catalog:",
-    "vite": "catalog:"
+    "vite": "catalog:",
+    "vitest": "catalog:"
   },
   "packageManager": "pnpm@11.10.0"
 }
