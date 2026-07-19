@@ -3,6 +3,7 @@ mod file_tokens;
 mod paths;
 mod protocol;
 mod supervisor;
+mod system_sleep;
 
 use std::sync::{
     Arc,
@@ -28,7 +29,9 @@ pub fn run() {
         ))
         .setup(|app| {
             let paths = AppPaths::resolve(app.handle())?;
-            app.manage(EngineSupervisor::new(app.handle().clone(), paths));
+            let supervisor = EngineSupervisor::new(app.handle().clone(), paths);
+            system_sleep::install(supervisor.clone());
+            app.manage(supervisor);
             app.manage(FileTokenStore::default());
             app.manage(Arc::new(AtomicBool::new(false)));
             Ok(())

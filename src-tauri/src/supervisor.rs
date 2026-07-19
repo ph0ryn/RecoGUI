@@ -104,6 +104,10 @@ impl EngineSupervisor {
         &self.inner.paths
     }
 
+    pub async fn is_running(&self) -> bool {
+        self.inner.runtime.lock().await.is_some()
+    }
+
     pub async fn state_snapshot(&self) -> EngineStateSnapshot {
         let state = *self.inner.state.read().await;
         let pid = self
