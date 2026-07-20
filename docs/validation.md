@@ -1,68 +1,82 @@
-# RecoGUI Validation Record
+# RecoGUI 検証手順
 
-## Validation Target
+この文書は、現在の変更を検証するための手順を示す。過去の実行結果やtest件数はGit、CI、
+release記録で管理し、この文書には固定しない。
 
-The complete functional application described by `requirements.md`, excluding signing, notarization, packaged distribution, push, and pull request creation.
+## 一括検証
 
-## Required Checks
+repository rootで次を実行する。
 
-| Area              | Required evidence                                                    | Status |
-| ----------------- | -------------------------------------------------------------------- | ------ |
-| Source import     | Pinned commit and original Reco tests                                | Passed |
-| Python            | Format, lint, type check, unit and integration tests, build          | Passed |
-| Protocol          | Schema and shared fixture validation in Python, Rust, and TypeScript | Passed |
-| Rust              | Format, clippy with warnings denied, tests, development build        | Passed |
-| React             | Type check, lint, component tests, production frontend build         | Passed |
-| Storage           | Migration, backup, integrity, commit-before-event, recovery          | Passed |
-| Lifecycle         | Stop, Cancel, hang, crash, restart, sleep, close                     | Passed |
-| UI                | Complete workflow, keyboard, focus, selection, reduced motion        | Passed |
-| Corpus            | Boundary audit and fixed-model smoke transcription                   | Passed |
-| Tauri integration | Development application launches and controls sidecar                | Passed |
-| Documentation     | Markdown lint and requirement traceability                           | Passed |
+```sh
+pnpm verify
+```
 
-## Results
+このcommandはTypeScript、Python、Rust、protocol fixture、frontend buildを検証する。
 
-### Automated checks
+## 個別検証
 
-- `pnpm verify` passes the frontend formatter, ESLint, Oxlint, TypeScript, 12 Vitest tests, protocol
-  schema validation, the production frontend build, Python verification, and Rust verification.
-- Python verification passes Ruff, ty, 160 pytest tests, and both wheel and source distribution
-  builds. The distributions contain the pinned Silero ONNX asset, source provenance, and third-party
-  notices without Torch-family runtime dependencies.
-- Rust verification passes formatting, Clippy with warnings denied, and 16 tests across protocol,
-  path-token, lifecycle, close, and system-sleep behavior.
-- The three valid and three intentionally invalid shared protocol fixtures pass the JSON Schema gate.
-  Python, Rust, and TypeScript also load the canonical fixtures in their own test suites.
+変更範囲を絞って確認するときは、`package.json`に定義された次のcommandを使用する。
 
-### Integration checks
+```sh
+pnpm format
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm check:protocol
+pnpm build
+```
 
-- A canonical `engine.getState` request sent through the development sidecar launcher returns a valid
-  protocol response and creates the application database without writing non-protocol output to
-  stdout.
-- `pnpm tauri build --debug --no-bundle` succeeds and produces the development application binary.
-- The development application launches the React webview and exactly one supervised engine runtime.
-  Concurrent initial frontend requests were exercised; a discovered double-start race was fixed by
-  serializing sidecar startup and the launch was repeated successfully.
-- Browser checks cover the main two-pane workflow, active-session return control, history selection,
-  multi-selection, the Export dialog, focus behavior, and the configured 860 by 600 minimum viewport.
-  The layout has no horizontal document overflow at either minimum or default viewport size.
+特定runtimeだけを検証する場合は、`:typescript`、`:python`、`:rust`が付いたscriptを使用する。
+Python固有のtaskは`src-python/pyproject.toml`、Rust固有の検証対象は
+`src-tauri/Cargo.toml`を正本とする。
 
-### Real-audio check
+## 開発アプリ
 
-- Input: `00-講義概要.wav`, 7 minutes 3 seconds, from the local 15-file lecture corpus.
-- Fixed model: `ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit` at the pinned revision.
-- Result: completed in 1 minute 33 seconds with 31 of 31 segments recognized, 2,803 characters, no
-  invalid or overlapping sample ranges, and SQLite `integrity_check` equal to `ok`.
-- Recorded pipeline RTF is `0.2199`, so the complete recorded pipeline remains faster than real time.
-- The full corpus is 22.4 hours. An exhaustive VAD-only scan was started but stopped after it proved
-  disproportionate for this implementation run. Deterministic unit tests cover the complete boundary
-  invariant set, and the representative real-audio run validates all emitted segment boundaries.
+```sh
+pnpm dev
+```
 
-## Deferred Evidence
+次を確認する。
 
-Signing, notarization, clean-machine packaged execution, DMG creation, and release publication are deferred by explicit user instruction and are not completion gates for this implementation run.
+- application windowが開き、sidecarが一つだけ起動する。
+- modelのdownload、cancel、verify、load、deleteが動作する。
+- マイクと音声ファイルからsessionを開始できる。
+- Stopが処理待ちを完了し、Cancelが保存済み部分を残す。
+- 確定segmentがSQLite保存後に一度だけ表示される。
+- 完了、停止、失敗、異常終了したsessionが再起動後も履歴へ戻る。
+- 履歴の検索、絞り込み、並べ替え、複数選択、削除が動作する。
+- 各Export形式、一括ZIP、進捗、中断、失敗時の再試行が動作する。
 
-## Residual Issues
+## 回帰確認
 
-None. The exhaustive 22.4-hour corpus scan is additional performance evidence, not an accepted
-functional defect or a release gate.
+### 永続化
+
+- 画面上の確定segment数とSQLite上のdistinctなsegment index数が一致する。
+- 重複または順序の前後したeventで文字起こしが重複しない。
+- 古い履歴responseが新しい`rowVersion`の状態を上書きしない。
+- 500 segmentを超える詳細取得で、revisionが変わった場合に先頭から再取得する。
+- session削除で関連segmentと検索indexが削除される。
+
+### Lifecycle
+
+- sidecarのcrashとhangをhostが検出する。
+- 前回の非終端sessionを`abandoned`として回収する。
+- sleepとapplication closeで録音を安全に終了する。
+- React Strict Modeの再mount後もevent listenerが重複しない。
+
+### セキュリティ
+
+- Reactから汎用shell、SQLite、任意pathへアクセスできない。
+- 選択した入力と出力のpath tokenをRust側で検証する。
+- remote contentやCDNへの依存を追加していない。
+- stdoutにNDJSON以外を出力せず、diagnosticはstderrへ出力する。
+
+## 配布前に追加で必要な検証
+
+配布を行う場合は、通常の検証に加えて次を確認する。
+
+- Pythonや`uv`が入っていないcleanなMacでの実行
+- microphone permission
+- sidecarとnative libraryを含むcode signing
+- notarizationと配布package
+- application更新後の既存SQLiteとmodelの再利用

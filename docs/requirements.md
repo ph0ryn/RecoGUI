@@ -1,62 +1,87 @@
-# RecoGUI Requirements
+# RecoGUI 要件
 
-## Background
+## 目的
 
-RecoGUI turns the sample-accurate Reco transcription pipeline into a durable macOS desktop application. The existing Reco repository remains unchanged; a pinned source snapshot is imported into this repository and evolves independently.
+RecoGUI は、Apple Silicon Mac 上で動作する日本語文字起こしアプリケーションである。
+マイクまたは音声ファイルを入力とし、確定した文字起こしを SQLite に保存してから画面へ表示する。
 
-## Objective
+## 対応環境
 
-Deliver the complete application behavior defined by `application-design.md`: microphone and file transcription, durable history, search, deletion, export, failure recovery, model management, an accessible two-pane interface, and a compatible CLI adapter.
+- Apple Silicon Mac
+- macOS 14 以降
+- 日本語 UI
+- Python 3.12
 
-## Functional Requirements
+Windows、Linux、Intel Mac、他言語へのローカライズは対象外とする。
 
-- **RQ-001 Source provenance:** Import Reco commit `4287ee3ea54bfb3a9eaf49a1dc665ddb93fb5663` with its tests, lockfile, and license metadata without modifying the source repository.
-- **RQ-002 Transcription:** Accept microphone and file inputs, normalize to 16 kHz mono, preserve sample-index timing, bounded queues, ordered output, and the validated VAD/ASR behavior.
-- **RQ-003 Engine lifecycle:** Reuse one model runtime across sequential sessions, allow one active session, and support graceful Stop, prompt Cancel, forced termination, and recovery.
-- **RQ-004 Durability:** Persist every session and each committed segment in SQLite before exposing it as durable UI state.
-- **RQ-005 History:** List, paginate, search, filter, sort, inspect, multi-select, and permanently delete sessions.
-- **RQ-006 Export:** Export TXT, Markdown, JSON, SRT, WebVTT, CSV, and multi-session ZIP from a consistent database snapshot with cancellation and atomic publication.
-- **RQ-007 Model management:** Download, resume, verify, load, reuse offline, and delete the pinned model from app-managed storage.
-- **RQ-008 IPC:** Use a versioned typed NDJSON protocol with request correlation, sequence validation, bounded messages, fixtures, and fail-fast compatibility checks.
-- **RQ-009 Host supervision:** Supervise the Python engine from Rust, isolate stderr logs, detect exits and hangs, limit restarts, enforce single-instance behavior, and handle sleep and application close.
-- **RQ-010 UI:** Provide the complete two-pane Japanese workflow, live persisted segments, selection stability, keyboard access, focus restoration, reduced motion, and non-color-only status communication.
-- **RQ-011 CLI:** Preserve the existing Reco command surface through a thin adapter while applying the same always-persist policy as the GUI.
+## 機能要件
 
-## Non-Functional Requirements
+### 文字起こし
 
-- **RQ-012 Security:** React must not receive generic shell, database, or arbitrary-path access. Remote content and CDNs are prohibited.
-- **RQ-013 Reliability:** SQLite uses foreign keys, WAL, a busy timeout, durability-oriented synchronous mode, transactional migrations, pre-migration backup, and post-migration integrity checks.
-- **RQ-014 Performance:** Normal progress is throttled to at most 8 Hz. The model stays resident between sessions. Existing real-audio segmentation remains regression-tested.
-- **RQ-015 Compatibility:** Target Apple Silicon and macOS 14 or newer. Python is pinned to 3.12 and is not taken from the host system installation.
+- マイク入力と音声ファイル入力に対応する。
+- 入力を 16 kHz mono に正規化し、sample index を時刻の正本とする。
+- 同時に実行できるセッションは一つとする。
+- Stop は処理待ちの音声を可能な範囲で完了してから終了する。
+- Cancel は未処理の音声を破棄するが、保存済みの文字起こしは残す。
+- モデルはセッション間で再利用する。
 
-## Product Decisions
+### 保存と履歴
 
-- Microphone source audio is not retained.
-- Titles and transcripts are not editable.
-- Source absolute paths and reopen references are not retained; only a basename and content fingerprint are stored.
-- The pinned Japanese model is downloaded on demand; model selection is not exposed.
-- FTS5 is used for history search.
-- Only automatic pre-migration backups are included; restore/import UI and periodic backup are excluded.
-- The UI is Japanese-only and follows the system color scheme.
-- Application signing, notarization, DMG creation, and release publication are deferred by explicit user instruction.
+- セッションは音声処理を始める前に SQLite へ作成する。
+- 確定セグメントは SQLite への保存に成功してから画面へ表示する。
+- 停止、失敗、異常終了時も保存済みの部分を履歴に残す。
+- 履歴の一覧、ページング、検索、絞り込み、並べ替え、複数選択に対応する。
+- 削除は確認後の完全削除とし、ゴミ箱、論理削除、復元は提供しない。
+- タイトルと文字起こし本文は編集不可とする。
 
-## Acceptance Criteria
+### Export
 
-- All Python, Rust, TypeScript, protocol, integration, and documentation checks pass from repository-standard commands.
-- Two sequential sessions reuse one model load.
-- Stop drains pending work; Cancel keeps committed work and discards pending work.
-- Every displayed persisted segment is present in SQLite.
-- A crashed engine is recovered as `abandoned` with committed partial output available.
-- All history, deletion, export, model, and accessibility behaviors are covered by automated or recorded manual validation.
-- A development Tauri build launches the bundled or configured sidecar and completes file and microphone workflows.
+- TXT、Markdown、JSON、SRT、WebVTT、CSV に対応する。
+- 複数セッションは ZIP として一括出力できる。
+- 一貫したデータベースの読み取り結果から生成し、一時ファイルから置き換える。
+- 実行中のExportを中断できる。
 
-## Non-Scope
+### モデル管理
 
-- Windows, Linux, and Intel macOS.
-- Raw microphone audio retention.
-- Transcript editing, multiple models, non-Japanese localization, import/restore UI, and automatic updates.
-- Signing, notarization, packaged distribution, push, and pull request creation in this implementation run.
+- 固定した日本語モデルをアプリ管理領域へダウンロードする。
+- ダウンロードの再開、検証、読込、削除に対応する。
+- 複数モデルの選択は提供しない。
 
-## Open Questions
+### UI
 
-None. Implementation discoveries that change this contract must be recorded in `change-log.md` before code is treated as complete.
+- 左に履歴、右に選択中セッションを表示する2ペイン構成とする。
+- 処理中の確定セグメントを重複なく逐次表示する。
+- 履歴更新やイベント受信によって、ユーザーの選択を勝手に変更しない。
+- 主要操作をキーボードから利用できるようにする。
+- focusを適切に復元し、状態を色だけで伝えず、reduced motionを尊重する。
+
+## 信頼性とセキュリティ
+
+- Rust が Python sidecar を監督し、終了、無応答、sleep、アプリ終了を処理する。
+- Rust と Python はversion付きNDJSONで通信し、不正、過大、不整合なmessageを拒否する。
+- React に汎用shell、SQLite、任意pathへの直接アクセスを与えない。
+- remote contentとCDNを使用しない。
+- SQLiteではforeign keys、WAL、busy timeout、transactional migrationを使用する。
+- migration前にbackupを作成し、適用後にintegrity checkを行う。
+- 古い履歴応答や重複eventで、新しい画面状態を巻き戻さない。
+
+## データに関する決定
+
+- マイクの元音声は保存しない。
+- 音声ファイルの絶対pathや再度開くための参照は保存しない。
+- 音声ファイルについてはbasenameとfingerprintを保存する。
+- 履歴検索にはFTS5を使用する。
+- 定期backup、手動backup、restore、importのUIは提供しない。
+
+## CLI
+
+`reco` CLIの既存command surfaceを維持する。CLIはGUI sidecarとは別の実行経路と
+`reco-cli.sqlite3`を使用するが、すべての実行結果を常時保存する。
+
+## 対象外
+
+- 元音声の保存
+- 文字起こしの編集
+- 複数モデル
+- import、restore、automatic update
+- code signing、notarization、配布用packageの作成と公開
