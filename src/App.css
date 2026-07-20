@@ -259,30 +259,25 @@ button:disabled {
 
 .filters {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
-  padding: 8px 7px 9px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  padding: 6px 7px;
 }
 
 .filters label {
-  display: grid;
-  gap: 4px;
   min-width: 0;
-  color: var(--muted);
-  font-size: 8px;
-  letter-spacing: 0.06em;
 }
 
-.filters label:last-child {
-  grid-column: 1 / -1;
+.filters label > span {
+  display: none;
 }
 
 .filters select,
 .settings-section select {
   width: 100%;
-  height: 30px;
+  height: 28px;
   min-width: 0;
-  padding: 0 24px 0 8px;
+  padding: 0 20px 0 6px;
   border: 1px solid var(--line-dark);
   border-radius: 0;
   background: var(--panel);
