@@ -72,7 +72,7 @@ button:disabled {
 .app-shell {
   display: grid;
   grid-template:
-    "topbar topbar topbar" 48px
+    "topbar resizer session" 48px
     "history resizer session" minmax(0, 1fr) /
     clamp(280px, var(--history-width), calc(100vw - 561px)) 1px minmax(560px, 1fr);
   width: 100%;
@@ -80,19 +80,18 @@ button:disabled {
   min-width: 860px;
   border: 1px solid var(--line-dark);
   background: var(--panel);
+  user-select: none;
 }
 
 .topbar {
-  display: grid;
   grid-area: topbar;
-  grid-template-columns: clamp(280px, var(--history-width), calc(100vw - 561px)) minmax(0, 1fr);
   border-bottom: 1px solid var(--line-dark);
+  border-right: 1px solid var(--line-dark);
   background: var(--panel-alt);
   user-select: none;
 }
 
 .topbar-left,
-.topbar-right,
 .brand-row,
 .machine-state {
   display: flex;
@@ -101,15 +100,9 @@ button:disabled {
 }
 
 .topbar-left {
+  height: 100%;
   gap: 12px;
   padding: 0 12px;
-  border-right: 1px solid var(--line-dark);
-}
-
-.topbar-right {
-  justify-content: space-between;
-  gap: 18px;
-  padding: 0 14px 0 18px;
 }
 
 .brand-row {
@@ -147,8 +140,7 @@ button:disabled {
 
 .mode-label,
 .machine-state,
-.history-heading,
-.search-field,
+.history-search,
 .filters,
 .history-row-meta,
 .status-badge,
@@ -169,14 +161,13 @@ button:disabled {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
-.mode-label,
 .machine-state {
   color: var(--muted);
   font-size: 10px;
   letter-spacing: 0.04em;
 }
 
-.mode-label {
+.machine-state {
   margin-left: auto;
 }
 
@@ -192,27 +183,7 @@ button:disabled {
   background: #5e8b68;
 }
 
-.search-field {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
-  align-items: center;
-  width: min(360px, 42vw);
-  height: 30px;
-  border: 1px solid var(--line-dark);
-  background: var(--panel);
-  color: var(--muted);
-}
-
-.search-field > span:first-child {
-  display: grid;
-  height: 100%;
-  place-items: center;
-  border-right: 1px solid var(--line);
-  font-size: 9px;
-  letter-spacing: 0.04em;
-}
-
-.search-field input,
+.history-search input,
 .detail-search input {
   min-width: 0;
   height: 100%;
@@ -223,12 +194,12 @@ button:disabled {
   font-size: 10px;
 }
 
-.search-field input::placeholder,
+.history-search input::placeholder,
 .detail-search input::placeholder {
   color: var(--faint);
 }
 
-.search-field button {
+.history-search button {
   height: 100%;
   border: 0;
   border-left: 1px solid var(--line);
@@ -249,48 +220,73 @@ button:disabled {
   border-bottom: 1px solid var(--line);
 }
 
-.history-heading {
+.history-search-row {
   display: flex;
   align-items: center;
-  height: 38px;
-  padding: 0 7px 0 14px;
+  gap: 7px;
+  padding: 8px 7px;
   border-bottom: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
 }
 
-.history-heading > span:nth-child(2) {
-  margin-left: auto;
+.history-search {
+  display: grid;
+  min-width: 0;
+  height: 30px;
+  flex: 1;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line-dark);
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.history-search-icon {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  border-right: 1px solid var(--line);
+  font-size: 13px;
 }
 
 .settings-button {
   width: 28px !important;
   height: 28px !important;
-  margin-left: 5px;
+  flex: none;
+  border: 1px solid var(--line-dark) !important;
+  background: var(--panel) !important;
 }
 
 .filters {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding: 8px 7px 9px;
 }
 
-.filters label + label {
-  margin-left: -1px;
+.filters label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+}
+
+.filters label:last-child {
+  grid-column: 1 / -1;
 }
 
 .filters select,
 .settings-section select {
   width: 100%;
-  height: 27px;
+  height: 30px;
   min-width: 0;
-  padding: 0 18px 0 6px;
+  padding: 0 24px 0 8px;
   border: 1px solid var(--line-dark);
   border-radius: 0;
   background: var(--panel);
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .history-list {
@@ -800,6 +796,7 @@ button:disabled {
   min-height: 100%;
   margin: 0 auto;
   padding: 26px 0 80px;
+  user-select: text;
 }
 
 .segment {
@@ -814,6 +811,7 @@ button:disabled {
   color: var(--muted);
   font-size: 9px;
   font-variant-numeric: tabular-nums;
+  user-select: none;
 }
 
 .segment p {
@@ -822,6 +820,7 @@ button:disabled {
   font-size: 14px;
   line-height: 1.8;
   letter-spacing: 0.005em;
+  overflow-wrap: anywhere;
 }
 
 .segment mark {

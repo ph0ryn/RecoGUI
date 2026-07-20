@@ -186,6 +186,15 @@ function App() {
 
     return [...groups.entries()];
   }, [activeSessionId, orderedSessions]);
+  const selectableSessions = useMemo(
+    () => [
+      ...(activeSession && orderedSessions.some(({ id }) => id === activeSession.id)
+        ? [activeSession]
+        : []),
+      ...displayGroups.flatMap(([, groupSessions]) => groupSessions),
+    ],
+    [activeSession, displayGroups, orderedSessions],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -520,13 +529,13 @@ function App() {
   }
 
   function selectSession(session: SessionEntity, additive: boolean, range: boolean): void {
-    const index = orderedSessions.findIndex(({ id }) => id === session.id);
+    const index = selectableSessions.findIndex(({ id }) => id === session.id);
 
     setDetailQuery("");
     if (range && anchorIndex.current !== undefined) {
       const start = Math.min(anchorIndex.current, index);
       const end = Math.max(anchorIndex.current, index);
-      const ids = orderedSessions.slice(start, end + 1).map(({ id }) => id);
+      const ids = selectableSessions.slice(start, end + 1).map(({ id }) => id);
 
       setSelectedIds(new Set(ids));
     } else if (additive) {
@@ -548,19 +557,46 @@ function App() {
   }
 
   function handleHistoryKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
-    if (!orderedSessions.length || !["ArrowDown", "ArrowUp"].includes(event.key)) return;
+    if (!selectableSessions.length || !["ArrowDown", "ArrowUp"].includes(event.key)) return;
     event.preventDefault();
     const currentId = selectedIds.size === 1 ? [...selectedIds][0] : anchorId;
     const currentIndex = Math.max(
       0,
-      orderedSessions.findIndex(({ id }) => id === currentId),
+      selectableSessions.findIndex(({ id }) => id === currentId),
     );
     const offset = event.key === "ArrowDown" ? 1 : -1;
-    const nextIndex = Math.min(orderedSessions.length - 1, Math.max(0, currentIndex + offset));
-    const next = orderedSessions[nextIndex];
+    const nextIndex = Math.min(selectableSessions.length - 1, Math.max(0, currentIndex + offset));
+    const next = selectableSessions[nextIndex];
 
     selectSession(next, event.metaKey, event.shiftKey);
     document.querySelector<HTMLButtonElement>(`[data-session-id="${next.id}"]`)?.focus();
+  }
+
+  function handleSelectAll(event: KeyboardEvent<HTMLElement>): void {
+    if (!event.metaKey || event.key.toLocaleLowerCase() !== "a" || selectedSessions.length !== 1) {
+      return;
+    }
+    const target = event.target;
+
+    if (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement ||
+      (target instanceof HTMLElement && target.isContentEditable)
+    ) {
+      return;
+    }
+    const transcript = transcriptRef.current?.querySelector<HTMLElement>(".transcript");
+
+    if (!transcript) return;
+    event.preventDefault();
+    const range = document.createRange();
+
+    range.selectNodeContents(transcript);
+    const selection = window.getSelection();
+
+    selection?.removeAllRanges();
+    selection?.addRange(range);
   }
 
   function resizePane(event: ReactPointerEvent<HTMLDivElement>): void {
@@ -796,10 +832,8 @@ function App() {
   }
 
   const appStyle = { "--history-width": `${paneWidth}px` } as CSSProperties;
-  const visibleSessionCount = orderedSessions.length;
-
   return (
-    <main className="app-shell" style={appStyle}>
+    <main className="app-shell" onKeyDown={handleSelectAll} style={appStyle}>
       <header className="topbar" data-tauri-drag-region>
         <div className="topbar-left" data-tauri-drag-region>
           <div className="brand-row">
@@ -810,35 +844,32 @@ function App() {
             </span>
             <strong>RECO</strong>
           </div>
-          <span className="mode-label">LOCAL TRANSCRIBER</span>
-        </div>
-        <div className="topbar-right" data-tauri-drag-region>
           <div className="machine-state">
             <i aria-hidden="true" />
             {fatalError ? "ENGINE OFFLINE" : "ENGINE READY"}
           </div>
-          <label className="search-field">
-            <span aria-hidden="true">FIND</span>
-            <span className="sr-only">履歴を検索</span>
-            <input
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="TITLE / TRANSCRIPT"
-              type="search"
-              value={query}
-            />
-            {query && (
-              <button aria-label="検索をクリア" onClick={() => setQuery("")} type="button">
-                ×
-              </button>
-            )}
-          </label>
         </div>
       </header>
       <aside aria-label="文字起こし履歴" className="history-pane">
         <div className="history-toolbar">
-          <div className="history-heading">
-            <span>SESSIONS</span>
-            <span>{visibleSessionCount.toString().padStart(3, "0")}</span>
+          <div className="history-search-row">
+            <label className="history-search">
+              <span className="sr-only">履歴を検索</span>
+              <span aria-hidden="true" className="history-search-icon">
+                ⌕
+              </span>
+              <input
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="履歴を検索"
+                type="search"
+                value={query}
+              />
+              {query && (
+                <button aria-label="検索をクリア" onClick={() => setQuery("")} type="button">
+                  ×
+                </button>
+              )}
+            </label>
             <button
               aria-label="設定を開く"
               className="icon-button settings-button"
@@ -851,8 +882,9 @@ function App() {
           </div>
           <div className="filters">
             <label>
-              <span className="sr-only">状態で絞り込み</span>
+              <span>状態</span>
               <select
+                aria-label="状態で絞り込み"
                 onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
                 value={statusFilter}
               >
@@ -865,8 +897,9 @@ function App() {
               </select>
             </label>
             <label>
-              <span className="sr-only">入力元で絞り込み</span>
+              <span>入力</span>
               <select
+                aria-label="入力元で絞り込み"
                 onChange={(event) => setInputFilter(event.target.value as typeof inputFilter)}
                 value={inputFilter}
               >
@@ -876,8 +909,9 @@ function App() {
               </select>
             </label>
             <label>
-              <span className="sr-only">並べ替え</span>
+              <span>並び順</span>
               <select
+                aria-label="並べ替え"
                 onChange={(event) => setSortOrder(event.target.value as typeof sortOrder)}
                 value={sortOrder}
               >
