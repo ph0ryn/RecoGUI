@@ -1411,15 +1411,6 @@ function LiveControls({
 }) {
   return (
     <footer className="live-controls">
-      <div>
-        <span aria-hidden="true" className="recording-pulse" />
-        <div>
-          <strong>{session.status === "stopping" ? "停止処理中" : "文字起こし中"}</strong>
-          <span>
-            {session.inputName} · {formatDuration(session.durationMs)}
-          </span>
-        </div>
-      </div>
       <div className="live-actions">
         <button
           className="ghost-button"

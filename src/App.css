@@ -565,8 +565,7 @@ button:disabled {
   flex: 1;
 }
 
-.live-dot,
-.recording-pulse {
+.live-dot {
   display: inline-block;
   width: 7px;
   height: 7px;
@@ -881,33 +880,17 @@ button:disabled {
 .live-controls {
   z-index: 5;
   display: flex;
-  min-height: 48px;
+  min-height: 40px;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   border-top: 1px solid var(--line-dark);
   background: var(--panel-alt);
 }
 
-.live-controls > div,
 .live-actions {
   display: flex;
   align-items: center;
   gap: 10px;
-}
-
-.live-controls > div:first-child {
-  padding-left: 15px;
-}
-
-.live-controls > div > div {
-  display: flex;
-  gap: 8px;
-}
-
-.live-controls strong,
-.live-controls span {
-  color: var(--muted);
-  font-size: 9px;
 }
 
 .live-actions {
