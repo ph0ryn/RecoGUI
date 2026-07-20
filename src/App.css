@@ -727,15 +727,6 @@ button:disabled {
   list-style: none;
 }
 
-.more-menu {
-  position: relative;
-}
-
-.more-menu summary::-webkit-details-marker {
-  display: none;
-}
-
-.menu-popover,
 .history-context-menu {
   position: absolute;
   z-index: 80;
@@ -747,16 +738,10 @@ button:disabled {
   box-shadow: 5px 5px 0 rgb(23 24 22 / 12%);
 }
 
-.menu-popover {
-  top: 33px;
-  right: 0;
-}
-
 .history-context-menu {
   position: fixed;
 }
 
-.menu-popover button,
 .history-context-menu button {
   padding: 8px;
   border: 0;
@@ -765,15 +750,25 @@ button:disabled {
   text-align: left;
 }
 
-.menu-popover button:hover,
 .history-context-menu button:hover {
   background: var(--hover);
 }
 
 .context-danger,
 .danger-secondary,
-.menu-popover button {
+.delete-icon-button {
+  border: 1px solid var(--line-dark);
   color: var(--danger);
+  background: var(--panel);
+}
+
+.delete-icon-button svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: square;
+  stroke-width: 1.25;
 }
 
 .transcript-scroll {

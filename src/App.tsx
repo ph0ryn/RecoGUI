@@ -152,7 +152,6 @@ function App() {
   const anchorIndex = useRef<number | undefined>(undefined);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const newButtonRef = useRef<HTMLButtonElement>(null);
-  const moreButtonRef = useRef<HTMLButtonElement>(null);
   const dialogInvokerRef = useRef<HTMLElement | null>(null);
   const sessions = sessionState.orderedSessionIds
     .map((id) => sessionState.sessionsById[id])
@@ -1055,7 +1054,6 @@ function App() {
               onExport={() => openDialog("export")}
               onQueryChange={setDetailQuery}
               session={selectedSession}
-              moreButtonRef={moreButtonRef}
             />
             <Transcript
               autoFollow={autoFollow}
@@ -1246,7 +1244,6 @@ function StatusBadge({ status }: { status: SessionStatus }) {
 
 interface SessionHeaderProps {
   detailQuery: string;
-  moreButtonRef: React.RefObject<HTMLButtonElement | null>;
   session: SessionEntity;
   onDelete: () => void;
   onExport: () => void;
@@ -1255,7 +1252,6 @@ interface SessionHeaderProps {
 
 function SessionHeader({
   detailQuery,
-  moreButtonRef,
   onDelete,
   onExport,
   onQueryChange,
@@ -1275,25 +1271,18 @@ function SessionHeader({
           <button className="secondary-button" onClick={onExport} type="button">
             ⇧ Export
           </button>
-          <details className="more-menu">
-            <summary
-              aria-label="その他の操作"
-              className="icon-button"
-              ref={moreButtonRef}
-              title="その他の操作"
-            >
-              •••
-            </summary>
-            <div className="menu-popover">
-              <button
-                disabled={!terminalStatuses.includes(session.status)}
-                onClick={onDelete}
-                type="button"
-              >
-                完全に削除…
-              </button>
-            </div>
-          </details>
+          <button
+            aria-label="完全に削除"
+            className="icon-button delete-icon-button"
+            disabled={!terminalStatuses.includes(session.status)}
+            onClick={onDelete}
+            title="完全に削除"
+            type="button"
+          >
+            <svg aria-hidden="true" viewBox="0 0 16 16">
+              <path d="M3.5 4.5h9M6 4.5v-2h4v2m1.5 0-.5 9H5l-.5-9M7 7v4m2-4v4" />
+            </svg>
+          </button>
         </div>
       </div>
       <div className="session-metadata">

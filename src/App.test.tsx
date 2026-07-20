@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /* oxlint-disable no-ternary, curly, @stylistic/padding-line-between-statements */
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -195,12 +195,13 @@ describe("RecoGUI", () => {
 
     await renderLoadedApp();
     await user.click(screen.getByRole("option", { name: /プロジェクト定例/ }));
-    await user.click(screen.getByLabelText("その他の操作"));
-    await user.click(screen.getByRole("button", { name: "完全に削除…" }));
+    await user.click(screen.getByRole("button", { name: "完全に削除" }));
 
     expect(screen.getByText(/この操作は取り消せません/)).toBeInTheDocument();
     expect(bridgeMocks.deleteSessions).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "完全に削除" }));
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "完全に削除" }),
+    );
     await waitFor(() => expect(bridgeMocks.deleteSessions).toHaveBeenCalledWith(["session-1"]));
   });
 
