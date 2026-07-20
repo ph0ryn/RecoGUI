@@ -585,8 +585,7 @@ button:disabled {
 
 .session-title-row,
 .header-actions,
-.session-metadata,
-.title-status {
+.session-metadata {
   display: flex;
   align-items: center;
 }
@@ -598,7 +597,7 @@ button:disabled {
 }
 
 .session-title-row h1 {
-  margin: 7px 0 0;
+  margin: 0;
   overflow: hidden;
   font-size: 20px;
   font-weight: 680;
@@ -607,20 +606,11 @@ button:disabled {
   white-space: nowrap;
 }
 
-.title-status,
 .session-metadata {
   gap: 8px;
   color: var(--muted);
   font-size: 9px;
   letter-spacing: 0.04em;
-}
-
-.title-status::before {
-  content: "SESSION /";
-}
-
-.title-status .status-badge {
-  order: 2;
 }
 
 .header-actions {

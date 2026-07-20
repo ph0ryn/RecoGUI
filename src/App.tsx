@@ -1261,10 +1261,6 @@ function SessionHeader({
     <header className="session-header">
       <div className="session-title-row">
         <div>
-          <div className="title-status">
-            <StatusBadge status={session.status} />
-            <span>{session.inputKind === "microphone" ? "マイク入力" : session.inputName}</span>
-          </div>
           <h1>{session.title}</h1>
         </div>
         <div className="header-actions">
@@ -1286,8 +1282,6 @@ function SessionHeader({
         </div>
       </div>
       <div className="session-metadata">
-        <span>{formatDate(session.startedAt)}</span>
-        <span>{formatDuration(session.durationMs)}</span>
         <span>{session.language}</span>
         <span>{session.model}</span>
         <span>{session.segmentCount}セグメント</span>
