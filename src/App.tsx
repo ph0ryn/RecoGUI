@@ -317,6 +317,42 @@ function App() {
   }, [toast]);
 
   useEffect(() => {
+    function selectVisibleTranscript(event: globalThis.KeyboardEvent): void {
+      if (
+        !event.metaKey ||
+        event.key.toLocaleLowerCase() !== "a" ||
+        selectedSessions.length !== 1
+      ) {
+        return;
+      }
+      const target = event.target;
+
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+      const transcript = transcriptRef.current?.querySelector<HTMLElement>(".transcript");
+
+      if (!transcript) return;
+      event.preventDefault();
+      const range = document.createRange();
+
+      range.selectNodeContents(transcript);
+      const selection = window.getSelection();
+
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
+
+    window.addEventListener("keydown", selectVisibleTranscript);
+
+    return () => window.removeEventListener("keydown", selectVisibleTranscript);
+  }, [selectedSessions.length]);
+
+  useEffect(() => {
     if (!contextMenu) return;
     const close = () => setContextMenu(undefined);
 
@@ -572,33 +608,6 @@ function App() {
     document.querySelector<HTMLButtonElement>(`[data-session-id="${next.id}"]`)?.focus();
   }
 
-  function handleSelectAll(event: KeyboardEvent<HTMLElement>): void {
-    if (!event.metaKey || event.key.toLocaleLowerCase() !== "a" || selectedSessions.length !== 1) {
-      return;
-    }
-    const target = event.target;
-
-    if (
-      target instanceof HTMLInputElement ||
-      target instanceof HTMLTextAreaElement ||
-      target instanceof HTMLSelectElement ||
-      (target instanceof HTMLElement && target.isContentEditable)
-    ) {
-      return;
-    }
-    const transcript = transcriptRef.current?.querySelector<HTMLElement>(".transcript");
-
-    if (!transcript) return;
-    event.preventDefault();
-    const range = document.createRange();
-
-    range.selectNodeContents(transcript);
-    const selection = window.getSelection();
-
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-  }
-
   function resizePane(event: ReactPointerEvent<HTMLDivElement>): void {
     event.currentTarget.setPointerCapture(event.pointerId);
     const startX = event.clientX;
@@ -833,7 +842,7 @@ function App() {
 
   const appStyle = { "--history-width": `${paneWidth}px` } as CSSProperties;
   return (
-    <main className="app-shell" onKeyDown={handleSelectAll} style={appStyle}>
+    <main className="app-shell" style={appStyle}>
       <header className="topbar" data-tauri-drag-region>
         <div className="topbar-left" data-tauri-drag-region>
           <div className="brand-row">
