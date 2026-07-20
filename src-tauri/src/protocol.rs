@@ -136,6 +136,7 @@ mod tests {
 
         assert_eq!(envelope.message_type, IncomingType::Event);
         assert_eq!(envelope.event.as_deref(), Some("segment.persisted"));
+        assert_eq!(envelope.sequence, 2);
     }
 
     #[test]
@@ -155,6 +156,9 @@ mod tests {
 
         assert_eq!(response.message_type, IncomingType::Response);
         assert_eq!(event.message_type, IncomingType::Event);
+        assert_eq!(event.sequence, 2);
+        assert_eq!(event.payload["rowVersion"], 3);
+        assert_eq!(event.payload["totalSegments"], 1);
         assert_eq!(request["command"], "engine.getState");
         assert_eq!(request["protocolVersion"], PROTOCOL_VERSION);
     }

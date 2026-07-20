@@ -7,10 +7,15 @@
   "event": "segment.persisted",
   "payload": {
     "segment": {
-      "sequence": 0,
+      "segmentIndex": 0,
       "startSample": 0,
       "endSample": 16000,
       "text": "テスト"
-    }
+    },
+    "rowVersion": 3,
+    "totalSegments": 1,
+    "recognizedSegments": 1,
+    "characters": 3,
+    "mediaDurationMs": 1000
   }
 }

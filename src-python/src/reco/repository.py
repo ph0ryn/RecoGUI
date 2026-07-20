@@ -90,6 +90,31 @@ class SessionPage:
   next_cursor: str | None
 
 
+@dataclass(frozen=True)
+class SegmentMutationReceipt:
+  """Canonical session values committed with one persisted segment."""
+
+  segment: RecordingSegment
+  row_version: int
+  total_segments: int
+  recognized_segments: int
+  characters: int
+  media_duration_ms: int
+
+
+@dataclass(frozen=True)
+class SessionMutationReceipt:
+  """Canonical session values committed with one lifecycle transition."""
+
+  state: SessionState
+  row_version: int
+  total_segments: int
+  recognized_segments: int
+  characters: int
+  media_duration_ms: int
+  ended_at: str | None
+
+
 class RecordingRepository:
   """Thread-safe-by-connection SQLite repository for RecoGUI."""
 
@@ -143,28 +168,39 @@ class RecordingRepository:
     end_reason: str | None = None,
     error_code: str | None = None,
     error_message: str | None = None,
-  ) -> None:
-    """Transition a session and durably record terminal details."""
+  ) -> SessionMutationReceipt:
+    """Transition a session and return the canonical committed values."""
 
     now = _now()
     ended_at = now if state in TERMINAL_STATES else None
     with self._connect() as connection:
-      cursor = connection.execute(
+      row = connection.execute(
         """
         UPDATE app_sessions
         SET state = ?, end_reason = ?, error_code = ?, error_message = ?,
             ended_at = COALESCE(?, ended_at), updated_at = ?, row_version = row_version + 1
         WHERE session_id = ?
+        RETURNING state, row_version, total_segments, recognized_segments,
+          characters, media_duration_ms, ended_at
         """,
         (state.value, end_reason, error_code, error_message, ended_at, now, session_id),
-      )
-      if cursor.rowcount != 1:
+      ).fetchone()
+      if row is None:
         raise RepositoryError(f"Unknown session: {session_id}")
       if state in TERMINAL_STATES:
         self._update_search(connection, session_id)
+      return SessionMutationReceipt(
+        state=SessionState(str(row["state"])),
+        row_version=int(row["row_version"]),
+        total_segments=int(row["total_segments"]),
+        recognized_segments=int(row["recognized_segments"]),
+        characters=int(row["characters"]),
+        media_duration_ms=int(row["media_duration_ms"]),
+        ended_at=str(row["ended_at"]) if row["ended_at"] is not None else None,
+      )
 
-  def append_segment(self, session_id: str, segment: TranscriptSegment | RecordingSegment) -> None:
-    """Commit a segment and its session aggregates in one transaction."""
+  def append_segment(self, session_id: str, segment: TranscriptSegment | RecordingSegment) -> SegmentMutationReceipt:
+    """Commit a segment and return the canonical values from that transaction."""
 
     record = segment if isinstance(segment, RecordingSegment) else RecordingSegment.from_transcript(segment)
     with self._connect() as connection:
@@ -188,7 +224,7 @@ class RecordingRepository:
             json.dumps(asdict(record), ensure_ascii=False, default=str, separators=(",", ":")),
           ),
         )
-        cursor = connection.execute(
+        row = connection.execute(
           """
           UPDATE app_sessions
           SET total_segments = total_segments + 1,
@@ -197,12 +233,21 @@ class RecordingRepository:
               media_duration_ms = MAX(media_duration_ms, CAST(? * 1000 / sample_rate AS INTEGER)),
               updated_at = ?, row_version = row_version + 1
           WHERE session_id = ? AND state IN ('preparing', 'running', 'stopping')
+          RETURNING row_version, total_segments, recognized_segments, characters, media_duration_ms
           """,
           (record.text, record.text, record.end_sample, _now(), session_id),
-        )
-        if cursor.rowcount != 1:
+        ).fetchone()
+        if row is None:
           raise RepositoryError(f"Session is not writable: {session_id}")
         connection.execute("COMMIT")
+        return SegmentMutationReceipt(
+          segment=record,
+          row_version=int(row["row_version"]),
+          total_segments=int(row["total_segments"]),
+          recognized_segments=int(row["recognized_segments"]),
+          characters=int(row["characters"]),
+          media_duration_ms=int(row["media_duration_ms"]),
+        )
       except BaseException:
         with suppress(sqlite3.Error):
           connection.execute("ROLLBACK")
@@ -214,20 +259,27 @@ class RecordingRepository:
     if not 1 <= segment_limit <= 500 or segment_offset < 0:
       raise ValueError("Segment pagination is out of range")
     with self._connect(readonly=True) as connection:
-      row = connection.execute("SELECT * FROM app_sessions WHERE session_id = ?", (session_id,)).fetchone()
-      if row is None:
-        raise RepositoryError(f"Unknown session: {session_id}")
-      segments = connection.execute(
-        """
-        SELECT segment_index, start_sample, end_sample, split_reason, text, raw_text, diagnostics_json
-        FROM app_segments WHERE session_id = ? ORDER BY segment_index LIMIT ? OFFSET ?
-        """,
-        (session_id, segment_limit, segment_offset),
-      ).fetchall()
-      result = dict(row)
-      result["segments"] = [dict(segment) for segment in segments]
-      result["nextSegmentOffset"] = segment_offset + len(segments) if len(segments) == segment_limit else None
-      return result
+      connection.execute("BEGIN")
+      try:
+        row = connection.execute("SELECT * FROM app_sessions WHERE session_id = ?", (session_id,)).fetchone()
+        if row is None:
+          raise RepositoryError(f"Unknown session: {session_id}")
+        segments = connection.execute(
+          """
+          SELECT segment_index, start_sample, end_sample, split_reason, text, raw_text, diagnostics_json
+          FROM app_segments WHERE session_id = ? ORDER BY segment_index LIMIT ? OFFSET ?
+          """,
+          (session_id, segment_limit, segment_offset),
+        ).fetchall()
+        result = dict(row)
+        result["segments"] = [dict(segment) for segment in segments]
+        result["nextSegmentOffset"] = segment_offset + len(segments) if len(segments) == segment_limit else None
+        connection.execute("COMMIT")
+        return result
+      except BaseException:
+        with suppress(sqlite3.Error):
+          connection.execute("ROLLBACK")
+        raise
 
   def list_sessions(
     self,

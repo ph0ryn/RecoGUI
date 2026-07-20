@@ -20,7 +20,15 @@ describe("shared protocol fixtures", () => {
 
     expect(eventFixture).toMatchObject({
       event: "segment.persisted",
+      payload: {
+        characters: 3,
+        mediaDurationMs: 1_000,
+        rowVersion: 3,
+        segment: { segmentIndex: 0 },
+        totalSegments: 1,
+      },
       protocolVersion: 1,
+      sequence: 2,
       type: "event",
     });
   });

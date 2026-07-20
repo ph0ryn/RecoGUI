@@ -17,7 +17,7 @@ export interface TranscriptSegment {
   text: string;
 }
 
-export interface TranscriptionSession {
+export interface SessionSummary {
   id: string;
   title: string;
   status: SessionStatus;
@@ -28,13 +28,17 @@ export interface TranscriptionSession {
   inputName: string;
   language: string;
   model: string;
+  rowVersion: number;
   segmentCount: number;
   characterCount: number;
   snippet?: string;
   errorCode?: string;
   errorMessage?: string;
+}
+
+export interface SessionDetail extends SessionSummary {
   segments: TranscriptSegment[];
-  segmentsLoaded?: boolean;
+  segmentsLoaded: true;
 }
 
 export type ExportFormat = "txt" | "markdown" | "json" | "srt" | "vtt" | "csv";
@@ -52,7 +56,7 @@ export interface AudioInput {
 }
 
 export interface HistoryPage {
-  items: TranscriptionSession[];
+  items: SessionSummary[];
   nextCursor?: string;
 }
 
@@ -64,7 +68,7 @@ export interface ExportResult {
 }
 
 export interface EngineSnapshot {
-  sessions: TranscriptionSession[];
+  sessions: (SessionSummary | SessionDetail)[];
   model: ModelState;
   activeSessionId?: string;
   nextCursor?: string;
@@ -73,5 +77,16 @@ export interface EngineSnapshot {
 export interface EngineEvent {
   event: string;
   payload: unknown;
+  sequence: number;
   sessionId?: string;
+}
+
+export interface PersistedSegmentReceipt {
+  characters: number;
+  mediaDurationMs: number;
+  recognizedSegments: number;
+  rowVersion: number;
+  segment: TranscriptSegment;
+  sessionId: string;
+  totalSegments: number;
 }

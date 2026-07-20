@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import zipfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Event
 
@@ -54,6 +56,84 @@ def test_session_and_segment_are_committed_before_read(tmp_path: Path) -> None:
   assert value["characters"] == 5
   assert value["segments"][0]["text"] == "hello"
   repository.integrity_check()
+
+
+def test_append_segment_returns_monotonic_committed_session_values(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(new_session())
+  repository.set_state(session_id, SessionState.RUNNING)
+
+  first = repository.append_segment(session_id, segment(text="hello"))
+  second = repository.append_segment(session_id, segment(index=1, text="world!"))
+  persisted = repository.get_session(session_id)
+
+  assert first.row_version == 3
+  assert (first.total_segments, first.recognized_segments, first.characters, first.media_duration_ms) == (1, 1, 5, 1000)
+  assert second.row_version == first.row_version + 1
+  assert (second.total_segments, second.recognized_segments, second.characters, second.media_duration_ms) == (
+    2,
+    2,
+    11,
+    2000,
+  )
+  assert second.segment.index == 1
+  assert persisted["row_version"] == second.row_version
+  assert persisted["total_segments"] == second.total_segments
+  assert persisted["recognized_segments"] == second.recognized_segments
+  assert persisted["characters"] == second.characters
+  assert persisted["media_duration_ms"] == second.media_duration_ms
+
+
+def test_append_segment_failure_rolls_back_segment_and_session_values(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(new_session())
+  repository.set_state(session_id, SessionState.STOPPED, end_reason="userStop")
+  before = repository.get_session(session_id)
+
+  with pytest.raises(RepositoryError, match="not writable"):
+    repository.append_segment(session_id, segment())
+
+  after = repository.get_session(session_id)
+  assert after["segments"] == []
+  assert after["row_version"] == before["row_version"]
+  assert after["total_segments"] == 0
+
+
+def test_get_session_reads_revision_and_segments_from_one_snapshot(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(new_session())
+  repository.set_state(session_id, SessionState.RUNNING)
+  original_connect = repository._connect
+  appended = False
+
+  class InterleavingConnection:
+    def __init__(self, connection: sqlite3.Connection) -> None:
+      self.connection = connection
+
+    def execute(self, sql: str, parameters: tuple[str | int, ...] = ()) -> sqlite3.Cursor:
+      nonlocal appended
+      if "FROM app_segments" in sql and not appended:
+        appended = True
+        repository.append_segment(session_id, segment())
+
+      return self.connection.execute(sql, parameters)
+
+  @contextmanager
+  def interleaving_connect(*, readonly: bool = False) -> Iterator[sqlite3.Connection | InterleavingConnection]:
+    with original_connect(readonly=readonly) as connection:
+      yield InterleavingConnection(connection) if readonly else connection
+
+  monkeypatch.setattr(repository, "_connect", interleaving_connect)
+
+  snapshot = repository.get_session(session_id)
+  current = repository.get_session(session_id)
+
+  assert snapshot["row_version"] == 2
+  assert snapshot["segments"] == []
+  assert current["row_version"] == 3
+  assert len(current["segments"]) == 1
 
 
 def test_history_is_cursor_paginated_newest_first(tmp_path: Path) -> None:

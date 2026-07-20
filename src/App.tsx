@@ -5,12 +5,15 @@ import {
   type PointerEvent as ReactPointerEvent,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
 } from "react";
 
 import "./App.css";
 import { recoBridge } from "./bridge";
+import { initialSessionState, sessionStateReducer, type SessionEntity } from "./sessionState";
+import { useEngineEvents } from "./useEngineEvents";
 
 import type {
   AudioInput,
@@ -18,9 +21,8 @@ import type {
   ExportFormat,
   InputKind,
   ModelState,
+  PersistedSegmentReceipt,
   SessionStatus,
-  TranscriptSegment,
-  TranscriptionSession,
 } from "./types";
 
 interface ExportOperation {
@@ -93,7 +95,7 @@ function dayGroup(isoDate: string): string {
   return new Intl.DateTimeFormat("ja-JP", { day: "numeric", month: "long" }).format(value);
 }
 
-function matchesSession(session: TranscriptionSession, query: string): boolean {
+function matchesSession(session: SessionEntity, query: string): boolean {
   const normalized = query.trim().toLocaleLowerCase("ja-JP");
 
   if (!normalized) return true;
@@ -106,7 +108,7 @@ function matchesSession(session: TranscriptionSession, query: string): boolean {
   ].some((value) => value.toLocaleLowerCase("ja-JP").includes(normalized));
 }
 
-function getSnippet(session: TranscriptionSession, query: string): string | undefined {
+function getSnippet(session: SessionEntity, query: string): string | undefined {
   if (!query.trim()) return session.snippet;
   const segment = session.segments.find(({ text }) =>
     text.toLocaleLowerCase("ja-JP").includes(query.trim().toLocaleLowerCase("ja-JP")),
@@ -116,9 +118,8 @@ function getSnippet(session: TranscriptionSession, query: string): string | unde
 }
 
 function App() {
-  const [sessions, setSessions] = useState<TranscriptionSession[]>([]);
+  const [sessionState, dispatchSessions] = useReducer(sessionStateReducer, initialSessionState);
   const [model, setModel] = useState<ModelState>({ status: "loading" });
-  const [activeSessionId, setActiveSessionId] = useState<string>();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [anchorId, setAnchorId] = useState<string>();
   const [query, setQuery] = useState("");
@@ -144,7 +145,7 @@ function App() {
   );
   const [exportOperation, setExportOperation] = useState<ExportOperation>();
   const [contextMenu, setContextMenu] = useState<{
-    session: TranscriptionSession;
+    session: SessionEntity;
     x: number;
     y: number;
   }>();
@@ -153,6 +154,10 @@ function App() {
   const newButtonRef = useRef<HTMLButtonElement>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const dialogInvokerRef = useRef<HTMLElement | null>(null);
+  const sessions = sessionState.orderedSessionIds
+    .map((id) => sessionState.sessionsById[id])
+    .filter((session): session is SessionEntity => session !== undefined);
+  const { activeSessionId } = sessionState;
 
   const orderedSessions = useMemo(() => {
     return [...sessions]
@@ -171,7 +176,7 @@ function App() {
   const selectedSessions = sessions.filter(({ id }) => selectedIds.has(id));
   const selectedSession = selectedSessions.length === 1 ? selectedSessions[0] : undefined;
   const displayGroups = useMemo(() => {
-    const groups = new Map<string, TranscriptionSession[]>();
+    const groups = new Map<string, SessionEntity[]>();
 
     for (const session of orderedSessions.filter(({ id }) => id !== activeSessionId)) {
       const group = dayGroup(session.startedAt);
@@ -184,15 +189,17 @@ function App() {
 
   useEffect(() => {
     let alive = true;
-    const unlisteners: (() => void)[] = [];
 
     void recoBridge
       .getSnapshot()
       .then((snapshot) => {
         if (!alive) return;
-        setSessions(snapshot.sessions);
+        dispatchSessions({
+          activeSessionId: snapshot.activeSessionId,
+          sessions: snapshot.sessions,
+          type: "bootstrap",
+        });
         setModel(snapshot.model);
-        setActiveSessionId(snapshot.activeSessionId);
         setNextCursor(snapshot.nextCursor);
         const savedId = localStorage.getItem("reco.lastSessionId");
         const initialId = snapshot.sessions.some(({ id }) => id === savedId)
@@ -204,31 +211,25 @@ function App() {
       .catch(() => setFatalError("エンジンに接続できませんでした。アプリを再起動してください。"))
       .finally(() => setIsLoading(false));
 
-    void recoBridge.onEngineEvent(handleEngineEvent).then((stopListening) => {
-      unlisteners.push(stopListening);
-    });
-    void recoBridge
-      .onCloseRequested(({ sessionId }) => {
-        setCloseRequest({ sessionId });
-        setDialog("close");
-      })
-      .then((stopListening) => {
-        unlisteners.push(stopListening);
-      });
-    void recoBridge
-      .onCloseForceRequired(({ error, sessionId }) => {
-        setCloseRequest({ error, sessionId: sessionId ?? undefined });
-        setDialog("forceClose");
-      })
-      .then((stopListening) => {
-        unlisteners.push(stopListening);
-      });
-
     return () => {
       alive = false;
-      for (const unlisten of unlisteners) unlisten();
     };
   }, []);
+
+  useEngineEvents({
+    onCloseForceRequired: ({ error, sessionId }) => {
+      setCloseRequest({ error, sessionId: sessionId ?? undefined });
+      setDialog("forceClose");
+    },
+    onCloseRequested: ({ sessionId }) => {
+      setCloseRequest({ sessionId });
+      setDialog("close");
+    },
+    onEngineEvent: handleEngineEvent,
+    onSubscriptionError: () => {
+      setFatalError("エンジンのイベント購読に失敗しました。アプリを再起動してください。");
+    },
+  });
 
   useEffect(() => {
     if (isLoading) return;
@@ -251,13 +252,7 @@ function App() {
       void historyRequest
         .then((page) => {
           if (!alive) return;
-          setSessions((current) => {
-            const active = current.find(({ id }) => id === activeSessionId);
-
-            return active && !page.items.some(({ id }) => id === active.id)
-              ? [active, ...page.items]
-              : page.items;
-          });
+          dispatchSessions({ sessions: page.items, type: "historyPageLoaded" });
           setNextCursor(page.nextCursor);
         })
         .catch(() => setToast("履歴を読み込めませんでした。"))
@@ -288,9 +283,7 @@ function App() {
       .getSession(selectedSession.id)
       .then((detail) => {
         if (!alive) return;
-        setSessions((current) =>
-          current.map((session) => (session.id === detail.id ? detail : session)),
-        );
+        dispatchSessions({ session: detail, type: "detailLoaded" });
       })
       .catch(() => setToast("文字起こし本文を読み込めませんでした。"));
 
@@ -332,72 +325,112 @@ function App() {
       const snapshot = message.payload as {
         activeSessionId?: string;
         model: ModelState;
-        sessions: TranscriptionSession[];
+        sessions: SessionEntity[];
       };
 
-      setSessions(snapshot.sessions);
+      dispatchSessions({
+        activeSessionId: snapshot.activeSessionId,
+        sessions: snapshot.sessions,
+        type: "bootstrap",
+      });
       setModel(snapshot.model);
-      setActiveSessionId(snapshot.activeSessionId);
     }
     if (message.event === "segment.persisted") {
-      const payload = message.payload as { segment: TranscriptSegment; sessionId?: string };
+      const payload = message.payload as Omit<PersistedSegmentReceipt, "sessionId"> & {
+        sessionId?: string;
+      };
       const sessionId = payload.sessionId ?? message.sessionId;
 
       if (!sessionId) {
         return;
       }
 
-      setSessions((current) =>
-        current.map((session) =>
-          session.id === sessionId
-            ? {
-                ...session,
-                segmentCount: session.segmentCount + 1,
-                segments: [...session.segments, payload.segment],
-              }
-            : session,
-        ),
-      );
+      if (!sessionState.sessionsById[sessionId]) {
+        void recoBridge
+          .getSession(sessionId)
+          .then((detail) => dispatchSessions({ session: detail, type: "detailLoaded" }))
+          .catch(() => undefined);
+      }
+
+      dispatchSessions({ receipt: { ...payload, sessionId }, type: "segmentPersisted" });
     }
     if (message.event === "session.stateChanged") {
-      const payload = message.payload as { state?: SessionStatus };
+      const payload = message.payload as {
+        characters?: number;
+        endedAt?: string;
+        mediaDurationMs?: number;
+        rowVersion?: number;
+        state?: SessionStatus;
+        totalSegments?: number;
+      };
 
-      if (message.sessionId && payload.state) {
-        setSessions((current) =>
-          current.map((session) =>
-            session.id === message.sessionId ? { ...session, status: payload.state! } : session,
-          ),
-        );
+      if (message.sessionId && payload.state && payload.rowVersion !== undefined) {
+        if (!sessionState.sessionsById[message.sessionId]) {
+          void recoBridge
+            .getSession(message.sessionId)
+            .then((detail) => dispatchSessions({ session: detail, type: "detailLoaded" }))
+            .catch(() => undefined);
+        }
+        dispatchSessions({
+          characterCount: payload.characters,
+          durationMs: payload.mediaDurationMs,
+          endedAt: payload.endedAt,
+          rowVersion: payload.rowVersion,
+          segmentCount: payload.totalSegments,
+          sessionId: message.sessionId,
+          status: payload.state,
+          type: "statusChanged",
+        });
       }
     }
     if (message.event === "session.completed") {
-      const payload = message.payload as { state?: SessionStatus };
+      const payload = message.payload as {
+        characters?: number;
+        endedAt?: string;
+        mediaDurationMs?: number;
+        rowVersion?: number;
+        state?: SessionStatus;
+        totalSegments?: number;
+      };
 
-      setSessions((current) =>
-        current.map((session) =>
-          session.id === message.sessionId
-            ? { ...session, status: payload.state ?? "completed" }
-            : session,
-        ),
-      );
-      setActiveSessionId(undefined);
+      if (message.sessionId && payload.rowVersion !== undefined) {
+        dispatchSessions({
+          characterCount: payload.characters,
+          durationMs: payload.mediaDurationMs,
+          endedAt: payload.endedAt,
+          rowVersion: payload.rowVersion,
+          segmentCount: payload.totalSegments,
+          sessionId: message.sessionId,
+          status: payload.state ?? "completed",
+          type: "statusChanged",
+        });
+      }
     }
     if (message.event === "session.failed") {
-      const payload = message.payload as { code?: string; message?: string };
+      const payload = message.payload as {
+        characters?: number;
+        code?: string;
+        endedAt?: string;
+        mediaDurationMs?: number;
+        message?: string;
+        rowVersion?: number;
+        totalSegments?: number;
+      };
 
-      setSessions((current) =>
-        current.map((session) =>
-          session.id === message.sessionId
-            ? {
-                ...session,
-                errorCode: payload.code,
-                errorMessage: payload.message,
-                status: "failed",
-              }
-            : session,
-        ),
-      );
-      setActiveSessionId(undefined);
+      if (message.sessionId && payload.rowVersion !== undefined) {
+        dispatchSessions({
+          characterCount: payload.characters,
+          durationMs: payload.mediaDurationMs,
+          endedAt: payload.endedAt,
+          errorCode: payload.code,
+          errorMessage: payload.message,
+          rowVersion: payload.rowVersion,
+          segmentCount: payload.totalSegments,
+          sessionId: message.sessionId,
+          status: "failed",
+          type: "statusChanged",
+        });
+      }
     }
     if (message.event === "model.loading") {
       setModel({ status: "loading" });
@@ -417,13 +450,7 @@ function App() {
     if (message.event === "history.changed" && message.sessionId) {
       void recoBridge
         .getSession(message.sessionId)
-        .then((detail) =>
-          setSessions((current) =>
-            current.some(({ id }) => id === detail.id)
-              ? current.map((session) => (session.id === detail.id ? detail : session))
-              : [detail, ...current],
-          ),
-        )
+        .then((detail) => dispatchSessions({ session: detail, type: "canonicalReconciled" }))
         .catch(() => undefined);
     }
     if (message.event === "export.progress") {
@@ -492,7 +519,7 @@ function App() {
     }
   }
 
-  function selectSession(session: TranscriptionSession, additive: boolean, range: boolean): void {
+  function selectSession(session: SessionEntity, additive: boolean, range: boolean): void {
     const index = orderedSessions.findIndex(({ id }) => id === session.id);
 
     setDetailQuery("");
@@ -578,11 +605,7 @@ function App() {
         ? await recoBridge.searchHistory({ ...historyQuery, query })
         : await recoBridge.listHistory(historyQuery);
 
-      setSessions((current) => {
-        const known = new Set(current.map(({ id }) => id));
-
-        return [...current, ...page.items.filter(({ id }) => !known.has(id))];
-      });
+      dispatchSessions({ append: true, sessions: page.items, type: "historyPageLoaded" });
       setNextCursor(page.nextCursor);
     } catch {
       setToast("続きの履歴を読み込めませんでした。");
@@ -610,9 +633,9 @@ function App() {
         if (!file) return;
         input = { inputKind, ...file };
       }
-      const { sessionId } = await recoBridge.startSession(input);
+      const { rowVersion, sessionId } = await recoBridge.startSession(input);
       const startedAt = new Date().toISOString();
-      const optimisticSession: TranscriptionSession = {
+      const optimisticSession: SessionEntity = {
         characterCount: 0,
         durationMs: 0,
         id: sessionId,
@@ -620,8 +643,10 @@ function App() {
         inputName: input.inputName ?? "システムの既定マイク",
         language: "日本語",
         model: "Qwen3-ASR 1.7B JA",
+        rowVersion,
         segmentCount: 0,
         segments: [],
+        segmentsLoaded: true,
         startedAt,
         status: "preparing",
         title:
@@ -630,10 +655,7 @@ function App() {
       };
 
       setDialog(null);
-      setSessions((current) =>
-        current.some(({ id }) => id === sessionId) ? current : [optimisticSession, ...current],
-      );
-      setActiveSessionId(sessionId);
+      dispatchSessions({ session: optimisticSession, type: "sessionStarted" });
       setSelectedIds(new Set([sessionId]));
       setToast(
         inputKind === "microphone" ? "録音を開始しました。" : "音声ファイルを受け付けました。",
@@ -651,13 +673,6 @@ function App() {
     try {
       if (cancel) await recoBridge.cancelSession(activeSessionId);
       else await recoBridge.stopSession(activeSessionId);
-      setSessions((current) =>
-        current.map((session) =>
-          session.id === activeSessionId
-            ? { ...session, status: cancel ? "stopped" : "stopping" }
-            : session,
-        ),
-      );
       setToast(
         cancel ? "未処理部分を中断しています。保存済みの内容は残ります。" : "停止処理中です。",
       );
@@ -679,7 +694,7 @@ function App() {
       const remaining = oldSessions.filter(({ id }) => !ids.includes(id));
       const nextIndex = Math.max(0, Math.min(firstIndex, remaining.length - 1));
 
-      setSessions(remaining);
+      dispatchSessions({ sessionIds: ids, type: "sessionsDeleted" });
       if (remaining.length) {
         setSelectedIds(new Set([remaining[nextIndex].id]));
       } else {
@@ -764,7 +779,7 @@ function App() {
 
   function openHistoryContextMenu(
     event: React.MouseEvent<HTMLButtonElement>,
-    session: TranscriptionSession,
+    session: SessionEntity,
   ): void {
     event.preventDefault();
     selectSession(session, false, false);
@@ -1137,7 +1152,7 @@ function App() {
 interface HistoryRowProps {
   query: string;
   selected: boolean;
-  session: TranscriptionSession;
+  session: SessionEntity;
   onContextMenu: (event: React.MouseEvent<HTMLButtonElement>) => void;
   onSelect: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }
@@ -1189,7 +1204,7 @@ function StatusBadge({ status }: { status: SessionStatus }) {
 interface SessionHeaderProps {
   detailQuery: string;
   moreButtonRef: React.RefObject<HTMLButtonElement | null>;
-  session: TranscriptionSession;
+  session: SessionEntity;
   onDelete: () => void;
   onExport: () => void;
   onQueryChange: (value: string) => void;
@@ -1263,7 +1278,7 @@ interface TranscriptProps {
   autoFollow: boolean;
   detailQuery: string;
   scrollRef: React.RefObject<HTMLDivElement | null>;
-  session: TranscriptionSession;
+  session: SessionEntity;
   onAutoFollowChange: (value: boolean) => void;
 }
 
@@ -1364,7 +1379,7 @@ function LiveControls({
   session,
 }: {
   disabled: boolean;
-  session: TranscriptionSession;
+  session: SessionEntity;
   onCancel: () => void;
   onStop: () => void;
 }) {
@@ -1407,7 +1422,7 @@ function MultiSelection({
   onExport,
   sessions,
 }: {
-  sessions: TranscriptionSession[];
+  sessions: SessionEntity[];
   onClear: () => void;
   onDelete: () => void;
   onExport: () => void;
@@ -1579,7 +1594,7 @@ function DeleteDialog({
   sessions,
 }: {
   disabled: boolean;
-  sessions: TranscriptionSession[];
+  sessions: SessionEntity[];
   onClose: () => void;
   onConfirm: () => void;
 }) {
@@ -1636,7 +1651,7 @@ function ExportDialog({
 }: {
   disabled: boolean;
   format: ExportFormat;
-  sessions: TranscriptionSession[];
+  sessions: SessionEntity[];
   onClose: () => void;
   onConfirm: () => void;
   onFormatChange: (format: ExportFormat) => void;

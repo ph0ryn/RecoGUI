@@ -14,6 +14,7 @@ export const mockSnapshot: EngineSnapshot = {
       inputName: "MacBookのマイク",
       language: "日本語",
       model: "Qwen3-ASR 1.7B JA",
+      rowVersion: 5,
       segmentCount: 3,
       segments: [
         {
@@ -38,6 +39,7 @@ export const mockSnapshot: EngineSnapshot = {
           text: "録音中に過去の記録を開いても、処理はそのまま続きます。",
         },
       ],
+      segmentsLoaded: true,
       startedAt: new Date(now - 184_000).toISOString(),
       status: "running",
       title: "新しい録音",
@@ -51,6 +53,7 @@ export const mockSnapshot: EngineSnapshot = {
       inputName: "プロジェクト定例.wav",
       language: "日本語",
       model: "Qwen3-ASR 1.7B JA",
+      rowVersion: 6,
       segmentCount: 4,
       segments: [
         {
@@ -82,6 +85,7 @@ export const mockSnapshot: EngineSnapshot = {
           text: "書き出し形式はテキスト、Markdown、JSON、字幕、CSVに対応します。",
         },
       ],
+      segmentsLoaded: true,
       startedAt: new Date(now - 5_045_000).toISOString(),
       status: "completed",
       title: "プロジェクト定例",
@@ -95,6 +99,7 @@ export const mockSnapshot: EngineSnapshot = {
       inputName: "外部マイク",
       language: "日本語",
       model: "Qwen3-ASR 1.7B JA",
+      rowVersion: 4,
       segmentCount: 2,
       segments: [
         {
@@ -112,6 +117,7 @@ export const mockSnapshot: EngineSnapshot = {
           text: "検索結果から目的の発言へすぐ移動できることが重要だそうです。",
         },
       ],
+      segmentsLoaded: true,
       startedAt: new Date(now - 87_109_000).toISOString(),
       status: "stopped",
       title: "ユーザーインタビュー",
@@ -127,6 +133,7 @@ export const mockSnapshot: EngineSnapshot = {
       inputName: "講義録音.m4a",
       language: "日本語",
       model: "Qwen3-ASR 1.7B JA",
+      rowVersion: 3,
       segmentCount: 1,
       segments: [
         {
@@ -137,6 +144,7 @@ export const mockSnapshot: EngineSnapshot = {
           text: "保存が完了した部分までを表示しています。",
         },
       ],
+      segmentsLoaded: true,
       startedAt: new Date(now - 172_241_000).toISOString(),
       status: "abandoned",
       title: "講義録音（部分結果）",

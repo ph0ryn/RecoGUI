@@ -126,6 +126,10 @@ describe("RecoGUI", () => {
     bridgeMocks.eventHandler?.({
       event: "segment.persisted",
       payload: {
+        characters: 242,
+        mediaDurationMs: 92_000,
+        recognizedSegments: 4,
+        rowVersion: 6,
         segment: {
           endMs: 92_000,
           id: "new-segment",
@@ -133,12 +137,44 @@ describe("RecoGUI", () => {
           startMs: 88_000,
           text: "新しい発言",
         },
+        totalSegments: 4,
       },
+      sequence: 10,
       sessionId: "session-live",
     });
 
     expect(screen.getByRole("heading", { name: "プロジェクト定例" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /処理中へ戻る/ })).toBeInTheDocument();
+  });
+
+  it("renders a duplicated persisted segment exactly once", async () => {
+    await renderLoadedApp();
+    const event: EngineEvent = {
+      event: "segment.persisted",
+      payload: {
+        characters: 242,
+        mediaDurationMs: 92_000,
+        recognizedSegments: 4,
+        rowVersion: 6,
+        segment: {
+          endMs: 92_000,
+          id: "session-live:4",
+          sequence: 4,
+          startMs: 88_000,
+          text: "重複しない確定文",
+        },
+        totalSegments: 4,
+      },
+      sequence: 20,
+      sessionId: "session-live",
+    };
+
+    bridgeMocks.eventHandler?.(event);
+    bridgeMocks.eventHandler?.({ ...event, sequence: 21 });
+
+    expect(await screen.findByText("重複しない確定文")).toBeInTheDocument();
+    expect(screen.getAllByText("重複しない確定文")).toHaveLength(1);
+    expect(screen.getByText("4セグメント")).toBeInTheDocument();
   });
 
   it("sends Stop and Cancel for the active session", async () => {
@@ -293,12 +329,14 @@ describe("RecoGUI", () => {
     bridgeMocks.eventHandler?.({
       event: "export.progress",
       payload: { operationId: "export-1", progress: 0.5 },
+      sequence: 11,
     });
 
     expect(await screen.findByRole("progressbar", { name: "Exportの進捗" })).toHaveValue(0.5);
     bridgeMocks.eventHandler?.({
       event: "export.completed",
       payload: { failedSessionIds: ["session-1"], operationId: "export-1" },
+      sequence: 12,
     });
 
     expect(await screen.findByRole("button", { name: "失敗した1件を再試行" })).toBeInTheDocument();

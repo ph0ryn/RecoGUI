@@ -12,7 +12,7 @@ import pytest
 import reco.engine as engine_module
 from reco.engine import ModelRuntime, RecoEngine, SessionControl
 from reco.protocol import NdjsonWriter, Request
-from reco.repository import ExportResult, NewSession, SessionPage, SessionState
+from reco.repository import ExportResult, NewSession, SessionMutationReceipt, SessionPage, SessionState
 from reco.sidecar import SidecarServer
 
 
@@ -37,8 +37,9 @@ class StubRepository:
       )
     return ExportResult(tuple(ids), ())
 
-  def set_state(self, session_id: str, state: SessionState) -> None:
+  def set_state(self, session_id: str, state: SessionState) -> SessionMutationReceipt:
     self.states.append((session_id, state))
+    return SessionMutationReceipt(state, 2, 0, 0, 0, 0, None)
 
   def search_sessions(self, query: str, **options: object) -> SessionPage:
     self.search_options = {"query": query, **options}

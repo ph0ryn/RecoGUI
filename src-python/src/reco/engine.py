@@ -25,7 +25,7 @@ from reco.model_manager import MODEL_ID, MODEL_REVISION, ModelManager
 from reco.models import TranscriptModelMetadata, TranscriptSegment
 from reco.pipeline import AsrWorker, TranscriptionProgress, run_transcription, start_asr_worker
 from reco.recording import fingerprint_file_snapshot
-from reco.repository import NewSession, RecordingRepository, SessionState
+from reco.repository import NewSession, RecordingRepository, SessionMutationReceipt, SessionState
 from reco.transcription import LocalAsrTranscriptionService
 from reco.vad import OnnxSileroProbabilityModel, SileroVadEngine, ensure_silero_vad_asset
 
@@ -201,27 +201,27 @@ class RecoEngine:
       self._active_control = control
       self._active_thread = thread
     thread.start()
-    return {"sessionId": session_id, "state": SessionState.PREPARING.value}
+    return {"sessionId": session_id, "state": SessionState.PREPARING.value, "rowVersion": 1}
 
   def stop_session(self, session_id: str, *, reason: str = "userStop") -> dict[str, object]:
     """Stop capture, flush VAD, and drain all queued ASR."""
 
-    control = self._require_active(session_id)
-    self.repository.set_state(session_id, SessionState.STOPPING)
     if reason not in {"userStop", "systemSleep", "appQuit"}:
       raise EngineCommandError("invalid_stop_reason", f"Unsupported stop reason: {reason}")
+    control = self._require_active(session_id)
+    receipt = self.repository.set_state(session_id, SessionState.STOPPING)
     control.request_stop(reason)
-    self._emit("session.stateChanged", session_id, {"state": SessionState.STOPPING.value, "reason": reason})
-    return {"sessionId": session_id, "state": SessionState.STOPPING.value}
+    self._emit("session.stateChanged", session_id, {**self._state_receipt(receipt), "reason": reason})
+    return {"sessionId": session_id, **self._state_receipt(receipt)}
 
   def cancel_session(self, session_id: str) -> dict[str, object]:
     """Stop capture and discard pending, uncommitted ASR work."""
 
     control = self._require_active(session_id)
-    self.repository.set_state(session_id, SessionState.STOPPING)
+    receipt = self.repository.set_state(session_id, SessionState.STOPPING)
     control.request_cancel()
-    self._emit("session.stateChanged", session_id, {"state": SessionState.STOPPING.value, "cancelled": True})
-    return {"sessionId": session_id, "state": SessionState.STOPPING.value}
+    self._emit("session.stateChanged", session_id, {**self._state_receipt(receipt), "cancelled": True})
+    return {"sessionId": session_id, **self._state_receipt(receipt)}
 
   def shutdown(self, timeout: float = 30.0) -> None:
     """Gracefully stop the active session and resident model worker."""
@@ -264,15 +264,15 @@ class RecoEngine:
     control: SessionControl,
   ) -> None:
     try:
-      self.repository.set_state(session_id, SessionState.RUNNING)
-      self._emit("session.stateChanged", session_id, {"state": SessionState.RUNNING.value})
+      running_receipt = self.repository.set_state(session_id, SessionState.RUNNING)
+      self._emit("session.stateChanged", session_id, self._state_receipt(running_receipt))
       service, worker = self.runtime.acquire()
       if source_path is None:
         audio_input = MicrophoneInput(device=device if isinstance(device, int | str) else None)
       else:
         expected_identity = getattr(fingerprint, "identity", None)
         audio_input = LocalAudioFileInput(source_path, expected_identity=expected_identity)
-      document = run_transcription(
+      run_transcription(
         audio_input,
         SileroVadEngine(model=OnnxSileroProbabilityModel(ensure_silero_vad_asset(self.model_manager.vad_asset_path))),
         service,
@@ -292,23 +292,33 @@ class RecoEngine:
         state, reason = SessionState.STOPPED, control.stop_reason
       else:
         state, reason = SessionState.COMPLETED, "naturalEnd"
-      self.repository.set_state(session_id, state, end_reason=reason)
+      terminal_receipt = self.repository.set_state(session_id, state, end_reason=reason)
       self._emit(
         "session.completed",
         session_id,
-        {"state": state.value, "endReason": reason, "totalSegments": document.total_segments},
+        {**self._state_receipt(terminal_receipt), "endReason": reason},
       )
     except BaseException as exc:
       code = exc.code if isinstance(exc, EngineCommandError) else "transcription_failed"
+      failed_receipt = None
       with _ignore_repository_error():
-        self.repository.set_state(
+        failed_receipt = self.repository.set_state(
           session_id,
           SessionState.FAILED,
           end_reason=code,
           error_code=code,
           error_message=str(exc),
         )
-      self._emit("session.failed", session_id, {"code": code, "message": str(exc), "recoverable": True})
+      self._emit(
+        "session.failed",
+        session_id,
+        {
+          **(self._state_receipt(failed_receipt) if failed_receipt is not None else {}),
+          "code": code,
+          "message": str(exc),
+          "recoverable": True,
+        },
+      )
       with _ignore_repository_error():
         self.runtime.invalidate()
     finally:
@@ -320,17 +330,22 @@ class RecoEngine:
       self._emit("history.changed", session_id, {"sessionId": session_id})
 
   def _persist_segment(self, session_id: str, segment: TranscriptSegment) -> None:
-    self.repository.append_segment(session_id, segment)
+    receipt = self.repository.append_segment(session_id, segment)
     self._emit(
       "segment.persisted",
       session_id,
       {
         "segment": {
-          "sequence": segment.index,
-          "startSample": segment.start_sample,
-          "endSample": segment.end_sample,
-          "text": segment.text,
-        }
+          "segmentIndex": receipt.segment.index,
+          "startSample": receipt.segment.start_sample,
+          "endSample": receipt.segment.end_sample,
+          "text": receipt.segment.text,
+        },
+        "rowVersion": receipt.row_version,
+        "totalSegments": receipt.total_segments,
+        "recognizedSegments": receipt.recognized_segments,
+        "characters": receipt.characters,
+        "mediaDurationMs": receipt.media_duration_ms,
       },
     )
 
@@ -345,6 +360,18 @@ class RecoEngine:
         "queueDepth": progress.queue_depth,
       },
     )
+
+  @staticmethod
+  def _state_receipt(receipt: SessionMutationReceipt) -> dict[str, object]:
+    return {
+      "state": receipt.state.value,
+      "rowVersion": receipt.row_version,
+      "totalSegments": receipt.total_segments,
+      "recognizedSegments": receipt.recognized_segments,
+      "characters": receipt.characters,
+      "mediaDurationMs": receipt.media_duration_ms,
+      "endedAt": receipt.ended_at,
+    }
 
   def _require_active(self, session_id: str) -> SessionControl:
     with self._lock:

@@ -72,7 +72,7 @@ pub struct HistoryListCommand {
 #[serde(rename_all = "camelCase")]
 pub struct HistoryGetCommand {
     pub session_id: String,
-    pub segment_cursor: Option<String>,
+    pub segment_offset: Option<u64>,
     pub segment_limit: Option<u16>,
 }
 
@@ -496,5 +496,19 @@ mod tests {
         assert!(!contains_forbidden_path_key(&json!({
             "source": { "type": "file", "sourceToken": "opaque" }
         })));
+    }
+
+    #[test]
+    fn history_get_uses_numeric_segment_offset() {
+        let value = serde_json::to_value(HistoryGetCommand {
+            session_id: "session-1".into(),
+            segment_offset: Some(500),
+            segment_limit: Some(500),
+        })
+        .unwrap();
+
+        assert_eq!(value["segmentOffset"], 500);
+        assert_eq!(value["segmentLimit"], 500);
+        assert!(value.get("segmentCursor").is_none());
     }
 }

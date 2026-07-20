@@ -13,9 +13,10 @@ import type {
   HistoryPage,
   InputKind,
   ModelState,
+  SessionDetail,
+  SessionSummary,
   SessionStatus,
   TranscriptSegment,
-  TranscriptionSession,
 } from "./types";
 
 interface StartSessionInput {
@@ -56,6 +57,7 @@ interface RawSession {
   sourceDisplayName: string;
   model: string;
   language: string;
+  rowVersion: number;
   startedAt: string;
   endedAt?: string | null;
   mediaDurationMs?: number;
@@ -69,11 +71,17 @@ interface RawSession {
 }
 
 interface RawSegment {
-  segmentIndex?: number;
-  sequence?: number;
+  segmentIndex: number;
   startSample: number;
   endSample: number;
   text: string;
+}
+
+class SessionSnapshotChangedError extends Error {
+  constructor() {
+    super("Session changed while its transcript was being loaded");
+    this.name = "SessionSnapshotChangedError";
+  }
 }
 
 function hasTauriRuntime(): boolean {
@@ -102,7 +110,7 @@ function modelStatus(value: string): ModelState["status"] {
 }
 
 function mapSegment(sessionId: string, segment: RawSegment): TranscriptSegment {
-  const sequence = segment.segmentIndex ?? segment.sequence ?? 0;
+  const sequence = segment.segmentIndex;
 
   return {
     endMs: Math.round(segment.endSample / 16),
@@ -113,7 +121,7 @@ function mapSegment(sessionId: string, segment: RawSegment): TranscriptSegment {
   };
 }
 
-function mapSession(value: RawSession, detailsLoaded = false): TranscriptionSession {
+function mapSessionSummary(value: RawSession): SessionSummary {
   return {
     characterCount: value.characters ?? 0,
     durationMs: value.mediaDurationMs ?? 0,
@@ -125,13 +133,20 @@ function mapSession(value: RawSession, detailsLoaded = false): TranscriptionSess
     inputName: value.sourceDisplayName,
     language: value.language,
     model: value.model,
+    rowVersion: value.rowVersion,
     segmentCount: value.totalSegments ?? 0,
-    segments: (value.segments ?? []).map((segment) => mapSegment(value.sessionId, segment)),
-    segmentsLoaded: detailsLoaded,
     snippet: value.snippet ?? undefined,
     startedAt: value.startedAt,
     status: value.state as SessionStatus,
     title: value.title,
+  };
+}
+
+function mapSessionDetail(value: RawSession): SessionDetail {
+  return {
+    ...mapSessionSummary(value),
+    segments: (value.segments ?? []).map((segment) => mapSegment(value.sessionId, segment)),
+    segmentsLoaded: true,
   };
 }
 
@@ -201,35 +216,44 @@ export const recoBridge = {
     return { ...result, canceled: false };
   },
 
-  async getSession(sessionId: string): Promise<TranscriptionSession> {
+  async getSession(sessionId: string): Promise<SessionDetail> {
     if (!hasTauriRuntime()) {
       const session = mockSnapshot.sessions.find(({ id }) => id === sessionId);
 
       if (!session) throw new Error(`Unknown session: ${sessionId}`);
+      if (!("segments" in session)) throw new Error(`Session detail is unavailable: ${sessionId}`);
 
       return structuredClone(session);
     }
 
-    const result = await request<
-      RawSession,
-      { segmentLimit: number; segmentOffset: number; sessionId: string }
-    >("history.get", { segmentLimit: 500, segmentOffset: 0, sessionId });
-
-    while (result.nextSegmentOffset !== null && result.nextSegmentOffset !== undefined) {
-      const page = await request<
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const first = await request<
         RawSession,
         { segmentLimit: number; segmentOffset: number; sessionId: string }
-      >("history.get", {
-        segmentLimit: 500,
-        segmentOffset: result.nextSegmentOffset,
-        sessionId,
-      });
+      >("history.get", { segmentLimit: 500, segmentOffset: 0, sessionId });
+      const segments = [...(first.segments ?? [])];
+      let nextOffset = first.nextSegmentOffset;
+      let consistent = true;
 
-      result.segments = [...(result.segments ?? []), ...(page.segments ?? [])];
-      result.nextSegmentOffset = page.nextSegmentOffset;
+      while (nextOffset !== null && nextOffset !== undefined) {
+        const page = await request<
+          RawSession,
+          { segmentLimit: number; segmentOffset: number; sessionId: string }
+        >("history.get", { segmentLimit: 500, segmentOffset: nextOffset, sessionId });
+
+        if (page.rowVersion !== first.rowVersion) {
+          consistent = false;
+          break;
+        }
+
+        segments.push(...(page.segments ?? []));
+        nextOffset = page.nextSegmentOffset;
+      }
+
+      if (consistent) return mapSessionDetail({ ...first, segments });
     }
 
-    return mapSession(result, true);
+    throw new SessionSnapshotChangedError();
   },
 
   async getSnapshot(): Promise<EngineSnapshot> {
@@ -239,16 +263,20 @@ export const recoBridge = {
       request<RawEngineState>("engine.getState"),
       request<RawHistoryPage, { limit: number }>("history.list", { limit: 100 }),
     ]);
-    const sessions = history.items.map((session) => mapSession(session));
+    const sessions: (SessionSummary | SessionDetail)[] = history.items.map(mapSessionSummary);
 
     if (engine.activeSession) {
-      const active = await recoBridge.getSession(engine.activeSession);
-      const index = sessions.findIndex(({ id }) => id === active.id);
+      try {
+        const active = await recoBridge.getSession(engine.activeSession);
+        const index = sessions.findIndex(({ id }) => id === active.id);
 
-      if (index >= 0) {
-        sessions[index] = active;
-      } else {
-        sessions.unshift(active);
+        if (index >= 0) {
+          sessions[index] = active;
+        } else {
+          sessions.unshift(active);
+        }
+      } catch (error) {
+        if (!(error instanceof SessionSnapshotChangedError)) throw error;
       }
     }
 
@@ -294,7 +322,7 @@ export const recoBridge = {
     });
 
     return {
-      items: result.items.map((session) => mapSession(session)),
+      items: result.items.map(mapSessionSummary),
       nextCursor: result.nextCursor ?? undefined,
     };
   },
@@ -368,8 +396,9 @@ export const recoBridge = {
     if (!hasTauriRuntime()) {
       const normalizedQuery = query.query.trim().toLocaleLowerCase("ja-JP");
       const items = mockSnapshot.sessions.filter((session) => {
-        const textMatches = [session.title, ...session.segments.map(({ text }) => text)].some(
-          (value) => value.toLocaleLowerCase("ja-JP").includes(normalizedQuery),
+        const texts = "segments" in session ? session.segments.map(({ text }) => text) : [];
+        const textMatches = [session.title, ...texts].some((value) =>
+          value.toLocaleLowerCase("ja-JP").includes(normalizedQuery),
         );
 
         return (
@@ -391,13 +420,13 @@ export const recoBridge = {
     });
 
     return {
-      items: result.items.map((session) => mapSession(session)),
+      items: result.items.map(mapSessionSummary),
       nextCursor: result.nextCursor ?? undefined,
     };
   },
 
-  async startSession(input: StartSessionInput): Promise<{ sessionId: string }> {
-    if (!hasTauriRuntime()) return { sessionId: crypto.randomUUID() };
+  async startSession(input: StartSessionInput): Promise<{ rowVersion: number; sessionId: string }> {
+    if (!hasTauriRuntime()) return { rowVersion: 1, sessionId: crypto.randomUUID() };
 
     const source =
       input.inputKind === "microphone"
