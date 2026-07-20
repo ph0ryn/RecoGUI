@@ -86,7 +86,6 @@ button:disabled {
 .topbar {
   grid-area: topbar;
   border-bottom: 1px solid var(--line-dark);
-  border-right: 1px solid var(--line-dark);
   background: var(--panel-alt);
   user-select: none;
 }
