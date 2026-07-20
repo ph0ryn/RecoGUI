@@ -181,12 +181,12 @@ describe("RecoGUI", () => {
     const user = userEvent.setup();
 
     await renderLoadedApp();
-    await user.click(screen.getByRole("button", { name: /Stop/ }));
+    await user.click(screen.getByRole("button", { name: "処理して終了" }));
     await waitFor(() => expect(bridgeMocks.stopSession).toHaveBeenCalledWith("session-live"));
 
     cleanup();
     await renderLoadedApp();
-    await user.click(screen.getByRole("button", { name: "中断" }));
+    await user.click(screen.getByRole("button", { name: "すぐ中断" }));
     await waitFor(() => expect(bridgeMocks.cancelSession).toHaveBeenCalledWith("session-live"));
   });
 

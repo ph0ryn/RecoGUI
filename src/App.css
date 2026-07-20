@@ -146,15 +146,12 @@ button:disabled {
 .session-metadata,
 .detail-search,
 .segment time,
-.live-controls,
 .record-button,
 .input-status,
 .secondary-button,
-.ghost-button,
 .primary-button,
 .danger-button,
 .danger-secondary,
-.stop-button,
 .text-button,
 .icon-button {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -617,6 +614,13 @@ button:disabled {
   gap: 6px;
 }
 
+.header-action-spacer {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--line-dark);
+}
+
 .session-metadata {
   grid-column: 1;
   margin: 14px 0 0 -22px;
@@ -660,11 +664,9 @@ button:disabled {
 }
 
 .secondary-button,
-.ghost-button,
 .primary-button,
 .danger-button,
 .danger-secondary,
-.stop-button,
 .text-button,
 .icon-button {
   border: 0;
@@ -675,7 +677,6 @@ button:disabled {
 }
 
 .secondary-button,
-.ghost-button,
 .danger-secondary {
   min-height: 28px;
   padding: 0 10px;
@@ -684,23 +685,20 @@ button:disabled {
 }
 
 .secondary-button:hover,
-.ghost-button:hover,
 .danger-secondary:hover,
 .icon-button:hover {
   background: var(--hover);
 }
 
 .primary-button,
-.danger-button,
-.stop-button {
+.danger-button {
   min-height: 30px;
   padding: 0 13px;
   color: #fff;
   background: var(--ink);
 }
 
-.danger-button,
-.stop-button {
+.danger-button {
   background: var(--signal);
 }
 
@@ -757,6 +755,24 @@ button:disabled {
   stroke: currentcolor;
   stroke-linecap: square;
   stroke-width: 1.25;
+}
+
+.session-control-button {
+  border: 1px solid var(--line-dark);
+  background: var(--panel);
+}
+
+.session-control-button svg {
+  width: 15px;
+  height: 15px;
+  fill: currentcolor;
+  stroke: currentcolor;
+  stroke-linecap: square;
+  stroke-width: 1.5;
+}
+
+.cancel-control-button {
+  color: var(--danger);
 }
 
 .transcript-scroll {
@@ -875,30 +891,6 @@ button:disabled {
     9px "SFMono-Regular",
     Consolas,
     monospace;
-}
-
-.live-controls {
-  z-index: 5;
-  display: flex;
-  min-height: 40px;
-  align-items: center;
-  justify-content: flex-end;
-  border-top: 1px solid var(--line-dark);
-  background: var(--panel-alt);
-}
-
-.live-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.live-actions {
-  align-self: stretch;
-}
-
-.stop-button {
-  height: 100%;
 }
 
 .multi-selection {

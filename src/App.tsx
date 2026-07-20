@@ -1050,9 +1050,13 @@ function App() {
             )}
             <SessionHeader
               detailQuery={detailQuery}
+              disabled={isWorking}
+              isActive={selectedSession.id === activeSessionId}
+              onCancel={() => void stopActive(true)}
               onDelete={() => openDialog("delete")}
               onExport={() => openDialog("export")}
               onQueryChange={setDetailQuery}
+              onStop={() => void stopActive(false)}
               session={selectedSession}
             />
             <Transcript
@@ -1062,14 +1066,6 @@ function App() {
               scrollRef={transcriptRef}
               session={selectedSession}
             />
-            {selectedSession.id === activeSessionId && (
-              <LiveControls
-                disabled={isWorking}
-                onCancel={() => void stopActive(true)}
-                onStop={() => void stopActive(false)}
-                session={selectedSession}
-              />
-            )}
           </>
         ) : (
           <EmptyState
@@ -1244,17 +1240,25 @@ function StatusBadge({ status }: { status: SessionStatus }) {
 
 interface SessionHeaderProps {
   detailQuery: string;
+  disabled: boolean;
+  isActive: boolean;
   session: SessionEntity;
+  onCancel: () => void;
   onDelete: () => void;
   onExport: () => void;
   onQueryChange: (value: string) => void;
+  onStop: () => void;
 }
 
 function SessionHeader({
   detailQuery,
+  disabled,
+  isActive,
+  onCancel,
   onDelete,
   onExport,
   onQueryChange,
+  onStop,
   session,
 }: SessionHeaderProps) {
   return (
@@ -1264,6 +1268,35 @@ function SessionHeader({
           <h1>{session.title}</h1>
         </div>
         <div className="header-actions">
+          {isActive && (
+            <>
+              <button
+                aria-label="処理して終了"
+                className="icon-button session-control-button"
+                disabled={disabled || session.status === "stopping"}
+                onClick={onStop}
+                title="処理して終了"
+                type="button"
+              >
+                <svg aria-hidden="true" viewBox="0 0 16 16">
+                  <path d="M5.5 4v8M10.5 4v8" />
+                </svg>
+              </button>
+              <button
+                aria-label="すぐ中断"
+                className="icon-button session-control-button cancel-control-button"
+                disabled={disabled || session.status === "stopping"}
+                onClick={onCancel}
+                title="すぐ中断"
+                type="button"
+              >
+                <svg aria-hidden="true" viewBox="0 0 16 16">
+                  <rect height="7" width="7" x="4.5" y="4.5" />
+                </svg>
+              </button>
+              <span aria-hidden="true" className="header-action-spacer" />
+            </>
+          )}
           <button className="secondary-button" onClick={onExport} type="button">
             ⇧ Export
           </button>
@@ -1395,41 +1428,6 @@ function highlightText(text: string, query: string): React.ReactNode {
       <mark>{text.slice(index, index + normalized.length)}</mark>
       {text.slice(index + normalized.length)}
     </>
-  );
-}
-
-function LiveControls({
-  disabled,
-  onCancel,
-  onStop,
-  session,
-}: {
-  disabled: boolean;
-  session: SessionEntity;
-  onCancel: () => void;
-  onStop: () => void;
-}) {
-  return (
-    <footer className="live-controls">
-      <div className="live-actions">
-        <button
-          className="ghost-button"
-          disabled={disabled || session.status === "stopping"}
-          onClick={onCancel}
-          type="button"
-        >
-          中断
-        </button>
-        <button
-          className="stop-button"
-          disabled={disabled || session.status === "stopping"}
-          onClick={onStop}
-          type="button"
-        >
-          <span aria-hidden="true">■</span> Stop
-        </button>
-      </div>
-    </footer>
   );
 }
 
