@@ -1,5 +1,0 @@
-#!/bin/sh
-set -eu
-
-script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec uv run --project "$script_directory/../../src-python" reco-engine "$@"

@@ -140,30 +140,28 @@ impl EngineSupervisor {
             if self.inner.runtime.lock().await.is_some() {
                 return Ok(());
             }
-            if !self.inner.paths.engine_executable.is_file() {
+            if !self
+                .inner
+                .paths
+                .engine_project
+                .join("pyproject.toml")
+                .is_file()
+            {
                 return Err(SupervisorError::Unavailable(format!(
-                    "expected bundled executable {}",
-                    self.inner.paths.engine_executable.display()
+                    "expected bundled engine project {}",
+                    self.inner.paths.engine_project.display()
                 )));
             }
             self.set_state(EngineConnectionState::Starting).await;
             *self.inner.intentionally_stopping.write().await = false;
 
-            let mut child = Command::new(&self.inner.paths.engine_executable)
-                .arg("serve")
-                .arg("--protocol-version")
-                .arg(PROTOCOL_VERSION.to_string())
-                .arg("--database")
-                .arg(&self.inner.paths.database)
-                .arg("--assets-directory")
-                .arg(&self.inner.paths.assets)
-                .arg("--logs-directory")
-                .arg(&self.inner.paths.logs)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()?;
+            let mut child = engine_command(&self.inner.paths).spawn().map_err(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    SupervisorError::Unavailable("uv was not found on PATH".into())
+                } else {
+                    SupervisorError::Io(error.to_string())
+                }
+            })?;
             let pid = child
                 .id()
                 .ok_or_else(|| SupervisorError::Unavailable("engine PID is unavailable".into()))?;
@@ -185,8 +183,7 @@ impl EngineSupervisor {
                 stdin: Arc::new(Mutex::new(stdin)),
                 pid,
             });
-            *self.inner.last_activity.lock().await = Some(Instant::now());
-            self.set_state(EngineConnectionState::Ready).await;
+            *self.inner.last_activity.lock().await = None;
 
             let reader_supervisor = self.clone();
             tauri::async_runtime::spawn(async move {
@@ -211,6 +208,7 @@ impl EngineSupervisor {
         payload: Value,
     ) -> Result<Value, SupervisorError> {
         self.ensure_started().await?;
+        let is_starting = *self.inner.state.read().await == EngineConnectionState::Starting;
         let request_id = Uuid::new_v4().to_string();
         let sequence = self.inner.sequence.fetch_add(1, Ordering::Relaxed) + 1;
         let envelope =
@@ -245,6 +243,13 @@ impl EngineSupervisor {
         if let Err(error) = write_result {
             self.inner.pending.lock().await.remove(&request_id);
             return Err(error);
+        }
+
+        if is_starting {
+            return match receiver.await {
+                Ok(result) => result,
+                Err(_) => Err(SupervisorError::Unavailable("engine exited".into())),
+            };
         }
 
         match timeout(REQUEST_TIMEOUT, receiver).await {
@@ -324,7 +329,10 @@ impl EngineSupervisor {
                 continue;
             }
             *self.inner.last_activity.lock().await = Some(Instant::now());
-            if *self.inner.state.read().await == EngineConnectionState::Unresponsive {
+            if matches!(
+                *self.inner.state.read().await,
+                EngineConnectionState::Starting | EngineConnectionState::Unresponsive
+            ) {
                 self.set_state(EngineConnectionState::Ready).await;
             }
             self.route_incoming(envelope).await;
@@ -495,10 +503,80 @@ impl EngineSupervisor {
     }
 }
 
+fn engine_command(paths: &AppPaths) -> Command {
+    let mut command = Command::new("uv");
+    command
+        .arg("run")
+        .arg("--project")
+        .arg(&paths.engine_project)
+        .arg("--frozen")
+        .arg("--no-dev")
+        .arg("reco-engine")
+        .arg("serve")
+        .arg("--protocol-version")
+        .arg(PROTOCOL_VERSION.to_string())
+        .arg("--database")
+        .arg(&paths.database)
+        .arg("--assets-directory")
+        .arg(&paths.assets)
+        .arg("--logs-directory")
+        .arg(&paths.logs)
+        .env("UV_PROJECT_ENVIRONMENT", &paths.engine_environment)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    command
+}
+
 async fn drain_stderr(app: AppHandle, stderr: tokio::process::ChildStderr) {
     let mut lines = BufReader::new(stderr).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         eprintln!("[reco-engine] {line}");
         let _ = app.emit("engine://log", line);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{ffi::OsStr, path::PathBuf};
+
+    use super::*;
+
+    #[test]
+    fn engine_command_uses_frozen_runtime_dependencies() {
+        let root = PathBuf::from("/tmp/reco-app-data");
+        let paths = AppPaths {
+            root: root.clone(),
+            database: root.join("reco.sqlite3"),
+            backups: root.join("backups"),
+            assets: root.join("assets"),
+            logs: root.join("logs"),
+            engine_lock: root.join("engine.lock"),
+            engine_environment: root.join("python-env"),
+            engine_project: PathBuf::from(
+                "/Applications/RecoGUI.app/Contents/Resources/src-python",
+            ),
+        };
+
+        let command = engine_command(&paths);
+        let command = command.as_std();
+        let arguments = command.get_args().collect::<Vec<_>>();
+        let project_argument = arguments
+            .iter()
+            .position(|argument| *argument == OsStr::new("--project"))
+            .and_then(|index| arguments.get(index + 1));
+
+        assert_eq!(command.get_program(), OsStr::new("uv"));
+        assert_eq!(project_argument, Some(&paths.engine_project.as_os_str()));
+        assert!(arguments.contains(&OsStr::new("--frozen")));
+        assert!(arguments.contains(&OsStr::new("--no-dev")));
+        assert_eq!(
+            command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new("UV_PROJECT_ENVIRONMENT"))
+                .and_then(|(_, value)| value),
+            Some(paths.engine_environment.as_os_str())
+        );
     }
 }

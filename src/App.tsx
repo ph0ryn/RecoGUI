@@ -1099,7 +1099,7 @@ function App() {
           </div>
           <div className="machine-state">
             <i aria-hidden="true" />
-            {fatalError ? "ENGINE OFFLINE" : "ENGINE READY"}
+            {fatalError ? "ENGINE OFFLINE" : isLoading ? "ENGINE STARTING" : "ENGINE READY"}
           </div>
         </div>
       </header>
@@ -1323,7 +1323,7 @@ function App() {
             onAction={() => window.location.reload()}
           />
         ) : isLoading ? (
-          <SessionSkeleton />
+          <EngineStartingState />
         ) : selectedSessions.length > 1 ? (
           <MultiSelection
             sessions={selectedSessions}
@@ -2579,13 +2579,12 @@ function HistorySkeleton() {
   );
 }
 
-function SessionSkeleton() {
+function EngineStartingState() {
   return (
-    <div aria-label="セッションを読み込み中" className="session-skeleton" role="status">
-      <i />
-      <i />
-      <i />
-      <i />
+    <div aria-live="polite" className="empty-state" role="status">
+      <span aria-hidden="true">…</span>
+      <h1>エンジンを準備しています</h1>
+      <p>初回起動時は依存関係の準備に時間がかかります。</p>
     </div>
   );
 }

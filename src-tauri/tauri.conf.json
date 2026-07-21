@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "RecoGUI",
-  "version": "0.1.0",
+  "version": "../package.json",
   "identifier": "com.ph0ryn.recogui",
   "build": {
     "beforeDevCommand": "pnpm exec vite",
@@ -35,6 +35,15 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../src-python/LICENSE": "src-python/LICENSE",
+      "../src-python/SOURCE.md": "src-python/SOURCE.md",
+      "../src-python/THIRD_PARTY_NOTICES.md": "src-python/THIRD_PARTY_NOTICES.md",
+      "../src-python/pyproject.toml": "src-python/pyproject.toml",
+      "../src-python/src/reco/*.py": "src-python/src/reco",
+      "../src-python/src/reco/assets": "src-python/src/reco/assets",
+      "../src-python/uv.lock": "src-python/uv.lock"
+    },
     "macOS": {
       "minimumSystemVersion": "14.0"
     },

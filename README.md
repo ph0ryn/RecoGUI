@@ -55,7 +55,10 @@ uv sync --project src-python --frozen
 pnpm tauri dev
 ```
 
-The development host starts the Python sidecar through the tracked launcher under `src-tauri/sidecar/`. Engine stdout is reserved for protocol messages; diagnostics are written to stderr and the application log.
+The host starts the Python sidecar through `uv run --frozen --no-dev`. Release bundles include the
+engine source and lockfile, while the runtime environment is created under the application data
+directory. Engine stdout is reserved for protocol messages; diagnostics are written to stderr and
+the application log.
 
 ## Validation
 
@@ -77,6 +80,7 @@ Individual frontend, Python, Rust, and protocol checks are also available throug
 
 The original Reco repository is not modified by this project.
 
-## Distribution Status
+## Distribution
 
-Signing, notarization, DMG creation, and release publication are intentionally deferred. Development builds and complete application behavior remain in scope.
+Release bundles require `uv` on `PATH`. The first launch may download Python and runtime dependencies
+before the engine becomes ready. Developer ID signing and notarization are not configured.

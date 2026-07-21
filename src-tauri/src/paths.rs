@@ -8,8 +8,8 @@ use thiserror::Error;
 pub enum PathError {
     #[error("the operating system did not provide an application data directory")]
     AppDataUnavailable,
-    #[error("the bundled Reco engine was not found")]
-    EngineMissing,
+    #[error("the bundled Reco engine project was not found")]
+    EngineProjectMissing,
     #[error("failed to create application directory: {0}")]
     CreateDirectory(#[from] std::io::Error),
 }
@@ -24,7 +24,8 @@ pub struct AppPaths {
     pub logs: PathBuf,
     #[allow(dead_code)]
     pub engine_lock: PathBuf,
-    pub engine_executable: PathBuf,
+    pub engine_environment: PathBuf,
+    pub engine_project: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,7 +48,8 @@ impl AppPaths {
             std::fs::create_dir_all(directory)?;
         }
 
-        let engine_executable = resolve_engine_executable(app)?;
+        let engine_project = resolve_engine_project(app)?;
+        let engine_environment = root.join("python-env");
         Ok(Self {
             database: root.join("reco.sqlite3"),
             engine_lock: root.join("engine.lock"),
@@ -55,7 +57,8 @@ impl AppPaths {
             backups,
             assets,
             logs,
-            engine_executable,
+            engine_environment,
+            engine_project,
         })
     }
 
@@ -67,30 +70,25 @@ impl AppPaths {
     }
 }
 
-fn resolve_engine_executable(app: &AppHandle) -> Result<PathBuf, PathError> {
-    let file_name = if cfg!(windows) {
-        "reco-engine.exe"
-    } else {
-        "reco-engine"
-    };
+fn resolve_engine_project(app: &AppHandle) -> Result<PathBuf, PathError> {
     let resource_path = app
         .path()
         .resource_dir()
-        .map_err(|_| PathError::EngineMissing)?
-        .join("sidecar")
-        .join(file_name);
-    if resource_path.is_file() {
+        .map_err(|_| PathError::EngineProjectMissing)?
+        .join("src-python");
+    if resource_path.join("pyproject.toml").is_file() {
         return Ok(resource_path);
     }
 
-    // Development builds may place the exact same fixed binary next to Cargo.toml.
     let development_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("sidecar")
-        .join(file_name);
-    if development_path.is_file() {
+        .parent()
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")))
+        .join("src-python");
+    if development_path.join("pyproject.toml").is_file() {
         return Ok(development_path);
     }
-    // Return the canonical resource location so the host can start without the
-    // development sidecar and report a recoverable availability error on use.
+
+    // Keep application startup recoverable. The supervisor reports the missing
+    // project only when the engine is requested.
     Ok(resource_path)
 }

@@ -184,6 +184,28 @@ function useInactiveSnapshot() {
 }
 
 describe("RecoGUI", () => {
+  it("shows the application while the engine is starting", async () => {
+    let resolveSnapshot: (value: typeof mockSnapshot) => void = () => undefined;
+
+    bridgeMocks.getSnapshot.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSnapshot = resolve;
+        }),
+    );
+
+    render(<App />);
+
+    expect(screen.getByText("ENGINE STARTING")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "エンジンを準備しています" })).toBeInTheDocument();
+    expect(screen.getByText("初回起動時は依存関係の準備に時間がかかります。")).toBeInTheDocument();
+
+    resolveSnapshot(structuredClone(mockSnapshot));
+
+    expect(await screen.findByText("ENGINE READY")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "新しい録音" })).toBeInTheDocument();
+  });
+
   it("focuses transcript and history search with their shortcuts", async () => {
     await renderLoadedApp();
 
