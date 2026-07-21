@@ -337,7 +337,6 @@ button:disabled {
   align-items: center;
   gap: 7px;
   padding: 8px 7px;
-  border-bottom: 1px solid var(--line);
 }
 
 .history-search {
