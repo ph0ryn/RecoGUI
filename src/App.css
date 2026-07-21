@@ -1176,6 +1176,11 @@ button:disabled {
   border-top: 1px solid var(--line);
 }
 
+.settings-section + .dialog-actions {
+  margin-top: 0;
+  border-top: 0;
+}
+
 .rename-form label {
   display: grid;
   gap: 7px;
