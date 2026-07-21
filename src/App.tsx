@@ -1,7 +1,9 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 /* oxlint-disable no-ternary, no-nested-ternary, curly, init-declarations, arrow-body-style, @stylistic/padding-line-between-statements */
 import {
   type CSSProperties,
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
   useMemo,
@@ -87,6 +89,21 @@ function formatDate(isoDate: string): string {
     minute: "2-digit",
     month: "short",
   }).format(new Date(isoDate));
+}
+
+function handleWindowDrag(event: ReactMouseEvent<HTMLElement>): void {
+  if (event.button !== 0) return;
+
+  const target = event.target as HTMLElement;
+
+  if (
+    target.closest(
+      "button, input, select, textarea, a, summary, label, [role='button'], [contenteditable='true']",
+    )
+  )
+    return;
+
+  void getCurrentWindow().startDragging();
 }
 
 function dayGroup(isoDate: string): string {
@@ -976,7 +993,7 @@ function App() {
   const appStyle = { "--history-width": `${paneWidth}px` } as CSSProperties;
   return (
     <main className="app-shell" style={appStyle}>
-      <header className="topbar" data-tauri-drag-region>
+      <header className="topbar" data-tauri-drag-region onMouseDown={handleWindowDrag}>
         <div className="topbar-left" data-tauri-drag-region>
           <div className="brand-row">
             <span aria-hidden="true" className="brand-mark">
