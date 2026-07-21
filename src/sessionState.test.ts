@@ -156,6 +156,27 @@ describe("sessionStateReducer", () => {
     });
   });
 
+  it("renames a session without dropping its loaded transcript", () => {
+    const state = sessionStateReducer(
+      sessionStateReducer(initialSessionState, {
+        sessions: [detail()],
+        type: "bootstrap",
+      }),
+      {
+        rowVersion: 2,
+        sessionId: "session-1",
+        title: "Renamed",
+        type: "sessionRenamed",
+      },
+    );
+
+    expect(state.sessionsById["session-1"]).toMatchObject({
+      rowVersion: 2,
+      segments: [segment(1)],
+      title: "Renamed",
+    });
+  });
+
   it("replaces optimistic detail during canonical reconciliation", () => {
     let state = sessionStateReducer(initialSessionState, {
       sessions: [detail({ rowVersion: 3, segments: [segment(1), segment(2), segment(3)] })],

@@ -21,6 +21,7 @@ class StubRepository:
     self.export_call: tuple[list[str], Path, str] | None = None
     self.states: list[tuple[str, SessionState]] = []
     self.search_options: dict[str, object] | None = None
+    self.rename_call: tuple[str, str] | None = None
 
   def export_sessions(
     self,
@@ -44,6 +45,10 @@ class StubRepository:
   def search_sessions(self, query: str, **options: object) -> SessionPage:
     self.search_options = {"query": query, **options}
     return SessionPage((), None)
+
+  def rename_session(self, session_id: str, title: str) -> dict[str, object]:
+    self.rename_call = (session_id, title)
+    return {"session_id": session_id, "title": title.strip(), "row_version": 4}
 
 
 class StubEngine:
@@ -250,6 +255,17 @@ def test_search_accepts_rust_status_source_and_date_filters() -> None:
     "started_after": "2026-07-01T00:00:00+00:00",
     "started_before": "2026-08-01T00:00:00+00:00",
   }
+
+
+def test_history_rename_updates_the_repository_and_emits_history_changed() -> None:
+  server, engine = server_with_stub()
+  session_id = str(uuid4())
+
+  result = server.dispatch(request("history.rename", {"title": "Renamed"}, session_id))
+
+  assert result == {"sessionId": session_id, "title": "Renamed", "rowVersion": 4}
+  assert engine.repository.rename_call == (session_id, "Renamed")
+  assert cast(StubWriter, server.writer).events == [("history.changed", {"sessionId": session_id})]
 
 
 def test_engine_state_does_not_expose_managed_model_path(tmp_path: Path) -> None:

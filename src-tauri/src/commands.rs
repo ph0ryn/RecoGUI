@@ -37,6 +37,7 @@ const ALLOWED_ENGINE_COMMANDS: &[&str] = &[
     "history.list",
     "history.get",
     "history.search",
+    "history.rename",
     "history.delete",
     "history.deleteMany",
     "history.export",

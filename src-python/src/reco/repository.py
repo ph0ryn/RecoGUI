@@ -177,6 +177,36 @@ class RecordingRepository:
       self._update_search(connection, session_id)
     return session_id
 
+  def rename_session(self, session_id: str, title: str) -> dict[str, Any]:
+    """Rename one session and update its full-text search entry atomically."""
+
+    normalized = title.strip()
+    if not normalized:
+      raise ValueError("Session title must not be empty")
+    if len(normalized) > 200:
+      raise ValueError("Session title must not exceed 200 characters")
+    with self._connect() as connection:
+      connection.execute("BEGIN IMMEDIATE")
+      try:
+        row = connection.execute(
+          """
+          UPDATE app_sessions
+          SET title = ?, updated_at = ?, row_version = row_version + 1
+          WHERE session_id = ?
+          RETURNING title, row_version
+          """,
+          (normalized, _now(), session_id),
+        ).fetchone()
+        if row is None:
+          raise RepositoryError(f"Unknown session: {session_id}")
+        self._update_search(connection, session_id)
+        connection.execute("COMMIT")
+      except BaseException:
+        with suppress(sqlite3.Error):
+          connection.execute("ROLLBACK")
+        raise
+    return {"session_id": session_id, "title": str(row["title"]), "row_version": int(row["row_version"])}
+
   def queue_snapshot(self) -> dict[str, Any]:
     """Return the canonical durable queue without exposing private source paths."""
 

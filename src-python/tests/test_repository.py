@@ -66,6 +66,28 @@ def test_session_and_segment_are_committed_before_read(tmp_path: Path) -> None:
   repository.integrity_check()
 
 
+def test_rename_session_updates_history_and_full_text_search(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(new_session())
+
+  result = repository.rename_session(session_id, "  Weekly planning  ")
+
+  assert result == {"session_id": session_id, "title": "Weekly planning", "row_version": 2}
+  assert repository.get_session(session_id)["title"] == "Weekly planning"
+  assert [item["session_id"] for item in repository.search_sessions("Weekly").items] == [session_id]
+  assert repository.search_sessions("Lecture").items == ()
+
+
+def test_rename_session_rejects_blank_and_oversized_titles(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(new_session())
+
+  with pytest.raises(ValueError, match="empty"):
+    repository.rename_session(session_id, "   ")
+  with pytest.raises(ValueError, match="200"):
+    repository.rename_session(session_id, "x" * 201)
+
+
 def test_append_segment_returns_monotonic_committed_session_values(tmp_path: Path) -> None:
   repository = RecordingRepository(tmp_path / "reco.sqlite3")
   session_id = repository.create_session(new_session())

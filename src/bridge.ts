@@ -482,6 +482,17 @@ export const recoBridge = {
     return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.remove", { itemId }));
   },
 
+  async renameSession(
+    sessionId: string,
+    title: string,
+  ): Promise<{ rowVersion: number; sessionId: string; title: string }> {
+    if (!hasTauriRuntime()) {
+      return { rowVersion: 1, sessionId, title: title.trim() };
+    }
+
+    return request("history.rename", { sessionId, title });
+  },
+
   async reorderQueue(revision: number, itemIds: string[]): Promise<QueueSnapshot> {
     if (!hasTauriRuntime()) {
       if (revision !== mockQueueSnapshot.revision) throw new Error("Stale queue revision");

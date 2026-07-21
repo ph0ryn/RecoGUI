@@ -138,7 +138,7 @@ function App() {
   const [nextCursor, setNextCursor] = useState<string>();
   const [fatalError, setFatalError] = useState<string>();
   const [dialog, setDialog] = useState<
-    "new" | "delete" | "export" | "settings" | "close" | "forceClose" | null
+    "new" | "rename" | "delete" | "export" | "settings" | "close" | "forceClose" | null
   >(null);
   const [closeRequest, setCloseRequest] = useState<{ error?: string; sessionId?: string }>();
   const [exportFormat, setExportFormat] = useState<ExportFormat>("txt");
@@ -158,6 +158,7 @@ function App() {
     x: number;
     y: number;
   }>();
+  const [renameTarget, setRenameTarget] = useState<SessionEntity>();
   const anchorIndex = useRef<number | undefined>(undefined);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const newButtonRef = useRef<HTMLButtonElement>(null);
@@ -870,6 +871,23 @@ function App() {
     );
   }
 
+  async function renameSession(title: string): Promise<void> {
+    if (!renameTarget) return;
+    setIsWorking(true);
+    try {
+      const result = await recoBridge.renameSession(renameTarget.id, title);
+
+      dispatchSessions({ ...result, type: "sessionRenamed" });
+      setDialog(null);
+      setRenameTarget(undefined);
+      setToast("名前を変更しました。");
+    } catch {
+      setToast("名前を変更できませんでした。");
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
   async function cancelExport(): Promise<void> {
     if (!exportOperation?.operationId) return;
     setExportOperation((current) => (current ? { ...current, state: "canceling" } : current));
@@ -909,12 +927,13 @@ function App() {
     setContextMenu({
       session,
       x: Math.min(event.clientX, window.innerWidth - 188),
-      y: Math.min(event.clientY, window.innerHeight - 100),
+      y: Math.min(event.clientY, window.innerHeight - 140),
     });
   }
 
   function closeDialog(): void {
     setDialog(null);
+    setRenameTarget(undefined);
     window.setTimeout(() => (dialogInvokerRef.current ?? newButtonRef.current)?.focus(), 0);
   }
 
@@ -1191,6 +1210,14 @@ function App() {
           onConfirm={() => void deleteSelected()}
         />
       )}
+      {dialog === "rename" && renameTarget && (
+        <RenameDialog
+          disabled={isWorking}
+          onClose={closeDialog}
+          onConfirm={(title) => void renameSession(title)}
+          session={renameTarget}
+        />
+      )}
       {dialog === "export" && (
         <ExportDialog
           disabled={isWorking}
@@ -1246,6 +1273,17 @@ function App() {
           role="menu"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
+          <button
+            onClick={() => {
+              setRenameTarget(contextMenu.session);
+              setContextMenu(undefined);
+              openDialog("rename");
+            }}
+            role="menuitem"
+            type="button"
+          >
+            名前を変更…
+          </button>
           <button
             onClick={() => {
               setContextMenu(undefined);
@@ -1842,6 +1880,52 @@ function NewSessionDialog({
       <p className="privacy-note">
         マイクの元音声は保存しません。確定した文字起こしだけが履歴に残ります。
       </p>
+    </DialogFrame>
+  );
+}
+
+function RenameDialog({
+  disabled,
+  onClose,
+  onConfirm,
+  session,
+}: {
+  disabled: boolean;
+  onClose: () => void;
+  onConfirm: (title: string) => void;
+  session: SessionEntity;
+}) {
+  const [title, setTitle] = useState(session.title);
+  const normalized = title.trim();
+
+  return (
+    <DialogFrame onClose={onClose} title="名前を変更" titleId="rename-title">
+      <form
+        className="rename-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (normalized) onConfirm(normalized);
+        }}
+      >
+        <label>
+          <span>名前</span>
+          <input
+            autoFocus
+            maxLength={200}
+            onChange={(event) => setTitle(event.target.value)}
+            onFocus={(event) => event.currentTarget.select()}
+            value={title}
+          />
+        </label>
+        <div className="dialog-actions">
+          <button className="secondary-button" onClick={onClose} type="button">
+            キャンセル
+          </button>
+          <button className="primary-button" disabled={disabled || !normalized} type="submit">
+            変更
+          </button>
+        </div>
+      </form>
     </DialogFrame>
   );
 }

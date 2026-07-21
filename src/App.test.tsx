@@ -36,6 +36,7 @@ const bridgeMocks = vi.hoisted(() => ({
   pauseSession: vi.fn(),
   pickAudioFiles: vi.fn().mockResolvedValue([{ displayName: "test.wav", sourceToken: "token" }]),
   removeQueueItem: vi.fn(),
+  renameSession: vi.fn(),
   reorderQueue: vi.fn(),
   resolveClose: vi.fn(),
   resumeSession: vi.fn(),
@@ -130,6 +131,9 @@ beforeEach(() => {
   bridgeMocks.pauseSession.mockClear();
   bridgeMocks.pauseQueue.mockClear();
   bridgeMocks.resumeSession.mockClear();
+  bridgeMocks.renameSession.mockImplementation((sessionId: string, title: string) =>
+    Promise.resolve({ rowVersion: 7, sessionId, title }),
+  );
   bridgeMocks.enqueueFiles.mockClear();
   scrollToMock.mockClear();
 });
@@ -340,6 +344,27 @@ describe("RecoGUI", () => {
       within(screen.getByRole("dialog")).getByRole("button", { name: "完全に削除" }),
     );
     await waitFor(() => expect(bridgeMocks.deleteSessions).toHaveBeenCalledWith(["session-1"]));
+  });
+
+  it("renames a session from the history context menu", async () => {
+    const user = userEvent.setup();
+
+    await renderLoadedApp();
+    const row = screen.getByRole("option", { name: /プロジェクト定例/ });
+
+    fireEvent.contextMenu(row, { clientX: 120, clientY: 180 });
+    await user.click(screen.getByRole("menuitem", { name: "名前を変更…" }));
+    const input = screen.getByRole("textbox", { name: "名前" });
+
+    await user.clear(input);
+    await user.type(input, "週次レビュー");
+    await user.click(screen.getByRole("button", { name: "変更" }));
+
+    await waitFor(() =>
+      expect(bridgeMocks.renameSession).toHaveBeenCalledWith("session-1", "週次レビュー"),
+    );
+    expect(await screen.findByRole("heading", { name: "週次レビュー" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /週次レビュー/ })).toBeInTheDocument();
   });
 
   it("exports a selected session in the chosen format", async () => {

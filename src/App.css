@@ -1091,6 +1091,24 @@ button:disabled {
   border-top: 1px solid var(--line);
 }
 
+.rename-form label {
+  display: grid;
+  gap: 7px;
+  padding: 22px 24px 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.rename-form input {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line-dark);
+  border-radius: 0;
+  color: var(--ink);
+  background: var(--panel);
+  font: inherit;
+}
+
 .warning-icon {
   display: grid;
   width: 42px;

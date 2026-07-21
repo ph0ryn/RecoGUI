@@ -183,6 +183,13 @@ class SidecarServer:
         started_before=_optional_string(payload.get("startedBefore")),
       )
       return {"items": _camel([_public_session(item) for item in page.items]), "nextCursor": page.next_cursor}
+    if command == "history.rename":
+      result = self.engine.repository.rename_session(
+        _session_id(request, payload),
+        str(payload.get("title", "")),
+      )
+      self._event("history.changed", str(result["session_id"]), {"sessionId": result["session_id"]})
+      return _mapping(_camel(result))
     if command in {"history.delete", "history.deleteMany"}:
       ids = [_session_id(request, payload)] if command == "history.delete" else _string_list(payload.get("sessionIds"))
       return {"deleted": self.engine.repository.delete_sessions(ids)}
