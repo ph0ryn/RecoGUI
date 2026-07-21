@@ -447,7 +447,25 @@ class RecoEngine:
 
     if reason not in {"userStop", "systemSleep", "appQuit"}:
       raise EngineCommandError("invalid_stop_reason", f"Unsupported stop reason: {reason}")
-    control = self._require_active(session_id)
+    paused_receipt = None
+    with self._lock:
+      if reason == "userStop":
+        paused_receipt = self.repository.stop_paused_session(session_id)
+        if paused_receipt is not None:
+          self._paused_queue_sessions.discard(session_id)
+      if paused_receipt is None:
+        if self._active_session_id != session_id or self._active_control is None:
+          raise EngineCommandError("session_not_active", f"Session is not active or paused: {session_id}")
+        control = self._active_control
+      else:
+        control = None
+    if paused_receipt is not None:
+      payload = {**self._state_receipt(paused_receipt), "endReason": reason}
+
+      self._emit("session.completed", session_id, payload)
+      self._emit("history.changed", session_id, {"sessionId": session_id})
+      return {"sessionId": session_id, **self._state_receipt(paused_receipt)}
+    assert control is not None
     self._stop_queue_for_active_session()
     receipt = self.repository.set_state(session_id, SessionState.STOPPING)
     control.request_stop(reason)

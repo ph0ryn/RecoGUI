@@ -276,6 +276,49 @@ def test_state_event_contains_the_committed_revision_and_aggregates(tmp_path: Pa
   ]
 
 
+def test_stop_finalizes_a_paused_session_without_restarting_it(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(
+    NewSession("microphone", "Microphone", "model", "revision", "Japanese", 16_000, "Recording")
+  )
+  repository.set_state(session_id, SessionState.PAUSING)
+  repository.pause_session(session_id, 16_000)
+  engine, events = engine_with_repository(repository)
+  engine._lock = Lock()
+  engine._active_session_id = None
+  engine._active_control = None
+  engine._paused_queue_sessions = set()
+
+  result = engine.stop_session(session_id)
+
+  assert result["state"] == "stopped"
+  assert repository.get_session(session_id)["end_reason"] == "userStop"
+  assert [event for event, _, _ in events] == ["session.completed", "history.changed"]
+
+
+def test_stop_finalizes_pause_before_worker_cleanup_without_changing_control(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(
+    NewSession("microphone", "Microphone", "model", "revision", "Japanese", 16_000, "Recording")
+  )
+  repository.set_state(session_id, SessionState.PAUSING)
+  repository.pause_session(session_id, 16_000)
+  engine, events = engine_with_repository(repository)
+  control = SessionControl()
+  control.request_stop("userPause")
+  engine._lock = Lock()
+  engine._active_session_id = session_id
+  engine._active_control = control
+  engine._paused_queue_sessions = {session_id}
+
+  result = engine.stop_session(session_id)
+
+  assert result["state"] == "stopped"
+  assert control.stop_reason == "userPause"
+  assert session_id not in engine._paused_queue_sessions
+  assert [event for event, _, _ in events] == ["session.completed", "history.changed"]
+
+
 def test_pause_marks_the_active_session_as_pausing(tmp_path: Path) -> None:
   repository = RecordingRepository(tmp_path / "reco.sqlite3")
   session_id = repository.create_session(

@@ -172,6 +172,33 @@ def test_append_segment_failure_rolls_back_segment_and_session_values(tmp_path: 
   assert after["total_segments"] == 0
 
 
+def test_stop_paused_session_commits_a_terminal_receipt(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(new_session())
+  repository.set_state(session_id, SessionState.PAUSING)
+  repository.pause_session(session_id, 16_000)
+
+  receipt = repository.stop_paused_session(session_id)
+  session = repository.get_session(session_id)
+
+  assert receipt is not None
+  assert receipt.state is SessionState.STOPPED
+  assert receipt.ended_at is not None
+  assert session["state"] == "stopped"
+  assert session["end_reason"] == "userStop"
+  with pytest.raises(RepositoryError, match="not resumable"):
+    repository.get_resume_context(session_id)
+
+
+def test_stop_paused_session_rejects_a_running_session(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(new_session())
+  repository.set_state(session_id, SessionState.RUNNING)
+
+  assert repository.stop_paused_session(session_id) is None
+  assert repository.get_session(session_id)["state"] == "running"
+
+
 def test_get_session_reads_revision_and_segments_from_one_snapshot(
   tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

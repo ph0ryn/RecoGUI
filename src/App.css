@@ -24,6 +24,7 @@
   --select: #dedfd9;
   --hover: #e8e9e4;
   --danger: #b32f29;
+  --success: #4d7055;
   --focus: #4f6471;
   color-scheme: light;
 }
@@ -934,6 +935,14 @@ button:disabled {
 .session-control-button {
   border: 1px solid var(--line-dark);
   background: var(--panel);
+}
+
+.stop-session-button {
+  color: var(--danger);
+}
+
+.pause-resume-button {
+  color: var(--success);
 }
 
 .session-control-button svg {

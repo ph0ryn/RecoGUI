@@ -510,6 +510,36 @@ class RecordingRepository:
         ended_at=None,
       )
 
+  def stop_paused_session(self, session_id: str) -> SessionMutationReceipt | None:
+    """Finalize a paused session without restarting its audio input or ASR runtime."""
+
+    now = _now()
+    with self._connect() as connection:
+      row = connection.execute(
+        """
+        UPDATE app_sessions
+        SET state = 'stopped', end_reason = 'userStop', error_code = NULL,
+            error_message = NULL, ended_at = ?, updated_at = ?,
+            row_version = row_version + 1
+        WHERE session_id = ? AND state = 'paused'
+        RETURNING state, row_version, total_segments, recognized_segments,
+          characters, media_duration_ms, ended_at
+        """,
+        (now, now, session_id),
+      ).fetchone()
+      if row is None:
+        return None
+      self._update_search(connection, session_id)
+      return SessionMutationReceipt(
+        state=SessionState.STOPPED,
+        row_version=int(row["row_version"]),
+        total_segments=int(row["total_segments"]),
+        recognized_segments=int(row["recognized_segments"]),
+        characters=int(row["characters"]),
+        media_duration_ms=int(row["media_duration_ms"]),
+        ended_at=str(row["ended_at"]),
+      )
+
   def fail_session(self, session_id: str, code: str, message: str) -> SessionMutationReceipt:
     """Persist a failed state with a checkpoint after the last committed segment."""
 

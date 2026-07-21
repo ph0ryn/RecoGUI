@@ -898,6 +898,18 @@ function App() {
     }
   }
 
+  async function completeMicrophoneSession(sessionId: string): Promise<void> {
+    setIsWorking(true);
+    try {
+      await recoBridge.stopSession(sessionId);
+      setToast("録音を完了しています。");
+    } catch {
+      setToast("録音を完了できませんでした。");
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
   async function resumeSession(sessionId: string): Promise<void> {
     setIsWorking(true);
     try {
@@ -1354,6 +1366,7 @@ function App() {
               onPause={() => void pauseActive(selectedSession.id)}
               onQueryChange={setDetailQuery}
               onResume={() => void resumeSession(selectedSession.id)}
+              onStop={() => void completeMicrophoneSession(selectedSession.id)}
               queueIsRunning={queue.autoAdvanceEnabled}
               progress={sessionProgress[selectedSession.id]}
               session={selectedSession}
@@ -1714,6 +1727,7 @@ interface SessionHeaderProps {
   onPause: () => void;
   onQueryChange: (value: string) => void;
   onResume: () => void;
+  onStop: () => void;
   progress?: number;
   queueIsRunning: boolean;
 }
@@ -1727,10 +1741,15 @@ function SessionHeader({
   onPause,
   onQueryChange,
   onResume,
+  onStop,
   progress,
   queueIsRunning,
   session,
 }: SessionHeaderProps) {
+  const microphoneCanStop =
+    session.inputKind === "microphone" &&
+    ["preparing", "running", "pausing", "paused", "stopping"].includes(session.status);
+
   return (
     <header className="session-header">
       <div className="session-title-row">
@@ -1746,7 +1765,7 @@ function SessionHeader({
                   aria-label={
                     session.status === "failed" ? "文字起こしを再試行" : "文字起こしを再開"
                   }
-                  className="icon-button session-control-button"
+                  className="icon-button pause-resume-button session-control-button"
                   disabled={disabled || hasActiveSession || queueIsRunning}
                   onClick={onResume}
                   title={
@@ -1761,7 +1780,7 @@ function SessionHeader({
               ) : (
                 <button
                   aria-label="文字起こしを一時停止"
-                  className="icon-button session-control-button"
+                  className="icon-button pause-resume-button session-control-button"
                   disabled={disabled || session.status === "pausing"}
                   onClick={onPause}
                   title="文字起こしを一時停止"
@@ -1772,9 +1791,25 @@ function SessionHeader({
                   </svg>
                 </button>
               )}
-              <span aria-hidden="true" className="header-action-spacer" />
             </>
           )}
+          {microphoneCanStop && (
+            <button
+              aria-label="録音を完了"
+              className="icon-button session-control-button stop-session-button"
+              disabled={disabled || session.status === "pausing" || session.status === "stopping"}
+              onClick={onStop}
+              title="録音を完了"
+              type="button"
+            >
+              <svg aria-hidden="true" viewBox="0 0 16 16">
+                <path d="M4 4h8v8H4z" />
+              </svg>
+            </button>
+          )}
+          {(pausableStatuses.includes(session.status) ||
+            resumableStatuses.includes(session.status) ||
+            microphoneCanStop) && <span aria-hidden="true" className="header-action-spacer" />}
           <button className="secondary-button export-button" onClick={onExport} type="button">
             <span aria-hidden="true" className="export-icon">
               ⇧

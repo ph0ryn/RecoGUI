@@ -47,6 +47,7 @@ const bridgeMocks = vi.hoisted(() => ({
   selectModel: vi.fn(),
   startQueue: vi.fn(),
   startSession: vi.fn().mockResolvedValue({ sessionId: "new-session" }),
+  stopSession: vi.fn(),
 }));
 
 vi.mock("./bridge", () => ({
@@ -159,6 +160,7 @@ beforeEach(() => {
   bridgeMocks.pauseQueue.mockClear();
   bridgeMocks.resumeSession.mockClear();
   bridgeMocks.startSession.mockClear();
+  bridgeMocks.stopSession.mockClear();
   bridgeMocks.renameSession.mockImplementation((sessionId: string, title: string) =>
     Promise.resolve({ rowVersion: 7, sessionId, title }),
   );
@@ -355,6 +357,41 @@ describe("RecoGUI", () => {
     await renderLoadedApp();
     await user.click(screen.getByRole("button", { name: "文字起こしを一時停止" }));
     await waitFor(() => expect(bridgeMocks.pauseSession).toHaveBeenCalledWith("session-live"));
+  });
+
+  it("completes the active microphone session", async () => {
+    const user = userEvent.setup();
+
+    await renderLoadedApp();
+    await user.click(screen.getByRole("button", { name: "録音を完了" }));
+
+    await waitFor(() => expect(bridgeMocks.stopSession).toHaveBeenCalledWith("session-live"));
+  });
+
+  it("completes a paused microphone session without resuming it", async () => {
+    const user = userEvent.setup();
+
+    useInactiveSnapshot();
+    await renderLoadedApp();
+    await user.click(screen.getByRole("button", { name: "録音を完了" }));
+
+    await waitFor(() => expect(bridgeMocks.stopSession).toHaveBeenCalledWith("session-live"));
+    expect(bridgeMocks.resumeSession).not.toHaveBeenCalled();
+  });
+
+  it("does not show the complete button for an active file session", async () => {
+    bridgeMocks.getSnapshot.mockResolvedValue({
+      ...structuredClone(mockSnapshot),
+      sessions: structuredClone(mockSnapshot.sessions).map((session) =>
+        session.id === "session-live"
+          ? { ...session, inputKind: "file" as const, inputName: "lecture.wav" }
+          : session,
+      ),
+    });
+
+    await renderLoadedApp();
+
+    expect(screen.queryByRole("button", { name: "録音を完了" })).not.toBeInTheDocument();
   });
 
   it("shows pause for a running queued file even when the snapshot omits the active id", async () => {
