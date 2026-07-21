@@ -14,6 +14,8 @@ flowchart LR
   Sidecar["Python sidecar"]
   Engine["RecoEngine"]
   Runtime["MLX model runtime"]
+  HFCLI["hf CLI"]
+  HFCache["Hugging Face cache"]
   Repository["RecordingRepository"]
   Database["reco.sqlite3"]
   CLI["reco CLI"]
@@ -24,6 +26,9 @@ flowchart LR
   Host <-->|"versioned NDJSON"| Sidecar
   Sidecar --> Engine
   Engine --> Runtime
+  Engine --> HFCLI
+  HFCLI --> HFCache
+  Runtime --> HFCache
   Engine --> Repository
   Repository --> Database
   CLI --> CLIRecorder
@@ -67,7 +72,9 @@ RecoGUI/
 | 状態                                       | 正本          |
 | ------------------------------------------ | ------------- |
 | sidecar processの起動、停止、crash、再起動 | Rust          |
-| model、active session、queue scheduler     | Python engine |
+| model一覧、選択、active session、queue scheduler | Python engine |
+| model snapshot                              | Hugging Face共通キャッシュ |
+| 選択したrepository IDとrevision             | GUI用SQLite   |
 | 保存済みsession、segment、集計値           | GUI用SQLite   |
 | 待機中のfile queue itemと順序              | GUI用SQLite   |
 | 選択、dialog、検索条件、pane幅             | React         |
@@ -136,11 +143,8 @@ RustとPython sidecarはstdin/stdout上のUTF-8 NDJSONで通信する。
 engine.getState
 engine.shutdown
 model.getState
-model.download
-model.cancelDownload
-model.verify
-model.load
-model.delete
+model.list
+model.select
 audio.listInputs
 session.start
 session.stop
@@ -169,7 +173,6 @@ history.cancelExport
 ```text
 engine.heartbeat
 model.loading
-model.downloadProgress
 model.ready
 session.progress
 session.stateChanged
@@ -227,7 +230,15 @@ databaseへ保存しない。
 
 - マイクの元音声は保存しない。
 - 入力ファイルの絶対pathはresume専用にSQLiteへ保存し、ReactやExportへ含めない。
-- modelは固定revisionをapplication data directoryの`models/`へ保存する。
+- ASR modelは外部の`hf` CLIでHugging Face共通キャッシュへ保存する。
+- Python engineは`hf cache ls --revisions --format json`だけを固定引数で実行し、
+  `repo_type` が`model`のすべてのrevisionを候補とする。任意shellは公開しない。
+- 選択のrepository IDとrevisionはSQLiteに保存し、snapshot pathは毎回一覧から解決する。
+  snapshot pathはReactやdatabaseへ公開しない。
+- model選択はengineがidleで、paused sessionもqueue自動処理もないときだけ許可する。
+  読込に失敗しても選択値は保持し、文字起こしを無効化する。
+- Silero VADは同梱assetとしてapplication data directoryへ検証付きで展開し、
+  Hugging FaceのASR model管理と分離する。
 - logはapplication data directoryの`logs/`へ保存する。
 - 履歴削除は入力元ファイルや既存のExportを削除しない。
 
