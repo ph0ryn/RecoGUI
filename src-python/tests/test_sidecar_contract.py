@@ -53,6 +53,7 @@ class StubEngine:
     self.pause_call: str | None = None
     self.resume_call: str | None = None
     self.stop_call: tuple[str, str] | None = None
+    self.queue_call: tuple[str, object] | None = None
 
   def start_session(self, payload: object, requested_session_id: str | None) -> dict[str, object]:
     self.start_payload = payload
@@ -69,6 +70,34 @@ class StubEngine:
   def resume_session(self, session_id: str) -> dict[str, object]:
     self.resume_call = session_id
     return {"sessionId": session_id, "state": "preparing"}
+
+  def queue_state(self) -> dict[str, object]:
+    self.queue_call = ("state", None)
+    return {"revision": 0, "autoAdvanceEnabled": False, "items": []}
+
+  def enqueue_files(self, files: object) -> dict[str, object]:
+    self.queue_call = ("enqueue", files)
+    return self.queue_state()
+
+  def reorder_queue(self, item_ids: object, revision: object) -> dict[str, object]:
+    self.queue_call = ("reorder", (item_ids, revision))
+    return {"revision": 2, "autoAdvanceEnabled": False, "items": []}
+
+  def remove_queue_item(self, item_id: str) -> dict[str, object]:
+    self.queue_call = ("remove", item_id)
+    return {"revision": 2, "autoAdvanceEnabled": False, "items": []}
+
+  def clear_queue(self) -> dict[str, object]:
+    self.queue_call = ("clear", None)
+    return {"revision": 2, "autoAdvanceEnabled": False, "items": []}
+
+  def start_queue(self) -> dict[str, object]:
+    self.queue_call = ("start", None)
+    return {"revision": 2, "autoAdvanceEnabled": True, "items": []}
+
+  def pause_queue(self) -> dict[str, object]:
+    self.queue_call = ("pause", None)
+    return {"revision": 2, "autoAdvanceEnabled": False, "items": []}
 
 
 class StubWriter:
@@ -134,6 +163,20 @@ def test_pause_and_resume_cross_the_sidecar_contract() -> None:
   assert resumed == {"sessionId": session_id, "state": "preparing"}
   assert engine.pause_call == session_id
   assert engine.resume_call == session_id
+
+
+def test_queue_commands_cross_the_sidecar_contract() -> None:
+  server, engine = server_with_stub()
+  files = [{"path": "/resolved/audio.wav", "displayName": "audio.wav"}]
+
+  server.dispatch(request("queue.enqueueFiles", {"files": files}))
+  assert engine.queue_call == ("state", None)
+  server.dispatch(request("queue.reorder", {"revision": 1, "itemIds": ["item"]}))
+  assert engine.queue_call == ("reorder", (["item"], 1))
+  server.dispatch(request("queue.remove", {"itemId": "item"}))
+  assert engine.queue_call == ("remove", "item")
+  assert server.dispatch(request("queue.start", {}))["autoAdvanceEnabled"] is True
+  assert server.dispatch(request("queue.pause", {}))["autoAdvanceEnabled"] is False
 
 
 def test_export_uses_destination_but_does_not_return_the_path() -> None:

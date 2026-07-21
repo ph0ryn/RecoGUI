@@ -12,7 +12,8 @@ import reco.engine as engine_module
 from reco.engine import EngineCommandError, ModelRuntime, RecoEngine, SessionControl
 from reco.models import SplitReason, TranscriptionDiagnostics, TranscriptSegment, VadDiagnostics
 from reco.pipeline import TranscriptionProgress
-from reco.repository import NewSession, RecordingRepository, RepositoryError, SessionState
+from reco.recording import fingerprint_file_snapshot
+from reco.repository import NewQueueItem, NewSession, RecordingRepository, RepositoryError, SessionState
 
 
 def segment() -> TranscriptSegment:
@@ -167,6 +168,72 @@ def test_resume_is_rejected_while_another_session_is_active(tmp_path: Path) -> N
 
   with pytest.raises(EngineCommandError, match="already active"):
     engine.resume_session(session_id)
+
+
+def test_queue_start_is_rejected_while_a_session_is_active(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
+  monkeypatch.setattr(engine.model_manager, "ensure_verified", lambda: True)
+  engine._active_session_id = "active-session"
+
+  with pytest.raises(EngineCommandError, match="already active"):
+    engine.start_queue()
+
+  assert engine.queue_state()["autoAdvanceEnabled"] is False
+
+
+def test_restarting_engine_recognizes_paused_file_session_as_queue_origin(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  source = tmp_path / "audio.wav"
+  source.write_bytes(b"stable audio identity")
+  fingerprint = fingerprint_file_snapshot(source)
+  database = tmp_path / "reco.sqlite3"
+  repository = RecordingRepository(database)
+  session_id = repository.create_session(
+    NewSession(
+      "file",
+      source.name,
+      "model",
+      None,
+      "Japanese",
+      16_000,
+      "Audio",
+      source_fingerprint=fingerprint.value,
+      source_path=str(source),
+    )
+  )
+  repository.set_state(session_id, SessionState.PAUSING)
+  repository.pause_session(session_id, 1)
+
+  class DormantThread:
+    def __init__(self, **options: object) -> None:
+      del options
+
+    def start(self) -> None:
+      return None
+
+  engine = RecoEngine(database, tmp_path / "models")
+  monkeypatch.setattr(engine_module, "Thread", DormantThread)
+
+  engine.resume_session(session_id)
+
+  assert engine._active_queue_origin is True
+  assert engine.queue_state()["autoAdvanceEnabled"] is True
+
+
+def test_scheduler_marks_missing_item_invalid_and_stops_without_creating_history(tmp_path: Path) -> None:
+  engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
+  engine.repository.enqueue_files(
+    (NewQueueItem(str(tmp_path / "missing.wav"), "missing.wav", "sha256:missing", "missing"),)
+  )
+  engine._queue_auto_advance = True
+
+  engine._schedule_next_queue_item()
+
+  snapshot = engine.queue_state()
+  assert snapshot["autoAdvanceEnabled"] is False
+  assert cast(list[dict[str, object]], snapshot["items"])[0]["state"] == "invalid"
+  assert engine.repository.list_sessions().items == ()
 
 
 def test_drained_pause_persists_the_resume_sample(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

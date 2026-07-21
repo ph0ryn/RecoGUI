@@ -1,0 +1,16 @@
+{
+  "protocolVersion": 1,
+  "type": "request",
+  "requestId": "e6e4a877-93e6-468c-b2cc-a97066129b60",
+  "sessionId": null,
+  "sequence": 1,
+  "command": "queue.enqueueFiles",
+  "payload": {
+    "files": [
+      {
+        "path": "/private/tmp/interview.wav",
+        "displayName": "interview.wav"
+      }
+    ]
+  }
+}

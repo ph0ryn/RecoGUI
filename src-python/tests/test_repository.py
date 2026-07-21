@@ -13,7 +13,14 @@ import pytest
 
 from reco.models import SplitReason, TranscriptionDiagnostics, TranscriptSegment, VadDiagnostics
 from reco.recording import RecordingSession, RecordingSource, SessionRecorder
-from reco.repository import ExportCancelled, NewSession, RecordingRepository, RepositoryError, SessionState
+from reco.repository import (
+  ExportCancelled,
+  NewQueueItem,
+  NewSession,
+  RecordingRepository,
+  RepositoryError,
+  SessionState,
+)
 
 
 def new_session(*, session_id: str = "") -> NewSession:
@@ -313,6 +320,55 @@ def test_paused_session_and_resume_context_survive_repository_restart(tmp_path: 
   }
 
 
+def test_queue_is_durable_reorderable_and_private(tmp_path: Path) -> None:
+  database = tmp_path / "reco.sqlite3"
+  repository = RecordingRepository(database)
+  snapshot = repository.enqueue_files(
+    (
+      NewQueueItem("/private/one.wav", "one.wav", "sha256:one", "one"),
+      NewQueueItem("/private/two.wav", "two.wav", "sha256:two", "two"),
+    )
+  )
+
+  assert snapshot["revision"] == 1
+  assert [item["item_id"] for item in snapshot["items"]] == ["one", "two"]
+  assert "/private" not in str(snapshot)
+
+  reordered = RecordingRepository(database).reorder_queue(("two", "one"), 1)
+  assert reordered["revision"] == 2
+  assert [item["item_id"] for item in reordered["items"]] == ["two", "one"]
+  with pytest.raises(RepositoryError, match="Stale queue revision"):
+    repository.reorder_queue(("one", "two"), 1)
+
+
+def test_queue_claim_atomically_creates_session_and_consumes_item(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  repository.enqueue_files((NewQueueItem("/private/audio.wav", "audio.wav", "sha256:audio", "item"),))
+
+  session_id = repository.claim_queue_item(
+    "item",
+    NewSession("file", "ignored", "model", "revision", "Japanese", 16_000, "Audio"),
+  )
+
+  assert repository.queue_snapshot()["items"] == []
+  session = repository.get_session(session_id)
+  assert session["state"] == "preparing"
+  assert session["source_path"] == "/private/audio.wav"
+  assert session["source_display_name"] == "audio.wav"
+
+
+def test_invalid_queue_item_remains_and_can_be_removed(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  repository.enqueue_files((NewQueueItem("/missing.wav", "missing.wav", "sha256:missing", "item"),))
+
+  invalid = repository.invalidate_queue_item("item", "queue_source_unavailable", "missing")
+  assert invalid["items"][0]["state"] == "invalid"
+  assert invalid["items"][0]["error_code"] == "queue_source_unavailable"
+
+  cleared = repository.remove_queue_item("item")
+  assert cleared["items"] == []
+
+
 def test_v2_database_migration_preserves_sessions_segments_and_foreign_keys(tmp_path: Path) -> None:
   database = tmp_path / "v2.sqlite3"
   session_id = "00000000-0000-0000-0000-000000000004"
@@ -396,7 +452,7 @@ def test_v2_database_migration_preserves_sessions_segments_and_foreign_keys(tmp_
   assert snapshot["segments"][0]["text"] == "legacy"
   repository.integrity_check()
   with sqlite3.connect(database) as connection:
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -446,4 +502,4 @@ def test_v1_database_is_backed_up_and_migrated(tmp_path: Path) -> None:
   assert database.with_suffix(".sqlite3.v1.backup").is_file()
   assert repository.get_session("00000000-0000-0000-0000-000000000003")["state"] == "completed"
   with sqlite3.connect(database) as connection:
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 4

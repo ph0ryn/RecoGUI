@@ -36,6 +36,9 @@ async fn handle_power_notification(
     {
         return;
     }
+    let _ = supervisor
+        .request("queue.pause", None, serde_json::json!({}))
+        .await;
     let Ok(snapshot) = supervisor
         .request("engine.getState", None, serde_json::json!({}))
         .await

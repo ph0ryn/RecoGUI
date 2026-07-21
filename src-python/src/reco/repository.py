@@ -22,7 +22,7 @@ from uuid import uuid4
 from reco.models import TranscriptSegment
 from reco.recording import RecordingSegment
 
-APPLICATION_SCHEMA_VERSION = 3
+APPLICATION_SCHEMA_VERSION = 4
 
 
 class SessionState(StrEnum):
@@ -119,6 +119,16 @@ class SessionMutationReceipt:
   ended_at: str | None
 
 
+@dataclass(frozen=True)
+class NewQueueItem:
+  """Private file metadata persisted until a queued session is claimed."""
+
+  source_path: str
+  display_name: str
+  source_fingerprint: str
+  item_id: str = ""
+
+
 class RecordingRepository:
   """Thread-safe-by-connection SQLite repository for RecoGUI."""
 
@@ -166,6 +176,215 @@ class RecordingRepository:
       )
       self._update_search(connection, session_id)
     return session_id
+
+  def queue_snapshot(self) -> dict[str, Any]:
+    """Return the canonical durable queue without exposing private source paths."""
+
+    with self._connect(readonly=True) as connection:
+      revision = self._queue_revision(connection)
+      rows = connection.execute(
+        """
+        SELECT item_id, display_name, state, error_code, error_message, created_at AS added_at, updated_at
+        FROM app_queue_items ORDER BY position, item_id
+        """
+      ).fetchall()
+    return {"revision": revision, "items": [dict(row) for row in rows]}
+
+  def queue_items_private(self) -> tuple[dict[str, Any], ...]:
+    """Return ordered queue items including engine-private source metadata."""
+
+    with self._connect(readonly=True) as connection:
+      return tuple(
+        dict(row) for row in connection.execute("SELECT * FROM app_queue_items ORDER BY position, item_id").fetchall()
+      )
+
+  def enqueue_files(self, values: Iterable[NewQueueItem]) -> dict[str, Any]:
+    """Append validated file metadata and advance the durable queue revision once."""
+
+    items = tuple(values)
+    if not items:
+      return self.queue_snapshot()
+    now = _now()
+    with self._connect() as connection:
+      connection.execute("BEGIN IMMEDIATE")
+      try:
+        next_position = int(
+          connection.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM app_queue_items").fetchone()[0]
+        )
+        for offset, value in enumerate(items):
+          if not value.source_path or not value.display_name or not value.source_fingerprint:
+            raise ValueError("Queue file metadata must not be empty")
+          connection.execute(
+            """
+            INSERT INTO app_queue_items (
+              item_id, position, display_name, source_path, source_fingerprint,
+              state, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+            """,
+            (
+              value.item_id.strip() or str(uuid4()),
+              next_position + offset,
+              value.display_name,
+              value.source_path,
+              value.source_fingerprint,
+              now,
+              now,
+            ),
+          )
+        self._increment_queue_revision(connection)
+        connection.execute("COMMIT")
+      except BaseException:
+        with suppress(sqlite3.Error):
+          connection.execute("ROLLBACK")
+        raise
+    return self.queue_snapshot()
+
+  def reorder_queue(self, item_ids: Iterable[str], revision: int) -> dict[str, Any]:
+    """Replace the full queue order when the caller's revision is current."""
+
+    ids = tuple(item_ids)
+    if len(ids) != len(set(ids)):
+      raise RepositoryError("Queue order contains duplicate item IDs")
+    with self._connect() as connection:
+      connection.execute("BEGIN IMMEDIATE")
+      try:
+        self._require_queue_revision(connection, revision)
+        current = tuple(
+          str(row[0]) for row in connection.execute("SELECT item_id FROM app_queue_items ORDER BY position, item_id")
+        )
+        if set(ids) != set(current) or len(ids) != len(current):
+          raise RepositoryError("Queue order must contain every current item exactly once")
+        connection.execute("UPDATE app_queue_items SET position = position + 1000000")
+        for position, item_id in enumerate(ids):
+          connection.execute(
+            "UPDATE app_queue_items SET position = ?, updated_at = ? WHERE item_id = ?",
+            (position, _now(), item_id),
+          )
+        self._increment_queue_revision(connection)
+        connection.execute("COMMIT")
+      except BaseException:
+        with suppress(sqlite3.Error):
+          connection.execute("ROLLBACK")
+        raise
+    return self.queue_snapshot()
+
+  def remove_queue_item(self, item_id: str) -> dict[str, Any]:
+    """Remove one unclaimed queue item without touching session history."""
+
+    with self._connect() as connection:
+      connection.execute("BEGIN IMMEDIATE")
+      try:
+        if connection.execute("DELETE FROM app_queue_items WHERE item_id = ?", (item_id,)).rowcount == 0:
+          raise RepositoryError(f"Unknown queue item: {item_id}")
+        self._increment_queue_revision(connection)
+        connection.execute("COMMIT")
+      except BaseException:
+        with suppress(sqlite3.Error):
+          connection.execute("ROLLBACK")
+        raise
+    return self.queue_snapshot()
+
+  def clear_queue(self) -> dict[str, Any]:
+    """Remove all unclaimed queue items."""
+
+    with self._connect() as connection:
+      connection.execute("BEGIN IMMEDIATE")
+      try:
+        changed = connection.execute("DELETE FROM app_queue_items").rowcount > 0
+        if changed:
+          self._increment_queue_revision(connection)
+        connection.execute("COMMIT")
+      except BaseException:
+        with suppress(sqlite3.Error):
+          connection.execute("ROLLBACK")
+        raise
+    return self.queue_snapshot()
+
+  def invalidate_queue_item(self, item_id: str, code: str, message: str) -> dict[str, Any]:
+    """Retain an unusable queue item with a stable actionable failure."""
+
+    with self._connect() as connection:
+      connection.execute("BEGIN IMMEDIATE")
+      try:
+        changed = connection.execute(
+          """
+          UPDATE app_queue_items
+          SET state = 'invalid', error_code = ?, error_message = ?, updated_at = ?
+          WHERE item_id = ?
+          """,
+          (code, message, _now(), item_id),
+        ).rowcount
+        if not changed:
+          raise RepositoryError(f"Unknown queue item: {item_id}")
+        self._increment_queue_revision(connection)
+        connection.execute("COMMIT")
+      except BaseException:
+        with suppress(sqlite3.Error):
+          connection.execute("ROLLBACK")
+        raise
+    return self.queue_snapshot()
+
+  def claim_queue_item(self, item_id: str, session: NewSession) -> str:
+    """Atomically consume one pending item and commit its preparing session."""
+
+    session_id = session.session_id.strip() or str(uuid4())
+    now = _now()
+    with self._connect() as connection:
+      connection.execute("BEGIN IMMEDIATE")
+      try:
+        item = connection.execute("SELECT * FROM app_queue_items WHERE item_id = ?", (item_id,)).fetchone()
+        if item is None:
+          raise RepositoryError(f"Queue item cannot be claimed: {item_id}")
+        connection.execute(
+          """
+          INSERT INTO app_sessions (
+            session_id, state, title, source_kind, source_display_name,
+            source_fingerprint, source_path, source_device_id,
+            model, model_revision, language, sample_rate,
+            config_json, started_at, updated_at
+          ) VALUES (?, 'preparing', ?, 'file', ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+          """,
+          (
+            session_id,
+            session.title,
+            item["display_name"],
+            item["source_fingerprint"],
+            item["source_path"],
+            session.model,
+            session.model_revision,
+            session.language,
+            session.sample_rate,
+            json.dumps(session.config or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            now,
+            now,
+          ),
+        )
+        connection.execute("DELETE FROM app_queue_items WHERE item_id = ?", (item_id,))
+        self._increment_queue_revision(connection)
+        self._update_search(connection, session_id)
+        connection.execute("COMMIT")
+      except BaseException:
+        with suppress(sqlite3.Error):
+          connection.execute("ROLLBACK")
+        raise
+    return session_id
+
+  @staticmethod
+  def _queue_revision(connection: sqlite3.Connection) -> int:
+    row = connection.execute("SELECT value FROM app_metadata WHERE key = 'queue_revision'").fetchone()
+    return int(row[0]) if row is not None else 0
+
+  def _require_queue_revision(self, connection: sqlite3.Connection, revision: int) -> None:
+    current = self._queue_revision(connection)
+    if revision != current:
+      raise RepositoryError(f"Stale queue revision: expected {current}, received {revision}")
+
+  def _increment_queue_revision(self, connection: sqlite3.Connection) -> int:
+    revision = self._queue_revision(connection) + 1
+    connection.execute(
+      "INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('queue_revision', ?)", (str(revision),)
+    )
+    return revision
 
   def set_state(
     self,
@@ -568,7 +787,7 @@ class RecordingRepository:
           str(row[0])
           for row in probe.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
         }
-      if old_version not in {0, 1, 2, APPLICATION_SCHEMA_VERSION}:
+      if old_version not in {0, 1, 2, 3, APPLICATION_SCHEMA_VERSION}:
         raise RepositoryError(f"Database schema version {old_version} is not supported")
       if old_version == 0 and existing_tables:
         raise RepositoryError("Non-empty unversioned database cannot be initialized as a RecoGUI repository")
@@ -972,4 +1191,17 @@ CREATE TABLE IF NOT EXISTS app_segments (
 CREATE VIRTUAL TABLE IF NOT EXISTS app_session_search USING fts5(
   session_id UNINDEXED, title, text, tokenize='unicode61'
 );
+CREATE TABLE IF NOT EXISTS app_queue_items (
+  item_id TEXT PRIMARY KEY,
+  position INTEGER NOT NULL CHECK (position >= 0),
+  display_name TEXT NOT NULL,
+  source_path TEXT NOT NULL,
+  source_fingerprint TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending','invalid')),
+  error_code TEXT,
+  error_message TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS app_queue_items_position ON app_queue_items(position);
 """

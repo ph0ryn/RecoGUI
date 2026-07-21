@@ -264,6 +264,11 @@ impl EngineSupervisor {
         }
         let _ = timeout(
             Duration::from_secs(5),
+            self.request("queue.pause", None, serde_json::json!({})),
+        )
+        .await;
+        let _ = timeout(
+            Duration::from_secs(5),
             self.request("engine.shutdown", None, serde_json::json!({})),
         )
         .await;

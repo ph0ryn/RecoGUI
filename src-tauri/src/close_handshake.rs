@@ -146,6 +146,22 @@ impl CloseCoordinator {
         supervisor: EngineSupervisor,
         session_id: String,
     ) {
+        if let Err(error) = supervisor
+            .request("queue.pause", None, serde_json::json!({}))
+            .await
+        {
+            *self.inner.state.lock().await = CloseState::AwaitingForce {
+                session_id: Some(session_id.clone()),
+            };
+            let _ = app.emit(
+                CLOSE_FORCE_REQUIRED_EVENT,
+                CloseForceRequiredEvent {
+                    session_id: Some(session_id),
+                    error: error.to_string(),
+                },
+            );
+            return;
+        }
         let result = supervisor
             .request(
                 "session.stop",

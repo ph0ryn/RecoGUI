@@ -23,6 +23,13 @@ const ALLOWED_ENGINE_COMMANDS: &[&str] = &[
     "model.load",
     "model.delete",
     "audio.listInputs",
+    "queue.getState",
+    "queue.enqueueFiles",
+    "queue.reorder",
+    "queue.remove",
+    "queue.clear",
+    "queue.start",
+    "queue.pause",
     "session.start",
     "session.stop",
     "session.pause",
@@ -54,7 +61,32 @@ pub struct SessionStartCommand {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum SessionSource {
     Microphone { device_id: Option<String> },
-    File { source_token: String },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueEnqueueFilesCommand {
+    pub files: Vec<QueueFileToken>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueFileToken {
+    pub source_token: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueReorderCommand {
+    pub revision: u64,
+    pub item_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueRemoveCommand {
+    pub item_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -170,20 +202,31 @@ pub async fn engine_request(
     let object = payload
         .as_object_mut()
         .ok_or_else(|| "engine payload must be an object".to_owned())?;
+    let mut source_tokens_to_remove = Vec::new();
 
     if command == "session.start"
         && let Some(source) = object.get_mut("source").and_then(Value::as_object_mut)
         && source.get("type").and_then(Value::as_str) == Some("file")
     {
-        let token = source
-            .remove("sourceToken")
-            .and_then(|value| value.as_str().map(ToOwned::to_owned))
-            .ok_or_else(|| "file sources require sourceToken".to_owned())?;
-        let path = tokens
-            .resolve(&token)
-            .await
-            .ok_or_else(|| "unknown or expired source token".to_owned())?;
-        source.insert("path".into(), json!(path));
+        return Err("file sources must be added through the processing queue".into());
+    }
+    if command == "queue.enqueueFiles" {
+        let file_values = object
+            .remove("files")
+            .and_then(|value| value.as_array().cloned())
+            .ok_or_else(|| "queue enqueue requires files".to_owned())?;
+        let files = file_values
+            .into_iter()
+            .map(|value| {
+                serde_json::from_value::<QueueFileToken>(value)
+                    .map_err(|_| "queue files require sourceToken and displayName".to_owned())
+            })
+            .collect::<CommandResult<Vec<_>>>()?;
+        source_tokens_to_remove = files.iter().map(|file| file.source_token.clone()).collect();
+        object.insert(
+            "files".into(),
+            json!(resolve_queue_files(&tokens, &files).await?),
+        );
     }
     if matches!(command.as_str(), "history.export" | "history.exportMany") {
         let token = object
@@ -201,7 +244,13 @@ pub async fn engine_request(
         .get("sessionId")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    request(&supervisor, &command, session_id, payload).await
+    let result = request(&supervisor, &command, session_id, payload).await;
+    if result.is_ok() {
+        for token in source_tokens_to_remove {
+            tokens.remove(&token).await;
+        }
+    }
+    result
 }
 
 #[tauri::command]
@@ -286,6 +335,92 @@ pub async fn select_audio_file(
 }
 
 #[tauri::command]
+pub async fn select_audio_files(
+    tokens: State<'_, FileTokenStore>,
+) -> CommandResult<Vec<SelectedFile>> {
+    let selected = rfd::AsyncFileDialog::new()
+        .set_title("Select audio files")
+        .add_filter(
+            "Audio",
+            &["wav", "mp3", "m4a", "flac", "aac", "ogg", "opus"],
+        )
+        .pick_files()
+        .await;
+    let mut files = Vec::new();
+    for file in selected.unwrap_or_default() {
+        files.push(tokens.insert(file.path().to_path_buf()).await);
+    }
+    Ok(files)
+}
+
+async fn resolve_queue_files(
+    tokens: &FileTokenStore,
+    queue_files: &[QueueFileToken],
+) -> CommandResult<Vec<Value>> {
+    if queue_files.is_empty() {
+        return Err("at least one source file is required".into());
+    }
+    let mut files = Vec::with_capacity(queue_files.len());
+    for file in queue_files {
+        let path = tokens
+            .resolve(&file.source_token)
+            .await
+            .ok_or_else(|| "unknown or expired source token".to_owned())?;
+        if file.display_name.trim().is_empty() {
+            return Err("queue file displayName must not be empty".into());
+        }
+        files.push(json!({ "path": path, "displayName": file.display_name }));
+    }
+    Ok(files)
+}
+
+empty_engine_command!(queue_get_state, "queue.getState");
+empty_engine_command!(queue_clear, "queue.clear");
+empty_engine_command!(queue_start, "queue.start");
+empty_engine_command!(queue_pause, "queue.pause");
+
+#[tauri::command]
+pub async fn queue_enqueue_files(
+    input: QueueEnqueueFilesCommand,
+    supervisor: State<'_, EngineSupervisor>,
+    tokens: State<'_, FileTokenStore>,
+) -> CommandResult<Value> {
+    let files = resolve_queue_files(&tokens, &input.files).await?;
+    let result = request(
+        &supervisor,
+        "queue.enqueueFiles",
+        None,
+        json!({ "files": files }),
+    )
+    .await;
+    if result.is_ok() {
+        for file in input.files {
+            tokens.remove(&file.source_token).await;
+        }
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn queue_reorder(
+    input: QueueReorderCommand,
+    supervisor: State<'_, EngineSupervisor>,
+) -> CommandResult<Value> {
+    if input.item_ids.is_empty() {
+        return Err("queue order must contain at least one item".into());
+    }
+    request(&supervisor, "queue.reorder", None, json!(input)).await
+}
+
+#[tauri::command]
+pub async fn queue_remove(
+    input: QueueRemoveCommand,
+    supervisor: State<'_, EngineSupervisor>,
+) -> CommandResult<Value> {
+    request(&supervisor, "queue.remove", None, json!(input)).await
+}
+
+#[tauri::command]
 pub async fn select_export_destination(
     suggested_name: String,
     extension: String,
@@ -310,18 +445,10 @@ pub async fn select_export_destination(
 pub async fn session_start(
     input: SessionStartCommand,
     supervisor: State<'_, EngineSupervisor>,
-    tokens: State<'_, FileTokenStore>,
 ) -> CommandResult<Value> {
     let source = match input.source {
         SessionSource::Microphone { device_id } => {
             json!({ "type": "microphone", "deviceId": device_id })
-        }
-        SessionSource::File { source_token } => {
-            let path = tokens
-                .resolve(&source_token)
-                .await
-                .ok_or_else(|| "unknown or expired source token".to_owned())?;
-            json!({ "type": "file", "path": path })
         }
     };
     request(
@@ -500,7 +627,36 @@ mod tests {
     #[test]
     fn only_known_protocol_commands_are_allowed() {
         assert!(ALLOWED_ENGINE_COMMANDS.contains(&"session.start"));
+        assert!(ALLOWED_ENGINE_COMMANDS.contains(&"queue.enqueueFiles"));
+        assert!(ALLOWED_ENGINE_COMMANDS.contains(&"queue.pause"));
         assert!(!ALLOWED_ENGINE_COMMANDS.contains(&"shell.execute"));
+    }
+
+    #[tokio::test]
+    async fn queue_files_resolve_tokens_without_exposing_them() {
+        let tokens = FileTokenStore::default();
+        let first = tokens.insert(PathBuf::from("/private/first.wav")).await;
+        let second = tokens.insert(PathBuf::from("/private/second.wav")).await;
+        let files = vec![
+            QueueFileToken {
+                source_token: first.token,
+                display_name: first.display_name,
+            },
+            QueueFileToken {
+                source_token: second.token,
+                display_name: second.display_name,
+            },
+        ];
+
+        let resolved = resolve_queue_files(&tokens, &files).await.unwrap();
+
+        assert_eq!(resolved[0]["path"], "/private/first.wav");
+        assert_eq!(resolved[1]["path"], "/private/second.wav");
+        assert!(
+            resolved
+                .iter()
+                .all(|file| file.get("sourceToken").is_none())
+        );
     }
 
     #[test]

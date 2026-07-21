@@ -138,6 +138,23 @@ class SidecarServer:
       return self.engine.pause_session(_session_id(request, payload))
     if command == "session.resume":
       return self.engine.resume_session(_session_id(request, payload))
+    if command == "queue.getState":
+      return self.engine.queue_state()
+    if command == "queue.enqueueFiles":
+      return self.engine.enqueue_files(payload.get("files"))
+    if command == "queue.reorder":
+      return self.engine.reorder_queue(payload.get("itemIds"), payload.get("revision"))
+    if command == "queue.remove":
+      item_id = payload.get("itemId")
+      if not isinstance(item_id, str) or not item_id:
+        raise ValueError("itemId must be a non-empty string")
+      return self.engine.remove_queue_item(item_id)
+    if command == "queue.clear":
+      return self.engine.clear_queue()
+    if command == "queue.start":
+      return self.engine.start_queue()
+    if command == "queue.pause":
+      return self.engine.pause_queue()
     if command == "history.list":
       states = tuple(SessionState(value) for value in _string_list(payload.get("states", []), allow_empty=True))
       page = self.engine.repository.list_sessions(

@@ -26,7 +26,14 @@ from reco.model_manager import MODEL_ID, MODEL_REVISION, ModelManager
 from reco.models import TranscriptModelMetadata, TranscriptSegment
 from reco.pipeline import AsrWorker, TranscriptionProgress, run_transcription, start_asr_worker
 from reco.recording import fingerprint_file_snapshot
-from reco.repository import NewSession, RecordingRepository, SessionMutationReceipt, SessionState
+from reco.repository import (
+  NewQueueItem,
+  NewSession,
+  RecordingRepository,
+  RepositoryError,
+  SessionMutationReceipt,
+  SessionState,
+)
 from reco.transcription import LocalAsrTranscriptionService
 from reco.vad import OnnxSileroProbabilityModel, SileroVadEngine, ensure_silero_vad_asset
 
@@ -125,6 +132,10 @@ class RecoEngine:
     self._active_thread: Thread | None = None
     self._lock = Lock()
     self._shutting_down = False
+    self._queue_auto_advance = False
+    self._queue_scheduler_active = False
+    self._active_queue_origin = False
+    self._paused_queue_sessions: set[str] = set()
 
   def state(self) -> dict[str, object]:
     """Return the complete engine/model/session snapshot."""
@@ -145,8 +156,62 @@ class RecoEngine:
       "activeSession": active,
     }
 
-  def start_session(self, payload: Mapping[str, object], requested_session_id: str | None = None) -> dict[str, object]:
-    """Commit and asynchronously start a microphone or file transcription."""
+  def queue_state(self) -> dict[str, object]:
+    """Return the durable queue plus the intentionally non-durable run toggle."""
+
+    snapshot = cast(dict[str, object], _camel(self.repository.queue_snapshot()))
+    with self._lock:
+      snapshot["autoAdvanceEnabled"] = self._queue_auto_advance
+    return snapshot
+
+  def enqueue_files(self, files: object) -> dict[str, object]:
+    """Validate and append resolved private file paths without starting work."""
+
+    if not isinstance(files, list) or not files:
+      raise EngineCommandError("invalid_queue_files", "files must be a non-empty array")
+    values: list[NewQueueItem] = []
+    for value in files:
+      if not isinstance(value, Mapping):
+        raise EngineCommandError("invalid_queue_file", "Each queue file requires a resolved path")
+      file_value = cast(Mapping[str, object], value)
+      if not file_value.get("path"):
+        raise EngineCommandError("invalid_queue_file", "Each queue file requires a resolved path")
+      path = Path(str(file_value["path"]))
+      try:
+        validate_audio_file(path)
+        fingerprint = fingerprint_file_snapshot(path)
+      except RecoError as exc:
+        raise EngineCommandError("invalid_queue_file", str(exc)) from exc
+      display_name = str(file_value.get("displayName") or path.name).strip()
+      values.append(NewQueueItem(str(path), display_name, fingerprint.value))
+    self.repository.enqueue_files(values)
+    return self._publish_queue_changed()
+
+  def reorder_queue(self, item_ids: object, revision: object) -> dict[str, object]:
+    if not isinstance(item_ids, list) or not all(isinstance(value, str) for value in item_ids):
+      raise EngineCommandError("invalid_queue_order", "itemIds must be an array of strings")
+    if not isinstance(revision, int) or isinstance(revision, bool):
+      raise EngineCommandError("invalid_queue_revision", "revision must be an integer")
+    try:
+      self.repository.reorder_queue(cast(list[str], item_ids), revision)
+    except RepositoryError as exc:
+      code = "queue_revision_conflict" if str(exc).startswith("Stale queue revision") else "invalid_queue_order"
+      raise EngineCommandError(code, str(exc), details={"queue": self.queue_state()}) from exc
+    return self._publish_queue_changed()
+
+  def remove_queue_item(self, item_id: str) -> dict[str, object]:
+    try:
+      self.repository.remove_queue_item(item_id)
+    except RepositoryError as exc:
+      raise EngineCommandError("queue_item_not_found", str(exc), details={"queue": self.queue_state()}) from exc
+    return self._publish_queue_changed()
+
+  def clear_queue(self) -> dict[str, object]:
+    self.repository.clear_queue()
+    return self._publish_queue_changed()
+
+  def start_queue(self) -> dict[str, object]:
+    """Enable explicit serial advancement and claim the first usable item."""
 
     with self._lock:
       if self._shutting_down:
@@ -155,13 +220,42 @@ class RecoEngine:
         raise EngineCommandError("session_active", "Another transcription session is already active")
     if not self.model_manager.ensure_verified():
       raise EngineCommandError("model_missing", "The fixed transcription model is not installed")
+    with self._lock:
+      if self._shutting_down:
+        raise EngineCommandError("engine_shutting_down", "The engine is shutting down", recoverable=False)
+      if self._active_session_id is not None:
+        raise EngineCommandError("session_active", "Another transcription session is already active")
+      self._queue_auto_advance = True
+    snapshot = self._publish_queue_changed()
+    self._schedule_next_queue_item()
+    return snapshot
+
+  def pause_queue(self) -> dict[str, object]:
+    """Prevent another queued file from starting; the active session keeps running."""
+
+    with self._lock:
+      self._queue_auto_advance = False
+    return self._publish_queue_changed()
+
+  def start_session(self, payload: Mapping[str, object], requested_session_id: str | None = None) -> dict[str, object]:
+    """Commit and asynchronously start a microphone transcription."""
+
+    with self._lock:
+      if self._shutting_down:
+        raise EngineCommandError("engine_shutting_down", "The engine is shutting down", recoverable=False)
+      if self._active_session_id is not None:
+        raise EngineCommandError("session_active", "Another transcription session is already active")
+      if self._queue_auto_advance:
+        raise EngineCommandError("queue_active", "The file queue is active")
+    if not self.model_manager.ensure_verified():
+      raise EngineCommandError("model_missing", "The fixed transcription model is not installed")
     source_value = payload.get("source", {"type": "microphone"})
     if not isinstance(source_value, Mapping):
       raise EngineCommandError("invalid_source", "source must be an object")
     source_value = cast(Mapping[str, object], source_value)
     source_kind = str(source_value.get("type", "microphone"))
-    if source_kind not in {"microphone", "file"}:
-      raise EngineCommandError("invalid_source", "sourceKind must be microphone or file")
+    if source_kind != "microphone":
+      raise EngineCommandError("queue_required", "File sources must be added to the processing queue")
     source_path = Path(str(source_value["path"])) if source_kind == "file" and source_value.get("path") else None
     if source_kind == "file" and source_path is None:
       raise EngineCommandError("invalid_source", "A file source requires path")
@@ -212,6 +306,7 @@ class RecoEngine:
     if reason not in {"userStop", "systemSleep", "appQuit"}:
       raise EngineCommandError("invalid_stop_reason", f"Unsupported stop reason: {reason}")
     control = self._require_active(session_id)
+    self._stop_queue_for_active_session()
     receipt = self.repository.set_state(session_id, SessionState.STOPPING)
     control.request_stop(reason)
     self._emit("session.stateChanged", session_id, {**self._state_receipt(receipt), "reason": reason})
@@ -221,6 +316,7 @@ class RecoEngine:
     """Stop capture and discard pending, uncommitted ASR work."""
 
     control = self._require_active(session_id)
+    self._stop_queue_for_active_session()
     receipt = self.repository.set_state(session_id, SessionState.STOPPING)
     control.request_cancel()
     self._emit("session.stateChanged", session_id, {**self._state_receipt(receipt), "cancelled": True})
@@ -230,6 +326,14 @@ class RecoEngine:
     """Stop capture and drain queued ASR before making the session resumable."""
 
     control = self._require_active(session_id)
+    queue_origin = False
+    with self._lock:
+      if getattr(self, "_active_queue_origin", False):
+        queue_origin = True
+        self._paused_queue_sessions.add(session_id)
+        self._queue_auto_advance = False
+    if queue_origin:
+      self._publish_queue_changed()
     receipt = self.repository.set_state(session_id, SessionState.PAUSING)
     control.request_stop("userPause")
     self._emit("session.stateChanged", session_id, self._state_receipt(receipt))
@@ -245,6 +349,9 @@ class RecoEngine:
         raise EngineCommandError("session_active", "Another transcription session is already active")
       context = self.repository.get_resume_context(session_id)
       source_kind = str(context["source_kind"])
+      queue_origin = source_kind == "file"
+      if self._queue_auto_advance and not queue_origin:
+        raise EngineCommandError("queue_active", "The file queue is active")
       source_path = Path(str(context["source_path"])) if context.get("source_path") else None
       device_value = context.get("source_device_id")
       device = _restore_device_id(str(device_value)) if device_value is not None else None
@@ -268,7 +375,12 @@ class RecoEngine:
       self._active_session_id = session_id
       self._active_control = control
       self._active_thread = thread
+      self._active_queue_origin = queue_origin
+      if queue_origin:
+        self._queue_auto_advance = True
       thread.start()
+    if queue_origin:
+      self._publish_queue_changed()
     self._emit("session.stateChanged", session_id, self._state_receipt(receipt))
     return {"sessionId": session_id, **self._state_receipt(receipt)}
 
@@ -277,6 +389,7 @@ class RecoEngine:
 
     with self._lock:
       self._shutting_down = True
+      self._queue_auto_advance = False
       session_id = self._active_session_id
       control = self._active_control
       thread = self._active_thread
@@ -290,6 +403,84 @@ class RecoEngine:
         with _ignore_repository_error():
           self.repository.set_state(session_id or "", SessionState.ABANDONED, end_reason="forceStop")
     self.runtime.close()
+
+  def _stop_queue_for_active_session(self) -> None:
+    changed = False
+    with self._lock:
+      if getattr(self, "_active_queue_origin", False):
+        changed = self._queue_auto_advance
+        self._queue_auto_advance = False
+    if changed:
+      self._publish_queue_changed()
+
+  def _schedule_next_queue_item(self) -> None:
+    """Claim at most one valid item; terminal sessions call this again."""
+
+    with self._lock:
+      if (
+        not self._queue_auto_advance
+        or self._queue_scheduler_active
+        or self._active_session_id is not None
+        or self._shutting_down
+      ):
+        return
+      self._queue_scheduler_active = True
+    try:
+      for item in self.repository.queue_items_private():
+        item_id = str(item["item_id"])
+        source_path = Path(str(item["source_path"]))
+        try:
+          validate_audio_file(source_path)
+          fingerprint = fingerprint_file_snapshot(source_path)
+          if fingerprint.value != item["source_fingerprint"]:
+            raise EngineCommandError("queue_source_changed", "The queued audio file has changed")
+        except Exception as exc:
+          code = exc.code if isinstance(exc, EngineCommandError) else "queue_source_unavailable"
+          self.repository.invalidate_queue_item(item_id, code, str(exc))
+          self._publish_queue_changed()
+          continue
+        control = SessionControl()
+        with self._lock:
+          if not self._queue_auto_advance or self._active_session_id is not None or self._shutting_down:
+            return
+          try:
+            session_id = self.repository.claim_queue_item(
+              item_id,
+              NewSession(
+                source_kind="file",
+                source_display_name=str(item["display_name"]),
+                source_fingerprint=fingerprint.value,
+                source_path=str(source_path),
+                model=MODEL_ID,
+                model_revision=MODEL_REVISION,
+                language=DEFAULT_CONFIG.cli.default_language,
+                sample_rate=SAMPLE_RATE,
+                title=source_path.stem,
+                config={"vad": asdict(DEFAULT_CONFIG.vad), "transcription": asdict(DEFAULT_CONFIG.transcription)},
+              ),
+            )
+          except RepositoryError:
+            continue
+          thread = Thread(
+            target=self._run_session,
+            args=(session_id, source_path, None, fingerprint, control, 0, 0),
+            daemon=True,
+            name=f"reco-session-{session_id}",
+          )
+          self._active_session_id = session_id
+          self._active_control = control
+          self._active_thread = thread
+          self._active_queue_origin = True
+          self._queue_scheduler_active = False
+          thread.start()
+        self._publish_queue_changed()
+        return
+      with self._lock:
+        self._queue_auto_advance = False
+      self._publish_queue_changed()
+    finally:
+      with self._lock:
+        self._queue_scheduler_active = False
 
   def list_audio_inputs(self) -> list[dict[str, object]]:
     """Return current input-capable PortAudio devices."""
@@ -395,12 +586,21 @@ class RecoEngine:
       with _ignore_repository_error():
         self.runtime.invalidate()
     finally:
+      should_advance = False
       with self._lock:
         if self._active_session_id == session_id:
+          was_queue_origin = self._active_queue_origin
           self._active_session_id = None
           self._active_control = None
           self._active_thread = None
+          self._active_queue_origin = False
+          if was_queue_origin:
+            if control.stop_reason != "userPause":
+              self._paused_queue_sessions.discard(session_id)
+            should_advance = self._queue_auto_advance and not self._shutting_down
       self._emit("history.changed", session_id, {"sessionId": session_id})
+      if should_advance:
+        self._schedule_next_queue_item()
 
   def _persist_segment(self, session_id: str, segment: TranscriptSegment) -> None:
     receipt = self.repository.append_segment(session_id, segment)
@@ -461,6 +661,11 @@ class RecoEngine:
   def _emit(self, event: str, session_id: str | None, payload: Mapping[str, object]) -> None:
     if self._event_callback is not None:
       self._event_callback(event, session_id, payload)
+
+  def _publish_queue_changed(self) -> dict[str, object]:
+    snapshot = self.queue_state()
+    self._emit("queue.changed", None, snapshot)
+    return snapshot
 
 
 def _restore_device_id(value: str) -> int | str:
