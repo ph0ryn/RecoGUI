@@ -582,6 +582,7 @@ class RecordingRepository:
       connection.execute("BEGIN IMMEDIATE")
       try:
         self._migrate_v2(connection, old_version)
+        self._repair_legacy_segment_foreign_key(connection)
         self._migrate_v1(connection)
         connection.execute(f"PRAGMA user_version = {APPLICATION_SCHEMA_VERSION}")
         connection.execute(
@@ -644,6 +645,27 @@ class RecordingRepository:
     ):
       if name not in columns:
         connection.execute(f"ALTER TABLE app_sessions ADD COLUMN {name} {definition}")
+
+  def _repair_legacy_segment_foreign_key(self, connection: sqlite3.Connection) -> None:
+    """Repair early v3 databases whose segment foreign key still targets the temporary v2 table."""
+
+    foreign_keys = connection.execute("PRAGMA foreign_key_list(app_segments)").fetchall()
+    if not any(str(row[2]) == "app_sessions_v2" for row in foreign_keys):
+      return
+    connection.execute("ALTER TABLE app_segments RENAME TO app_segments_legacy_fk")
+    connection.execute(_APP_SEGMENTS_SCHEMA)
+    connection.execute(
+      """
+      INSERT INTO app_segments (
+        session_id, segment_index, start_sample, end_sample, split_reason,
+        text, raw_text, diagnostics_json
+      )
+      SELECT session_id, segment_index, start_sample, end_sample, split_reason,
+        text, raw_text, diagnostics_json
+      FROM app_segments_legacy_fk
+      """
+    )
+    connection.execute("DROP TABLE app_segments_legacy_fk")
 
   def _migrate_v1(self, connection: sqlite3.Connection) -> None:
     tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}

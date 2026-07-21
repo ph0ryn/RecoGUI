@@ -400,6 +400,31 @@ def test_v2_database_migration_preserves_sessions_segments_and_foreign_keys(tmp_
     assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
+def test_v3_startup_repairs_segment_foreign_key_left_by_early_migration(tmp_path: Path) -> None:
+  database = tmp_path / "broken-v3.sqlite3"
+  repository = RecordingRepository(database)
+  session_id = repository.create_session(new_session())
+  repository.append_segment(session_id, segment())
+  with sqlite3.connect(database) as connection:
+    connection.execute("PRAGMA writable_schema = ON")
+    connection.execute(
+      """
+      UPDATE sqlite_master
+      SET sql = replace(sql, 'REFERENCES app_sessions', 'REFERENCES "app_sessions_v2"')
+      WHERE type = 'table' AND name = 'app_segments'
+      """
+    )
+    connection.execute("PRAGMA writable_schema = OFF")
+
+  repaired = RecordingRepository(database)
+
+  assert repaired.get_session(session_id)["segments"][0]["text"] == "hello"
+  with sqlite3.connect(database) as connection:
+    foreign_keys = connection.execute("PRAGMA foreign_key_list(app_segments)").fetchall()
+    assert [row[2] for row in foreign_keys] == ["app_sessions"]
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 def test_v1_database_is_backed_up_and_migrated(tmp_path: Path) -> None:
   database = tmp_path / "legacy.sqlite3"
   with SessionRecorder(
