@@ -69,15 +69,15 @@ RecoGUI/
 
 ### 状態の正本
 
-| 状態                                       | 正本          |
-| ------------------------------------------ | ------------- |
-| sidecar processの起動、停止、crash、再起動 | Rust          |
-| model一覧、選択、active session、queue scheduler | Python engine |
-| model snapshot                              | Hugging Face共通キャッシュ |
-| 選択したrepository IDとrevision             | GUI用SQLite   |
-| 保存済みsession、segment、集計値           | GUI用SQLite   |
-| 待機中のfile queue itemと順序              | GUI用SQLite   |
-| 選択、dialog、検索条件、pane幅             | React         |
+| 状態                                             | 正本                       |
+| ------------------------------------------------ | -------------------------- |
+| sidecar processの起動、停止、crash、再起動       | Rust                       |
+| model一覧、選択、active session、queue scheduler | Python engine              |
+| model snapshot                                   | Hugging Face共通キャッシュ |
+| 選択したrepository IDとrevision                  | GUI用SQLite                |
+| 保存済みsession、segment、集計値                 | GUI用SQLite                |
+| 待機中のfile queue itemと順序                    | GUI用SQLite                |
+| 選択、dialog、検索条件、pane幅                   | React                      |
 
 Reactは永続的な処理状態を独自に確定しない。起動、再接続、終端eventの後はengineと履歴から
 canonical stateを取得する。
@@ -172,8 +172,6 @@ history.cancelExport
 
 ```text
 engine.heartbeat
-model.loading
-model.ready
 session.progress
 session.stateChanged
 segment.persisted
@@ -235,7 +233,8 @@ databaseへ保存しない。
   `repo_type` が`model`のすべてのrevisionを候補とする。任意shellは公開しない。
 - 選択のrepository IDとrevisionはSQLiteに保存し、snapshot pathは毎回一覧から解決する。
   snapshot pathはReactやdatabaseへ公開しない。
-- model選択はengineがidleで、paused sessionもqueue自動処理もないときだけ許可する。
+- model選択はactive sessionとqueue自動処理がないときに許可する。paused sessionは
+  ASR runtimeを占有しないため切替を許可し、Resume後はその時点で選択中のmodelを使用する。
   読込に失敗しても選択値は保持し、文字起こしを無効化する。
 - Silero VADは同梱assetとしてapplication data directoryへ検証付きで展開し、
   Hugging FaceのASR model管理と分離する。

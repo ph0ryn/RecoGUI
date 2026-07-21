@@ -39,7 +39,11 @@ pnpm dev
 次を確認する。
 
 - application windowが開き、sidecarが一つだけ起動する。
-- modelのdownload、cancel、verify、load、deleteが動作する。
+- `hf` CLIのキャッシュからすべてのmodel revisionが表示され、互換性によるフィルタが行われない。
+- modelを明示的に選択すると読み込まれ、再起動後も同じrepository IDとrevisionが復元される。
+- active sessionまたはqueue自動処理中はmodel切替が拒否され、paused sessionがある場合は切替できる。
+- `hf` CLI不在、model未選択、snapshot欠損、非互換modelの読込失敗が個別に表示される。
+- modelを利用できない場合も履歴、検索、Exportは動作し、文字起こしだけが無効になる。
 - マイクと音声ファイルからsessionを開始できる。
 - idleかつ待機なしで複数ファイルを追加すると先頭だけを即時開始し、残りを選択順で待機表示する。
 - active session中または既存の待機がある場合は開始せず、選択順で末尾へ追加する。
@@ -95,4 +99,4 @@ pnpm dev
 - microphone permission
 - sidecarとnative libraryを含むcode signing
 - notarizationと配布package
-- application更新後の既存SQLiteとmodelの再利用
+- application更新後の既存SQLiteとHugging Faceキャッシュ内modelの再利用
