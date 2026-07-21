@@ -1,7 +1,7 @@
 {
   "name": "reco-gui",
-  "private": true,
   "version": "0.1.0",
+  "private": true,
   "type": "module",
   "scripts": {
     "build": "tauri build --no-bundle",
@@ -15,6 +15,8 @@
     "format:python": "uv run --directory src-python task format",
     "format:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all",
     "format:typescript": "oxfmt",
+    "preinstall": "npx only-allow pnpm",
+    "postinstall": "git config core.hooksPath .githooks",
     "lint": "pnpm --aggregate-output /^lint:/",
     "lint:python": "uv run --directory src-python task lint",
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets --all-features -- -D warnings",

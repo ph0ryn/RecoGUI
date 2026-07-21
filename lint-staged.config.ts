@@ -1,6 +1,7 @@
 export default {
-  "**/!(package).json": "pnpm oxfmt",
-  "*.{js,mjs}": () => "pnpm run format",
-  "package.json": () => "sort-package-json",
-  "src/**/*.{ts,tsx}": () => "pnpm run precommit",
+  "**/!(package).json": "oxfmt",
+  "*.{js,mjs}": ["oxfmt", "eslint --fix"],
+  "package.json": "sort-package-json",
+  "src/**/*.{ts,tsx}": ["oxfmt", "eslint --fix", "oxlint --type-aware --type-check --fix"],
+  "{lint-staged,oxfmt,oxlint,vite}.config.ts": "oxfmt",
 };
