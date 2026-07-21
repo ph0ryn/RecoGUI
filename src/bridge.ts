@@ -155,10 +155,6 @@ export const recoBridge = {
     if (hasTauriRuntime()) await request("history.cancelExport", { operationId });
   },
 
-  async cancelSession(sessionId: string): Promise<void> {
-    if (hasTauriRuntime()) await request("session.cancel", { sessionId });
-  },
-
   async deleteModel(): Promise<void> {
     if (hasTauriRuntime()) await request("model.delete");
   },
@@ -374,6 +370,10 @@ export const recoBridge = {
     });
   },
 
+  async pauseSession(sessionId: string): Promise<void> {
+    if (hasTauriRuntime()) await request("session.pause", { sessionId });
+  },
+
   async pickAudioFile(): Promise<{ inputName: string; inputToken: string } | null> {
     if (!hasTauriRuntime()) return { inputName: "選択した音声.wav", inputToken: "mock-file-token" };
 
@@ -388,6 +388,10 @@ export const recoBridge = {
     if (hasTauriRuntime()) {
       await invoke("host_resolve_close_request", { input: { resolution } });
     }
+  },
+
+  async resumeSession(sessionId: string): Promise<void> {
+    if (hasTauriRuntime()) await request("session.resume", { sessionId });
   },
 
   async searchHistory(query: HistoryQuery): Promise<HistoryPage> {

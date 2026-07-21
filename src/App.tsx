@@ -38,6 +38,8 @@ const statusLabels: Record<SessionStatus, string> = {
   abandoned: "異常終了",
   completed: "完了",
   failed: "失敗",
+  paused: "一時停止",
+  pausing: "一時停止処理中",
   preparing: "準備中",
   running: "処理中",
   stopped: "中断",
@@ -711,17 +713,26 @@ function App() {
     }
   }
 
-  async function stopActive(cancel: boolean): Promise<void> {
+  async function pauseActive(): Promise<void> {
     if (!activeSessionId) return;
     setIsWorking(true);
     try {
-      if (cancel) await recoBridge.cancelSession(activeSessionId);
-      else await recoBridge.stopSession(activeSessionId);
-      setToast(
-        cancel ? "未処理部分を中断しています。保存済みの内容は残ります。" : "停止処理中です。",
-      );
+      await recoBridge.pauseSession(activeSessionId);
+      setToast("処理待ちを完了して一時停止します。");
     } catch {
-      setToast("停止操作を完了できませんでした。");
+      setToast("一時停止できませんでした。");
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
+  async function resumePaused(sessionId: string): Promise<void> {
+    setIsWorking(true);
+    try {
+      await recoBridge.resumeSession(sessionId);
+      setToast("文字起こしを再開します。");
+    } catch {
+      setToast("再開できませんでした。別の文字起こしが処理中でないか確認してください。");
     } finally {
       setIsWorking(false);
     }
@@ -991,6 +1002,7 @@ function App() {
         <button
           aria-label="新規文字起こし"
           className="record-button"
+          disabled={activeSessionId !== undefined}
           onClick={() => openDialog("new")}
           ref={newButtonRef}
           title="新規文字起こし"
@@ -1051,12 +1063,13 @@ function App() {
             <SessionHeader
               detailQuery={detailQuery}
               disabled={isWorking}
+              hasActiveSession={activeSessionId !== undefined}
               isActive={selectedSession.id === activeSessionId}
-              onCancel={() => void stopActive(true)}
               onDelete={() => openDialog("delete")}
               onExport={() => openDialog("export")}
+              onPause={() => void pauseActive()}
               onQueryChange={setDetailQuery}
-              onStop={() => void stopActive(false)}
+              onResume={() => void resumePaused(selectedSession.id)}
               session={selectedSession}
             />
             <Transcript
@@ -1080,7 +1093,7 @@ function App() {
 
       {dialog === "new" && (
         <NewSessionDialog
-          disabled={isWorking}
+          disabled={isWorking || activeSessionId !== undefined}
           model={model}
           onClose={closeDialog}
           onDownload={() => void recoBridge.downloadModel()}
@@ -1241,24 +1254,26 @@ function StatusBadge({ status }: { status: SessionStatus }) {
 interface SessionHeaderProps {
   detailQuery: string;
   disabled: boolean;
+  hasActiveSession: boolean;
   isActive: boolean;
   session: SessionEntity;
-  onCancel: () => void;
   onDelete: () => void;
   onExport: () => void;
+  onPause: () => void;
   onQueryChange: (value: string) => void;
-  onStop: () => void;
+  onResume: () => void;
 }
 
 function SessionHeader({
   detailQuery,
   disabled,
+  hasActiveSession,
   isActive,
-  onCancel,
   onDelete,
   onExport,
+  onPause,
   onQueryChange,
-  onStop,
+  onResume,
   session,
 }: SessionHeaderProps) {
   return (
@@ -1268,32 +1283,35 @@ function SessionHeader({
           <h1>{session.title}</h1>
         </div>
         <div className="header-actions">
-          {isActive && (
+          {(isActive || session.status === "paused") && (
             <>
-              <button
-                aria-label="処理して終了"
-                className="icon-button session-control-button"
-                disabled={disabled || session.status === "stopping"}
-                onClick={onStop}
-                title="処理して終了"
-                type="button"
-              >
-                <svg aria-hidden="true" viewBox="0 0 16 16">
-                  <path d="M5.5 4v8M10.5 4v8" />
-                </svg>
-              </button>
-              <button
-                aria-label="すぐ中断"
-                className="icon-button session-control-button cancel-control-button"
-                disabled={disabled || session.status === "stopping"}
-                onClick={onCancel}
-                title="すぐ中断"
-                type="button"
-              >
-                <svg aria-hidden="true" viewBox="0 0 16 16">
-                  <rect height="7" width="7" x="4.5" y="4.5" />
-                </svg>
-              </button>
+              {session.status === "paused" ? (
+                <button
+                  aria-label="文字起こしを再開"
+                  className="icon-button session-control-button"
+                  disabled={disabled || hasActiveSession}
+                  onClick={onResume}
+                  title="文字起こしを再開"
+                  type="button"
+                >
+                  <svg aria-hidden="true" viewBox="0 0 16 16">
+                    <path d="m5 3.5 7 4.5-7 4.5z" />
+                  </svg>
+                </button>
+              ) : (
+                <button
+                  aria-label="文字起こしを一時停止"
+                  className="icon-button session-control-button"
+                  disabled={disabled || session.status === "pausing"}
+                  onClick={onPause}
+                  title="文字起こしを一時停止"
+                  type="button"
+                >
+                  <svg aria-hidden="true" viewBox="0 0 16 16">
+                    <path d="M5.5 4v8M10.5 4v8" />
+                  </svg>
+                </button>
+              )}
               <span aria-hidden="true" className="header-action-spacer" />
             </>
           )}

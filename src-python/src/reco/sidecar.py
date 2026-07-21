@@ -134,8 +134,10 @@ class SidecarServer:
         _session_id(request, payload),
         reason=str(payload.get("reason", "userStop")),
       )
-    if command == "session.cancel":
-      return self.engine.cancel_session(_session_id(request, payload))
+    if command == "session.pause":
+      return self.engine.pause_session(_session_id(request, payload))
+    if command == "session.resume":
+      return self.engine.resume_session(_session_id(request, payload))
     if command == "history.list":
       states = tuple(SessionState(value) for value in _string_list(payload.get("states", []), allow_empty=True))
       page = self.engine.repository.list_sessions(
@@ -144,14 +146,14 @@ class SidecarServer:
         states=states,
         source_kind=_optional_string(payload.get("sourceKind")),
       )
-      return {"items": _camel(list(page.items)), "nextCursor": page.next_cursor}
+      return {"items": _camel([_public_session(item) for item in page.items]), "nextCursor": page.next_cursor}
     if command == "history.get":
       result = self.engine.repository.get_session(
         _session_id(request, payload),
         segment_offset=_integer(payload.get("segmentOffset", 0), "segmentOffset"),
         segment_limit=_integer(payload.get("segmentLimit", 500), "segmentLimit"),
       )
-      return _mapping(_camel(result))
+      return _mapping(_camel(_public_session(result)))
     if command == "history.search":
       status = _optional_string(payload.get("status"))
       page = self.engine.repository.search_sessions(
@@ -163,7 +165,7 @@ class SidecarServer:
         started_after=_optional_string(payload.get("startedAfter")),
         started_before=_optional_string(payload.get("startedBefore")),
       )
-      return {"items": _camel(list(page.items)), "nextCursor": page.next_cursor}
+      return {"items": _camel([_public_session(item) for item in page.items]), "nextCursor": page.next_cursor}
     if command in {"history.delete", "history.deleteMany"}:
       ids = [_session_id(request, payload)] if command == "history.delete" else _string_list(payload.get("sessionIds"))
       return {"deleted": self.engine.repository.delete_sessions(ids)}
@@ -392,6 +394,11 @@ def _mapping(value: object) -> dict[str, object]:
   if not isinstance(value, dict):
     raise TypeError("Expected a mapping")
   return cast(dict[str, object], value)
+
+
+def _public_session(value: Mapping[str, object]) -> dict[str, object]:
+  private_fields = {"source_path", "source_device_id", "resume_sample"}
+  return {key: item for key, item in value.items() if key not in private_fields}
 
 
 if __name__ == "__main__":

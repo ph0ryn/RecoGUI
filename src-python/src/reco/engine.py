@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 from threading import Event, Lock, Thread
@@ -181,6 +181,8 @@ class RecoEngine:
         source_kind=source_kind,
         source_display_name=display_name,
         source_fingerprint=fingerprint.value if fingerprint else None,
+        source_path=str(source_path) if source_path is not None else None,
+        source_device_id=str(device) if device is not None else None,
         model=MODEL_ID,
         model_revision=MODEL_REVISION,
         language=DEFAULT_CONFIG.cli.default_language,
@@ -192,7 +194,7 @@ class RecoEngine:
     control = SessionControl()
     thread = Thread(
       target=self._run_session,
-      args=(session_id, source_path, device, fingerprint, control),
+      args=(session_id, source_path, device, fingerprint, control, 0, 0),
       daemon=True,
       name=f"reco-session-{session_id}",
     )
@@ -221,6 +223,52 @@ class RecoEngine:
     receipt = self.repository.set_state(session_id, SessionState.STOPPING)
     control.request_cancel()
     self._emit("session.stateChanged", session_id, {**self._state_receipt(receipt), "cancelled": True})
+    return {"sessionId": session_id, **self._state_receipt(receipt)}
+
+  def pause_session(self, session_id: str) -> dict[str, object]:
+    """Stop capture and drain queued ASR before making the session resumable."""
+
+    control = self._require_active(session_id)
+    receipt = self.repository.set_state(session_id, SessionState.PAUSING)
+    control.request_stop("userPause")
+    self._emit("session.stateChanged", session_id, self._state_receipt(receipt))
+    return {"sessionId": session_id, **self._state_receipt(receipt)}
+
+  def resume_session(self, session_id: str) -> dict[str, object]:
+    """Resume one durable paused session when the ASR slot is idle."""
+
+    with self._lock:
+      if self._shutting_down:
+        raise EngineCommandError("engine_shutting_down", "The engine is shutting down", recoverable=False)
+      if self._active_session_id is not None:
+        raise EngineCommandError("session_active", "Another transcription session is already active")
+      context = self.repository.get_resume_context(session_id)
+      source_kind = str(context["source_kind"])
+      source_path = Path(str(context["source_path"])) if context.get("source_path") else None
+      device_value = context.get("source_device_id")
+      device = _restore_device_id(str(device_value)) if device_value is not None else None
+      fingerprint = None
+      if source_kind == "file":
+        if source_path is None:
+          raise EngineCommandError("resume_source_missing", "The paused audio file path is unavailable")
+        fingerprint = fingerprint_file_snapshot(source_path)
+        if fingerprint.value != context.get("source_fingerprint"):
+          raise EngineCommandError("resume_source_changed", "The paused audio file has changed")
+      resume_sample = int(context["resume_sample"])
+      segment_offset = int(context["total_segments"])
+      control = SessionControl()
+      receipt = self.repository.set_state(session_id, SessionState.PREPARING)
+      thread = Thread(
+        target=self._run_session,
+        args=(session_id, source_path, device, fingerprint, control, resume_sample, segment_offset),
+        daemon=True,
+        name=f"reco-session-{session_id}",
+      )
+      self._active_session_id = session_id
+      self._active_control = control
+      self._active_thread = thread
+      thread.start()
+    self._emit("session.stateChanged", session_id, self._state_receipt(receipt))
     return {"sessionId": session_id, **self._state_receipt(receipt)}
 
   def shutdown(self, timeout: float = 30.0) -> None:
@@ -262,17 +310,26 @@ class RecoEngine:
     device: object,
     fingerprint: object,
     control: SessionControl,
+    initial_sample: int = 0,
+    segment_offset: int = 0,
   ) -> None:
     try:
       running_receipt = self.repository.set_state(session_id, SessionState.RUNNING)
       self._emit("session.stateChanged", session_id, self._state_receipt(running_receipt))
       service, worker = self.runtime.acquire()
       if source_path is None:
-        audio_input = MicrophoneInput(device=device if isinstance(device, int | str) else None)
+        audio_input = MicrophoneInput(
+          device=device if isinstance(device, int | str) else None,
+          start_sample=initial_sample,
+        )
       else:
         expected_identity = getattr(fingerprint, "identity", None)
-        audio_input = LocalAudioFileInput(source_path, expected_identity=expected_identity)
-      run_transcription(
+        audio_input = LocalAudioFileInput(
+          source_path,
+          expected_identity=expected_identity,
+          start_sample=initial_sample,
+        )
+      document = run_transcription(
         audio_input,
         SileroVadEngine(model=OnnxSileroProbabilityModel(ensure_silero_vad_asset(self.model_manager.vad_asset_path))),
         service,
@@ -281,13 +338,26 @@ class RecoEngine:
         ),
         asr_worker=worker,
         progress_callback=lambda progress: self._publish_progress(session_id, progress),
-        segment_callback=lambda segment: self._persist_segment(session_id, segment),
+        segment_callback=lambda segment: self._persist_segment(
+          session_id,
+          replace(segment, index=segment.index + segment_offset),
+        ),
         session_started_monotonic=monotonic(),
+        initial_sample=initial_sample,
         control=control,
       )
       if control.cancel_requested():
         state, reason = SessionState.STOPPED, "userCancel"
         self.runtime.invalidate()
+      elif control.stop_requested() and control.stop_reason == "userPause":
+        resume_sample = round(document.timing.media_duration_ms * SAMPLE_RATE / 1000)
+        paused_receipt = self.repository.pause_session(session_id, resume_sample)
+        self._emit(
+          "session.stateChanged",
+          session_id,
+          self._state_receipt(paused_receipt),
+        )
+        return
       elif control.stop_requested():
         state, reason = SessionState.STOPPED, control.stop_reason
       else:
@@ -382,6 +452,10 @@ class RecoEngine:
   def _emit(self, event: str, session_id: str | None, payload: Mapping[str, object]) -> None:
     if self._event_callback is not None:
       self._event_callback(event, session_id, payload)
+
+
+def _restore_device_id(value: str) -> int | str:
+  return int(value) if value.isdecimal() else value
 
 
 class _ignore_repository_error:

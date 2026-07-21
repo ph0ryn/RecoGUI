@@ -50,6 +50,8 @@ class StubEngine:
   def __init__(self) -> None:
     self.repository = StubRepository()
     self.start_payload: object = None
+    self.pause_call: str | None = None
+    self.resume_call: str | None = None
     self.stop_call: tuple[str, str] | None = None
 
   def start_session(self, payload: object, requested_session_id: str | None) -> dict[str, object]:
@@ -59,6 +61,14 @@ class StubEngine:
   def stop_session(self, session_id: str, *, reason: str) -> dict[str, object]:
     self.stop_call = (session_id, reason)
     return {"sessionId": session_id, "state": "stopping"}
+
+  def pause_session(self, session_id: str) -> dict[str, object]:
+    self.pause_call = session_id
+    return {"sessionId": session_id, "state": "pausing"}
+
+  def resume_session(self, session_id: str) -> dict[str, object]:
+    self.resume_call = session_id
+    return {"sessionId": session_id, "state": "preparing"}
 
 
 class StubWriter:
@@ -111,6 +121,19 @@ def test_system_sleep_reason_crosses_the_sidecar_contract() -> None:
   server.dispatch(request("session.stop", payload, session_id))
 
   assert engine.stop_call == (session_id, "systemSleep")
+
+
+def test_pause_and_resume_cross_the_sidecar_contract() -> None:
+  server, engine = server_with_stub()
+  session_id = str(uuid4())
+
+  paused = server.dispatch(request("session.pause", {}, session_id))
+  resumed = server.dispatch(request("session.resume", {}, session_id))
+
+  assert paused == {"sessionId": session_id, "state": "pausing"}
+  assert resumed == {"sessionId": session_id, "state": "preparing"}
+  assert engine.pause_call == session_id
+  assert engine.resume_call == session_id
 
 
 def test_export_uses_destination_but_does_not_return_the_path() -> None:

@@ -1,6 +1,8 @@
 export type SessionStatus =
   | "preparing"
   | "running"
+  | "pausing"
+  | "paused"
   | "stopping"
   | "completed"
   | "stopped"

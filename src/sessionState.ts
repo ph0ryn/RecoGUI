@@ -143,8 +143,12 @@ function addMissingIds(order: string[], sessions: readonly SessionSummary[]): st
   return result;
 }
 
-function isTerminalStatus(status: SessionStatus): boolean {
-  return ["completed", "stopped", "failed", "abandoned"].includes(status);
+function releasesActiveSession(status: SessionStatus): boolean {
+  return ["paused", "completed", "stopped", "failed", "abandoned"].includes(status);
+}
+
+function claimsActiveSession(status: SessionStatus): boolean {
+  return ["preparing", "running", "pausing", "stopping"].includes(status);
 }
 
 export function sessionStateReducer(state: SessionState, action: SessionAction): SessionState {
@@ -286,13 +290,17 @@ export function sessionStateReducer(state: SessionState, action: SessionAction):
         segmentCount: action.segmentCount ?? current.segmentCount,
         status: action.status,
       };
+      let activeSessionId = state.activeSessionId;
+
+      if (state.activeSessionId === action.sessionId && releasesActiveSession(action.status)) {
+        activeSessionId = undefined;
+      } else if (claimsActiveSession(action.status)) {
+        activeSessionId = action.sessionId;
+      }
 
       return {
         ...state,
-        activeSessionId:
-          state.activeSessionId === action.sessionId && isTerminalStatus(action.status)
-            ? undefined
-            : state.activeSessionId,
+        activeSessionId,
         sessionsById: { ...state.sessionsById, [action.sessionId]: session },
       };
     }

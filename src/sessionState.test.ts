@@ -188,4 +188,30 @@ describe("sessionStateReducer", () => {
 
     expect(state.activeSessionId).toBeUndefined();
   });
+
+  it("releases the active slot when paused and claims it again when resumed", () => {
+    let state = sessionStateReducer(initialSessionState, {
+      activeSessionId: "session-1",
+      sessions: [summary()],
+      type: "bootstrap",
+    });
+
+    state = sessionStateReducer(state, {
+      rowVersion: 2,
+      sessionId: "session-1",
+      status: "paused",
+      type: "statusChanged",
+    });
+
+    expect(state.activeSessionId).toBeUndefined();
+
+    state = sessionStateReducer(state, {
+      rowVersion: 3,
+      sessionId: "session-1",
+      status: "preparing",
+      type: "statusChanged",
+    });
+
+    expect(state.activeSessionId).toBe("session-1");
+  });
 });

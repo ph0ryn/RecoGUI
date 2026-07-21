@@ -41,7 +41,11 @@ pnpm dev
 - application windowが開き、sidecarが一つだけ起動する。
 - modelのdownload、cancel、verify、load、deleteが動作する。
 - マイクと音声ファイルからsessionを開始できる。
-- Stopが処理待ちを完了し、Cancelが保存済み部分を残す。
+- Pauseが処理待ちを完了して`paused`になり、Resumeが同じsessionへ追記する。
+- `pausing`中は新規開始とresumeが拒否され、`paused`後は別sessionを開始できる。
+- 別sessionの処理中は新規開始と全paused sessionのresumeが拒否される。
+- マイクと音声ファイルのpaused sessionがアプリ再起動後もresumeできる。
+- 音声ファイルは保存したoffsetから再開し、変更された元ファイルをfingerprintで拒否する。
 - 確定segmentがSQLite保存後に一度だけ表示される。
 - 完了、停止、失敗、異常終了したsessionが再起動後も履歴へ戻る。
 - 履歴の検索、絞り込み、並べ替え、複数選択、削除が動作する。

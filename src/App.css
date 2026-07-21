@@ -392,6 +392,7 @@ button:disabled {
 
 .status-running,
 .status-preparing,
+.status-pausing,
 .status-stopping,
 .status-failed,
 .status-abandoned {
@@ -400,6 +401,7 @@ button:disabled {
 
 .status-running .status-symbol,
 .status-preparing .status-symbol,
+.status-pausing .status-symbol,
 .status-stopping .status-symbol,
 .status-failed .status-symbol,
 .status-abandoned .status-symbol {
@@ -769,10 +771,6 @@ button:disabled {
   stroke: currentcolor;
   stroke-linecap: square;
   stroke-width: 1.5;
-}
-
-.cancel-control-button {
-  color: var(--danger);
 }
 
 .transcript-scroll {

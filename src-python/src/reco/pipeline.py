@@ -191,6 +191,7 @@ def run_transcription(
   segment_callback: Callable[[TranscriptSegment], None] | None = None,
   session_started_at: datetime | None = None,
   session_started_monotonic: float | None = None,
+  initial_sample: int = 0,
   control: TranscriptionControl | None = None,
   config: TranscriptionConfig = DEFAULT_TRANSCRIPTION_CONFIG,
 ) -> TranscriptDocument:
@@ -211,7 +212,10 @@ def run_transcription(
   stream = None
   pipeline_error: BaseException | None = None
   next_progress_at = 0.0
-  expected_start_sample = 0
+  if initial_sample < 0:
+    raise ValueError("Initial sample must not be negative")
+  expected_start_sample = initial_sample
+  state.processed_audio_ms = round(initial_sample * 1000 / SAMPLE_RATE)
   partial_frame_seen = False
 
   try:

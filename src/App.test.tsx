@@ -12,7 +12,6 @@ import type { EngineEvent } from "./types";
 
 const bridgeMocks = vi.hoisted(() => ({
   cancelExport: vi.fn(),
-  cancelSession: vi.fn(),
   closeForceHandler: undefined as
     | ((payload: { error: string; sessionId: string | null }) => void)
     | undefined,
@@ -29,11 +28,12 @@ const bridgeMocks = vi.hoisted(() => ({
   onCloseForceRequired: vi.fn(),
   onCloseRequested: vi.fn(),
   onEngineEvent: vi.fn(),
+  pauseSession: vi.fn(),
   pickAudioFile: vi.fn().mockResolvedValue({ inputName: "test.wav", inputToken: "token" }),
   resolveClose: vi.fn(),
+  resumeSession: vi.fn(),
   searchHistory: vi.fn(),
   startSession: vi.fn().mockResolvedValue({ sessionId: "new-session" }),
-  stopSession: vi.fn(),
   verifyModel: vi.fn(),
 }));
 
@@ -100,10 +100,10 @@ beforeEach(() => {
       return Promise.resolve(() => undefined);
     },
   );
-  bridgeMocks.cancelSession.mockClear();
   bridgeMocks.deleteSessions.mockClear();
   bridgeMocks.exportSessions.mockClear();
-  bridgeMocks.stopSession.mockClear();
+  bridgeMocks.pauseSession.mockClear();
+  bridgeMocks.resumeSession.mockClear();
 });
 
 afterEach(() => {
@@ -113,6 +113,16 @@ afterEach(() => {
 async function renderLoadedApp() {
   render(<App />);
   await screen.findByRole("heading", { name: "新しい録音" });
+}
+
+function useInactiveSnapshot() {
+  bridgeMocks.getSnapshot.mockResolvedValue({
+    ...structuredClone(mockSnapshot),
+    activeSessionId: undefined,
+    sessions: structuredClone(mockSnapshot.sessions).map((session) =>
+      session.id === "session-live" ? { ...session, status: "paused" as const } : session,
+    ),
+  });
 }
 
 describe("RecoGUI", () => {
@@ -177,17 +187,21 @@ describe("RecoGUI", () => {
     expect(screen.getByText("4セグメント")).toBeInTheDocument();
   });
 
-  it("sends Stop and Cancel for the active session", async () => {
+  it("pauses the active session", async () => {
     const user = userEvent.setup();
 
     await renderLoadedApp();
-    await user.click(screen.getByRole("button", { name: "処理して終了" }));
-    await waitFor(() => expect(bridgeMocks.stopSession).toHaveBeenCalledWith("session-live"));
+    await user.click(screen.getByRole("button", { name: "文字起こしを一時停止" }));
+    await waitFor(() => expect(bridgeMocks.pauseSession).toHaveBeenCalledWith("session-live"));
+  });
 
-    cleanup();
+  it("resumes a paused session when no other session is active", async () => {
+    const user = userEvent.setup();
+
+    useInactiveSnapshot();
     await renderLoadedApp();
-    await user.click(screen.getByRole("button", { name: "すぐ中断" }));
-    await waitFor(() => expect(bridgeMocks.cancelSession).toHaveBeenCalledWith("session-live"));
+    await user.click(screen.getByRole("button", { name: "文字起こしを再開" }));
+    await waitFor(() => expect(bridgeMocks.resumeSession).toHaveBeenCalledWith("session-live"));
   });
 
   it("requires confirmation before permanently deleting a completed session", async () => {
@@ -222,6 +236,7 @@ describe("RecoGUI", () => {
   it("supports arrow-key selection and restores focus after a dialog", async () => {
     const user = userEvent.setup();
 
+    useInactiveSnapshot();
     await renderLoadedApp();
     const history = screen.getByRole("listbox");
 
@@ -266,6 +281,7 @@ describe("RecoGUI", () => {
   it("persists the default microphone device and passes its id when starting", async () => {
     const user = userEvent.setup();
 
+    useInactiveSnapshot();
     await renderLoadedApp();
     await user.click(screen.getByRole("button", { name: "設定を開く" }));
     await user.selectOptions(screen.getByRole("combobox", { name: "使用するマイク" }), "7");

@@ -22,7 +22,7 @@ from uuid import uuid4
 from reco.models import TranscriptSegment
 from reco.recording import RecordingSegment
 
-APPLICATION_SCHEMA_VERSION = 2
+APPLICATION_SCHEMA_VERSION = 3
 
 
 class SessionState(StrEnum):
@@ -30,6 +30,8 @@ class SessionState(StrEnum):
 
   PREPARING = "preparing"
   RUNNING = "running"
+  PAUSING = "pausing"
+  PAUSED = "paused"
   STOPPING = "stopping"
   COMPLETED = "completed"
   STOPPED = "stopped"
@@ -78,6 +80,8 @@ class NewSession:
   sample_rate: int
   title: str
   source_fingerprint: str | None = None
+  source_path: str | None = None
+  source_device_id: str | None = None
   config: Mapping[str, object] | None = None
   session_id: str = ""
 
@@ -138,9 +142,10 @@ class RecordingRepository:
         """
         INSERT INTO app_sessions (
           session_id, state, title, source_kind, source_display_name,
-          source_fingerprint, model, model_revision, language, sample_rate,
+          source_fingerprint, source_path, source_device_id,
+          model, model_revision, language, sample_rate,
           config_json, started_at, updated_at
-        ) VALUES (?, 'preparing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, 'preparing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
           session_id,
@@ -148,6 +153,8 @@ class RecordingRepository:
           value.source_kind,
           value.source_display_name,
           value.source_fingerprint,
+          value.source_path,
+          value.source_device_id,
           value.model,
           value.model_revision,
           value.language,
@@ -178,7 +185,7 @@ class RecordingRepository:
         """
         UPDATE app_sessions
         SET state = ?, end_reason = ?, error_code = ?, error_message = ?,
-            ended_at = COALESCE(?, ended_at), updated_at = ?, row_version = row_version + 1
+            ended_at = ?, updated_at = ?, row_version = row_version + 1
         WHERE session_id = ?
         RETURNING state, row_version, total_segments, recognized_segments,
           characters, media_duration_ms, ended_at
@@ -198,6 +205,54 @@ class RecordingRepository:
         media_duration_ms=int(row["media_duration_ms"]),
         ended_at=str(row["ended_at"]) if row["ended_at"] is not None else None,
       )
+
+  def pause_session(self, session_id: str, resume_sample: int) -> SessionMutationReceipt:
+    """Persist a resumable checkpoint after input and queued ASR have drained."""
+
+    if resume_sample < 0:
+      raise ValueError("Resume sample must not be negative")
+    now = _now()
+    with self._connect() as connection:
+      row = connection.execute(
+        """
+        UPDATE app_sessions
+        SET state = 'paused', end_reason = 'userPause', resume_sample = ?,
+            ended_at = NULL, updated_at = ?, row_version = row_version + 1
+        WHERE session_id = ? AND state = 'pausing'
+        RETURNING state, row_version, total_segments, recognized_segments,
+          characters, media_duration_ms, ended_at
+        """,
+        (resume_sample, now, session_id),
+      ).fetchone()
+      if row is None:
+        raise RepositoryError(f"Session cannot be paused: {session_id}")
+      return SessionMutationReceipt(
+        state=SessionState.PAUSED,
+        row_version=int(row["row_version"]),
+        total_segments=int(row["total_segments"]),
+        recognized_segments=int(row["recognized_segments"]),
+        characters=int(row["characters"]),
+        media_duration_ms=int(row["media_duration_ms"]),
+        ended_at=None,
+      )
+
+  def get_resume_context(self, session_id: str) -> dict[str, Any]:
+    """Return private source and checkpoint data for one paused session."""
+
+    with self._connect(readonly=True) as connection:
+      row = connection.execute(
+        """
+        SELECT session_id, state, end_reason, source_kind, source_path,
+          source_device_id, source_fingerprint, resume_sample, total_segments
+        FROM app_sessions WHERE session_id = ?
+        """,
+        (session_id,),
+      ).fetchone()
+    if row is None:
+      raise RepositoryError(f"Unknown session: {session_id}")
+    if row["state"] != "paused" or row["end_reason"] != "userPause":
+      raise RepositoryError(f"Session is not paused: {session_id}")
+    return dict(row)
 
   def append_segment(self, session_id: str, segment: TranscriptSegment | RecordingSegment) -> SegmentMutationReceipt:
     """Commit a segment and return the canonical values from that transaction."""
@@ -232,7 +287,7 @@ class RecordingRepository:
               characters = characters + length(?),
               media_duration_ms = MAX(media_duration_ms, CAST(? * 1000 / sample_rate AS INTEGER)),
               updated_at = ?, row_version = row_version + 1
-          WHERE session_id = ? AND state IN ('preparing', 'running', 'stopping')
+          WHERE session_id = ? AND state IN ('preparing', 'running', 'pausing', 'stopping')
           RETURNING row_version, total_segments, recognized_segments, characters, media_duration_ms
           """,
           (record.text, record.text, record.end_sample, _now(), session_id),
@@ -396,14 +451,14 @@ class RecordingRepository:
       recovered_ids = [
         row[0]
         for row in connection.execute(
-          "SELECT session_id FROM app_sessions WHERE state IN ('preparing', 'running', 'stopping')"
+          "SELECT session_id FROM app_sessions WHERE state IN ('preparing', 'running', 'pausing', 'stopping')"
         )
       ]
       cursor = connection.execute(
         """
         UPDATE app_sessions SET state = 'abandoned', end_reason = ?, ended_at = ?,
           updated_at = ?, row_version = row_version + 1
-        WHERE state IN ('preparing', 'running', 'stopping')
+        WHERE state IN ('preparing', 'running', 'pausing', 'stopping')
         """,
         (reason, _now(), _now()),
       )
@@ -505,6 +560,7 @@ class RecordingRepository:
   def _initialize(self) -> None:
     existed = self.database_path.exists() and self.database_path.stat().st_size > 0
     backup_path = self.database_path.with_suffix(self.database_path.suffix + ".v1.backup")
+    old_version = 0
     if existed:
       with sqlite3.connect(self.database_path) as probe:
         old_version = int(probe.execute("PRAGMA user_version").fetchone()[0])
@@ -512,7 +568,7 @@ class RecordingRepository:
           str(row[0])
           for row in probe.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
         }
-      if old_version not in {0, 1, APPLICATION_SCHEMA_VERSION}:
+      if old_version not in {0, 1, 2, APPLICATION_SCHEMA_VERSION}:
         raise RepositoryError(f"Database schema version {old_version} is not supported")
       if old_version == 0 and existing_tables:
         raise RepositoryError("Non-empty unversioned database cannot be initialized as a RecoGUI repository")
@@ -525,6 +581,7 @@ class RecordingRepository:
       connection.executescript(_SCHEMA)
       connection.execute("BEGIN IMMEDIATE")
       try:
+        self._migrate_v2(connection, old_version)
         self._migrate_v1(connection)
         connection.execute(f"PRAGMA user_version = {APPLICATION_SCHEMA_VERSION}")
         connection.execute(
@@ -537,6 +594,56 @@ class RecordingRepository:
           connection.execute("ROLLBACK")
         raise
     self.integrity_check()
+
+  def _migrate_v2(self, connection: sqlite3.Connection, old_version: int) -> None:
+    if old_version == 2:
+      connection.execute("PRAGMA legacy_alter_table = ON")
+      connection.execute("ALTER TABLE app_segments RENAME TO app_segments_v2")
+      connection.execute("ALTER TABLE app_sessions RENAME TO app_sessions_v2")
+      connection.execute(_APP_SESSIONS_SCHEMA)
+      connection.execute(_APP_SEGMENTS_SCHEMA)
+      connection.execute(
+        """
+        INSERT INTO app_sessions (
+          session_id, state, end_reason, title, source_kind, source_display_name,
+          source_fingerprint, model, model_revision, language, sample_rate,
+          config_json, started_at, ended_at, updated_at, media_duration_ms,
+          total_segments, recognized_segments, characters, error_code,
+          error_message, row_version
+        )
+        SELECT session_id, state, end_reason, title, source_kind, source_display_name,
+          source_fingerprint, model, model_revision, language, sample_rate,
+          config_json, started_at, ended_at, updated_at, media_duration_ms,
+          total_segments, recognized_segments, characters, error_code,
+          error_message, row_version
+        FROM app_sessions_v2
+        """
+      )
+      connection.execute(
+        """
+        INSERT INTO app_segments (
+          session_id, segment_index, start_sample, end_sample, split_reason,
+          text, raw_text, diagnostics_json
+        )
+        SELECT session_id, segment_index, start_sample, end_sample, split_reason,
+          text, raw_text, diagnostics_json
+        FROM app_segments_v2
+        """
+      )
+      connection.execute("DROP TABLE app_segments_v2")
+      connection.execute("DROP TABLE app_sessions_v2")
+      connection.execute(
+        "CREATE INDEX IF NOT EXISTS app_sessions_started_at ON app_sessions(started_at DESC, session_id DESC)"
+      )
+      return
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(app_sessions)")}
+    for name, definition in (
+      ("source_path", "TEXT"),
+      ("source_device_id", "TEXT"),
+      ("resume_sample", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+      if name not in columns:
+        connection.execute(f"ALTER TABLE app_sessions ADD COLUMN {name} {definition}")
 
   def _migrate_v1(self, connection: sqlite3.Connection) -> None:
     tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -751,16 +858,19 @@ def _emit_export_progress(
     )
 
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS app_sessions (
+_APP_SESSIONS_SCHEMA = """
+CREATE TABLE app_sessions (
   session_id TEXT PRIMARY KEY,
-  state TEXT NOT NULL CHECK (state IN ('preparing','running','stopping','completed','stopped','failed','abandoned')),
+  state TEXT NOT NULL CHECK (state IN (
+    'preparing','running','pausing','paused','stopping','completed','stopped','failed','abandoned'
+  )),
   end_reason TEXT,
   title TEXT NOT NULL,
   source_kind TEXT NOT NULL,
   source_display_name TEXT NOT NULL,
   source_fingerprint TEXT,
+  source_path TEXT,
+  source_device_id TEXT,
   model TEXT NOT NULL,
   model_revision TEXT,
   language TEXT NOT NULL,
@@ -775,6 +885,54 @@ CREATE TABLE IF NOT EXISTS app_sessions (
   characters INTEGER NOT NULL DEFAULT 0,
   error_code TEXT,
   error_message TEXT,
+  resume_sample INTEGER NOT NULL DEFAULT 0 CHECK (resume_sample >= 0),
+  row_version INTEGER NOT NULL DEFAULT 1
+)
+"""
+
+_APP_SEGMENTS_SCHEMA = """
+CREATE TABLE app_segments (
+  session_id TEXT NOT NULL REFERENCES app_sessions(session_id) ON DELETE CASCADE,
+  segment_index INTEGER NOT NULL CHECK (segment_index >= 0),
+  start_sample INTEGER NOT NULL CHECK (start_sample >= 0),
+  end_sample INTEGER NOT NULL CHECK (end_sample > start_sample),
+  split_reason TEXT NOT NULL,
+  text TEXT NOT NULL,
+  raw_text TEXT,
+  diagnostics_json TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (session_id, segment_index)
+)
+"""
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS app_sessions (
+  session_id TEXT PRIMARY KEY,
+  state TEXT NOT NULL CHECK (state IN (
+    'preparing','running','pausing','paused','stopping','completed','stopped','failed','abandoned'
+  )),
+  end_reason TEXT,
+  title TEXT NOT NULL,
+  source_kind TEXT NOT NULL,
+  source_display_name TEXT NOT NULL,
+  source_fingerprint TEXT,
+  source_path TEXT,
+  source_device_id TEXT,
+  model TEXT NOT NULL,
+  model_revision TEXT,
+  language TEXT NOT NULL,
+  sample_rate INTEGER NOT NULL CHECK (sample_rate > 0),
+  config_json TEXT NOT NULL DEFAULT '{}',
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  updated_at TEXT NOT NULL,
+  media_duration_ms INTEGER NOT NULL DEFAULT 0,
+  total_segments INTEGER NOT NULL DEFAULT 0,
+  recognized_segments INTEGER NOT NULL DEFAULT 0,
+  characters INTEGER NOT NULL DEFAULT 0,
+  error_code TEXT,
+  error_message TEXT,
+  resume_sample INTEGER NOT NULL DEFAULT 0 CHECK (resume_sample >= 0),
   row_version INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS app_sessions_started_at ON app_sessions(started_at DESC, session_id DESC);

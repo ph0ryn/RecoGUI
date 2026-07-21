@@ -110,12 +110,16 @@ class LocalAudioFileInput(AudioInput):
     path: Path,
     frame_samples: int = VAD_FRAME_SAMPLES,
     expected_identity: AudioFileIdentity | None = None,
+    start_sample: int = 0,
   ) -> None:
     if frame_samples != VAD_FRAME_SAMPLES:
       raise ValueError(f"Audio file frame size must be exactly {VAD_FRAME_SAMPLES} samples")
     self.path = path
     self.frame_samples = frame_samples
     self.expected_identity = expected_identity
+    if start_sample < 0:
+      raise ValueError("Audio file start sample must not be negative")
+    self.start_sample = start_sample
 
   def open(self) -> AudioStream:
     validate_audio_file(self.path)
@@ -123,6 +127,7 @@ class LocalAudioFileInput(AudioInput):
       self.path,
       self.frame_samples,
       expected_identity=self.expected_identity,
+      start_sample=self.start_sample,
     )
     return AudioStream(source=SourceMetadata(kind="file", path=str(self.path)), chunks=chunks, finite=True)
 
@@ -135,6 +140,7 @@ class MicrophoneInput(AudioInput):
     sample_rate: int = SAMPLE_RATE,
     frame_samples: int = VAD_FRAME_SAMPLES,
     device: int | str | None = None,
+    start_sample: int = 0,
   ) -> None:
     if sample_rate != SAMPLE_RATE:
       raise ValueError(f"Microphone input must use the internal {SAMPLE_RATE} Hz sample rate")
@@ -143,6 +149,9 @@ class MicrophoneInput(AudioInput):
     self.sample_rate = sample_rate
     self.frame_samples = frame_samples
     self.device = device
+    if start_sample < 0:
+      raise ValueError("Microphone start sample must not be negative")
+    self.start_sample = start_sample
 
   def open(self) -> AudioStream:
     return AudioStream(
@@ -176,7 +185,7 @@ class MicrophoneInput(AudioInput):
             RecoError(f"Microphone input exceeded the bounded {AUDIO_QUEUE_MAX_FRAMES}-frame capture buffer.")
           )
 
-    start_sample = 0
+    start_sample = self.start_sample
     try:
       with sd.InputStream(
         samplerate=self.sample_rate,
@@ -239,6 +248,7 @@ def iter_audio_file_frames(
   frame_samples: int = VAD_FRAME_SAMPLES,
   *,
   expected_identity: AudioFileIdentity | None = None,
+  start_sample: int = 0,
 ) -> Iterator[AudioChunk]:
   """Stream a local audio file as normalized 16 kHz mono frames."""
 
@@ -251,7 +261,7 @@ def iter_audio_file_frames(
         source_rate = source.samplerate
         resampler = soxr.ResampleStream(source_rate, SAMPLE_RATE, 1, dtype="float32")
         pending = np.array([], dtype=np.float32)
-        start_sample = 0
+        cursor_sample = 0
         blocks = source.blocks(
           blocksize=max(frame_samples * 16, frame_samples),
           dtype="float32",
@@ -260,8 +270,8 @@ def iter_audio_file_frames(
         for block in blocks:
           mono = normalize_channels(block)
           resampled = _resample_stream_chunk(resampler, mono, last=False, source_rate=source_rate)
-          frames, pending, start_sample = split_complete_frames(pending, resampled, start_sample, frame_samples)
-          yield from frames
+          frames, pending, cursor_sample = split_complete_frames(pending, resampled, cursor_sample, frame_samples)
+          yield from (frame for frame in frames if frame.start_sample >= start_sample)
 
         flushed = _resample_stream_chunk(
           resampler,
@@ -269,10 +279,12 @@ def iter_audio_file_frames(
           last=True,
           source_rate=source_rate,
         )
-        frames, pending, start_sample = split_complete_frames(pending, flushed, start_sample, frame_samples)
-        yield from frames
+        frames, pending, cursor_sample = split_complete_frames(pending, flushed, cursor_sample, frame_samples)
+        yield from (frame for frame in frames if frame.start_sample >= start_sample)
         if pending.size:
-          yield AudioChunk(samples=ensure_float32(pending), sample_rate=SAMPLE_RATE, start_sample=start_sample)
+          chunk = AudioChunk(samples=ensure_float32(pending), sample_rate=SAMPLE_RATE, start_sample=cursor_sample)
+          if chunk.start_sample >= start_sample:
+            yield chunk
       completed_identity = AudioFileIdentity.from_stat(fstat(raw_source.fileno()))
       if expected_identity is not None and completed_identity != expected_identity:
         raise RecoError(f"Audio file changed while it was being transcribed: {path}")

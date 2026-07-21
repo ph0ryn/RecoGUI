@@ -3,10 +3,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 from threading import Lock
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
-from reco.engine import RecoEngine, SessionControl
+import reco.engine as engine_module
+from reco.engine import EngineCommandError, ModelRuntime, RecoEngine, SessionControl
 from reco.models import SplitReason, TranscriptionDiagnostics, TranscriptSegment, VadDiagnostics
 from reco.repository import NewSession, RecordingRepository, RepositoryError, SessionState
 
@@ -106,3 +109,76 @@ def test_state_event_contains_the_committed_revision_and_aggregates(tmp_path: Pa
       },
     )
   ]
+
+
+def test_pause_marks_the_active_session_as_pausing(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(
+    NewSession("microphone", "Microphone", "model", None, "Japanese", 16_000, "Recording")
+  )
+  engine, events = engine_with_repository(repository)
+  control = SessionControl()
+  engine._lock = Lock()
+  engine._active_session_id = session_id
+  engine._active_control = control
+
+  result = engine.pause_session(session_id)
+
+  assert result["state"] == "pausing"
+  assert control.stop_requested()
+  assert control.stop_reason == "userPause"
+  assert repository.get_session(session_id)["state"] == "pausing"
+  assert events[-1][0] == "session.stateChanged"
+
+
+def test_resume_is_rejected_while_another_session_is_active(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(
+    NewSession("microphone", "Microphone", "model", None, "Japanese", 16_000, "Recording")
+  )
+  repository.set_state(session_id, SessionState.PAUSING)
+  repository.pause_session(session_id, 16_000)
+  engine, _ = engine_with_repository(repository)
+  engine._lock = Lock()
+  engine._shutting_down = False
+  engine._active_session_id = "another-session"
+
+  with pytest.raises(EngineCommandError, match="already active"):
+    engine.resume_session(session_id)
+
+
+def test_drained_pause_persists_the_resume_sample(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  class FakeRuntime:
+    def acquire(self) -> tuple[object, object]:
+      return object(), object()
+
+    def invalidate(self) -> None:
+      return None
+
+  engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
+  session_id = engine.repository.create_session(
+    NewSession("microphone", "Microphone", "model", None, "Japanese", 16_000, "Recording")
+  )
+  control = SessionControl()
+  control.request_stop("userPause")
+  engine.runtime = cast(ModelRuntime, FakeRuntime())
+  monkeypatch.setattr(engine_module, "ensure_silero_vad_asset", lambda path: path)
+  monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
+  monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
+
+  def drain_transcription(*args: object, **options: object) -> SimpleNamespace:
+    del args, options
+    engine.repository.set_state(session_id, SessionState.PAUSING)
+    return SimpleNamespace(timing=SimpleNamespace(media_duration_ms=1_000))
+
+  monkeypatch.setattr(
+    engine_module,
+    "run_transcription",
+    drain_transcription,
+  )
+
+  engine._run_session(session_id, None, None, None, control)
+
+  session = engine.repository.get_session(session_id)
+  assert session["state"] == "paused"
+  assert session["resume_sample"] == 16_000

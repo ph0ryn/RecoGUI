@@ -25,7 +25,8 @@ const ALLOWED_ENGINE_COMMANDS: &[&str] = &[
     "audio.listInputs",
     "session.start",
     "session.stop",
-    "session.cancel",
+    "session.pause",
+    "session.resume",
     "history.list",
     "history.get",
     "history.search",
@@ -347,13 +348,27 @@ pub async fn session_stop(
 }
 
 #[tauri::command]
-pub async fn session_cancel(
+pub async fn session_pause(
     input: SessionCommand,
     supervisor: State<'_, EngineSupervisor>,
 ) -> CommandResult<Value> {
     request(
         &supervisor,
-        "session.cancel",
+        "session.pause",
+        Some(input.session_id),
+        json!({}),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn session_resume(
+    input: SessionCommand,
+    supervisor: State<'_, EngineSupervisor>,
+) -> CommandResult<Value> {
+    request(
+        &supervisor,
+        "session.resume",
         Some(input.session_id),
         json!({}),
     )

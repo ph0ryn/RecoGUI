@@ -5,6 +5,7 @@ import sqlite3
 import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from threading import Event
 
@@ -280,6 +281,125 @@ def test_startup_recovers_non_terminal_sessions(tmp_path: Path) -> None:
   assert RecordingRepository(database).get_session(session_id)["state"] == "abandoned"
 
 
+def test_paused_session_and_resume_context_survive_repository_restart(tmp_path: Path) -> None:
+  database = tmp_path / "reco.sqlite3"
+  repository = RecordingRepository(database)
+  session_id = repository.create_session(
+    replace(
+      new_session(),
+      source_path="/private/tmp/lecture.wav",
+      source_device_id="microphone-1",
+    )
+  )
+  repository.set_state(session_id, SessionState.RUNNING)
+  repository.append_segment(session_id, segment())
+  repository.set_state(session_id, SessionState.PAUSING, end_reason="userPause")
+  repository.pause_session(session_id, 16_384)
+
+  reopened = RecordingRepository(database)
+
+  assert reopened.recover_abandoned() == 0
+  assert reopened.get_session(session_id)["state"] == "paused"
+  assert reopened.get_resume_context(session_id) == {
+    "session_id": session_id,
+    "state": "paused",
+    "end_reason": "userPause",
+    "source_kind": "file",
+    "source_path": "/private/tmp/lecture.wav",
+    "source_device_id": "microphone-1",
+    "source_fingerprint": "sha256:test",
+    "resume_sample": 16_384,
+    "total_segments": 1,
+  }
+
+
+def test_v2_database_migration_preserves_sessions_segments_and_foreign_keys(tmp_path: Path) -> None:
+  database = tmp_path / "v2.sqlite3"
+  session_id = "00000000-0000-0000-0000-000000000004"
+  with sqlite3.connect(database) as connection:
+    connection.executescript(
+      """
+      PRAGMA user_version = 2;
+      CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT INTO app_metadata VALUES ('schema_version', '2');
+      CREATE TABLE app_sessions (
+        session_id TEXT PRIMARY KEY,
+        state TEXT NOT NULL CHECK (state IN (
+          'preparing','running','stopping','completed','stopped','failed','abandoned'
+        )),
+        end_reason TEXT,
+        title TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        source_display_name TEXT NOT NULL,
+        source_fingerprint TEXT,
+        model TEXT NOT NULL,
+        model_revision TEXT,
+        language TEXT NOT NULL,
+        sample_rate INTEGER NOT NULL CHECK (sample_rate > 0),
+        config_json TEXT NOT NULL DEFAULT '{}',
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        updated_at TEXT NOT NULL,
+        media_duration_ms INTEGER NOT NULL DEFAULT 0,
+        total_segments INTEGER NOT NULL DEFAULT 0,
+        recognized_segments INTEGER NOT NULL DEFAULT 0,
+        characters INTEGER NOT NULL DEFAULT 0,
+        error_code TEXT,
+        error_message TEXT,
+        row_version INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE TABLE app_segments (
+        session_id TEXT NOT NULL REFERENCES app_sessions(session_id) ON DELETE CASCADE,
+        segment_index INTEGER NOT NULL CHECK (segment_index >= 0),
+        start_sample INTEGER NOT NULL CHECK (start_sample >= 0),
+        end_sample INTEGER NOT NULL CHECK (end_sample > start_sample),
+        split_reason TEXT NOT NULL,
+        text TEXT NOT NULL,
+        raw_text TEXT,
+        diagnostics_json TEXT NOT NULL DEFAULT '{}',
+        PRIMARY KEY (session_id, segment_index)
+      );
+      CREATE VIRTUAL TABLE app_session_search USING fts5(
+        session_id UNINDEXED, title, text, tokenize='unicode61'
+      );
+      """
+    )
+    connection.execute(
+      """
+      INSERT INTO app_sessions (
+        session_id, state, end_reason, title, source_kind, source_display_name,
+        source_fingerprint, model, model_revision, language, sample_rate,
+        config_json, started_at, ended_at, updated_at, media_duration_ms,
+        total_segments, recognized_segments, characters, row_version
+      ) VALUES (?, 'completed', 'naturalEnd', 'Legacy', 'file', 'legacy.wav',
+        'sha256:legacy', 'model', 'revision', 'Japanese', 16000, '{}',
+        '2026-07-20T00:00:00+00:00', '2026-07-20T00:01:00+00:00',
+        '2026-07-20T00:01:00+00:00', 1000, 1, 1, 6, 4)
+      """,
+      (session_id,),
+    )
+    connection.execute(
+      """
+      INSERT INTO app_segments VALUES (?, 0, 0, 16000, 'silence', 'legacy', NULL, '{}')
+      """,
+      (session_id,),
+    )
+    connection.execute("INSERT INTO app_session_search VALUES (?, 'Legacy', 'legacy')", (session_id,))
+
+  repository = RecordingRepository(database)
+
+  snapshot = repository.get_session(session_id)
+  assert snapshot["state"] == "completed"
+  assert snapshot["source_path"] is None
+  assert snapshot["source_device_id"] is None
+  assert snapshot["resume_sample"] == 0
+  assert snapshot["segments"][0]["text"] == "legacy"
+  repository.integrity_check()
+  with sqlite3.connect(database) as connection:
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 def test_v1_database_is_backed_up_and_migrated(tmp_path: Path) -> None:
   database = tmp_path / "legacy.sqlite3"
   with SessionRecorder(
@@ -301,4 +421,4 @@ def test_v1_database_is_backed_up_and_migrated(tmp_path: Path) -> None:
   assert database.with_suffix(".sqlite3.v1.backup").is_file()
   assert repository.get_session("00000000-0000-0000-0000-000000000003")["state"] == "completed"
   with sqlite3.connect(database) as connection:
-    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3

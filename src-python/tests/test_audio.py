@@ -142,6 +142,17 @@ def test_local_audio_file_input_streams_frames_without_losing_tail(tmp_path: Pat
   assert chunks[1].samples.size == 10
 
 
+def test_local_audio_file_input_resumes_at_a_frame_checkpoint(tmp_path: Path) -> None:
+  path = tmp_path / "tone.wav"
+  signal = np.arange(VAD_FRAME_SAMPLES * 3, dtype=np.float32) / 10_000
+  sf.write(path, signal, SAMPLE_RATE, format="WAV", subtype="FLOAT")
+
+  chunks = list(LocalAudioFileInput(path, start_sample=VAD_FRAME_SAMPLES).open().chunks)
+
+  assert [chunk.start_sample for chunk in chunks] == [VAD_FRAME_SAMPLES, VAD_FRAME_SAMPLES * 2]
+  np.testing.assert_allclose(chunks[0].samples, signal[VAD_FRAME_SAMPLES : VAD_FRAME_SAMPLES * 2])
+
+
 def test_microphone_input_source_uses_input_device_name(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setattr("reco.audio.resolve_microphone_device_name", lambda device=None: "Studio Mic")
 
