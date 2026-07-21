@@ -57,7 +57,7 @@ export interface CachedModelRevision extends ModelReference {
 }
 
 export interface ModelState {
-  status: "cliMissing" | "unselected" | "unavailable" | "loading" | "ready" | "error";
+  status: "cliMissing" | "unselected" | "unavailable" | "ready" | "error";
   selected: ModelReference | null;
   errorCode?: string;
   errorMessage?: string;

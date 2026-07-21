@@ -519,7 +519,8 @@ class RecordingRepository:
       row = connection.execute(
         """
         SELECT session_id, state, end_reason, source_kind, source_path,
-          source_device_id, source_fingerprint, resume_sample, total_segments
+          source_device_id, source_fingerprint, model, model_revision,
+          resume_sample, total_segments
         FROM app_sessions WHERE session_id = ?
         """,
         (session_id,),

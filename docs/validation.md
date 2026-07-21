@@ -40,7 +40,9 @@ pnpm dev
 
 - application windowが開き、sidecarが一つだけ起動する。
 - `hf` CLIのキャッシュからすべてのmodel revisionが表示され、互換性によるフィルタが行われない。
-- modelを明示的に選択すると読み込まれ、再起動後も同じrepository IDとrevisionが復元される。
+- model選択ではASR modelを読み込まず、再起動後も同じrepository IDとrevisionが復元される。
+- 起動、履歴閲覧、model一覧更新、idle、paused中にASR modelとworkerが生成されない。
+- 開始時は`preparing`中にmodelを一度だけ読み込み、成功後に`running`へ移る。
 - active sessionまたはqueue自動処理中はmodel切替が拒否され、paused sessionがある場合は切替できる。
 - `hf` CLI不在、model未選択、snapshot欠損、非互換modelの読込失敗が個別に表示される。
 - modelを利用できない場合も履歴、検索、Exportは動作し、文字起こしだけが無効になる。
@@ -52,11 +54,16 @@ pnpm dev
 - 明示的な開始後は一件だけがactiveになり、実行中の追加項目も末尾から後続処理される。
 - queueの並べ替え、単一削除、全クリアが永続化され、stale revisionが拒否される。
 - 完了、失敗、入力ファイル検証失敗後は次へ進み、invalid項目は原因付きで残る。
+- 複数ファイルの自動処理ではmodel読込が一度だけで、最後の完了後にruntimeを解放する。
 - Pause、Stop、sleep、quit後は次項目が開始されない。
+- queue pause後は現行ファイル完了までruntimeを保持し、その後解放する。
 - paused file sessionのResume完了後にqueueの自動進行が再開する。
 - queue実行中はマイク開始とpaused sessionのResumeが拒否される。
 - queue itemが履歴、検索、Export、履歴削除へ混入しない。
 - Pauseが処理待ちを完了して`paused`になり、Resumeが同じsessionへ追記する。
+- Pauseのdrain中はruntimeを保持し、`paused`保存後に解放する。
+- Pause後に既定modelを変更しても、Resumeでは元sessionに保存したrepository IDとrevisionを使用する。
+- 保存revisionのsnapshot欠損または読込失敗時は別modelへ切り替えず、resume位置と`paused`を維持する。
 - `pausing`中は新規開始とresumeが拒否され、`paused`後は別sessionを開始できる。
 - 別sessionの処理中は新規開始と全paused sessionのresumeが拒否される。
 - マイクと音声ファイルのpaused sessionがアプリ再起動後もresumeできる。
@@ -82,7 +89,14 @@ pnpm dev
 - sidecarのcrashとhangをhostが検出する。
 - 前回の非終端sessionを`abandoned`として回収する。
 - sleepとapplication closeで録音を安全に終了する。
+- 完了、Stop、Pause、cancel、失敗、shutdown後にworker、runtime参照、MLX cacheを解放する。
+- 同時start、model変更、一覧更新、shutdownで二重load、二重解放、active runtimeの途中解放、
+  deadlockが発生しない。
 - React Strict Modeの再mount後もevent listenerが重複しない。
+
+実機ではsidecar logとmemory使用量を確認し、起動とidleではmodel未常駐、処理中だけ増加、
+Pauseまたは完了後にruntimeとworkerがなくなることを確認する。allocatorの都合でprocess RSSが
+開始前と完全一致することは合否条件にせず、参照破棄とMLX cache clearを正本とする。
 
 ### セキュリティ
 

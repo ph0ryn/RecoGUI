@@ -355,6 +355,28 @@ describe("RecoGUI", () => {
     await waitFor(() => expect(bridgeMocks.resumeSession).toHaveBeenCalledWith("session-live"));
   });
 
+  it("keeps a failed resume paused and shows the model error", async () => {
+    useInactiveSnapshot();
+    await renderLoadedApp();
+
+    bridgeMocks.eventHandler?.({
+      event: "session.stateChanged",
+      payload: {
+        errorCode: "model_unavailable",
+        errorMessage: "The session model revision is unavailable",
+        rowVersion: 99,
+        state: "paused",
+      },
+      sequence: 22,
+      sessionId: "session-live",
+    });
+
+    expect(
+      await screen.findByText("再開できませんでした: The session model revision is unavailable"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "文字起こしを再開" })).toBeInTheDocument();
+  });
+
   it("submits a single idle file without showing an empty queue", async () => {
     const user = userEvent.setup();
 

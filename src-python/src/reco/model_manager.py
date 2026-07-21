@@ -20,7 +20,6 @@ class ModelState(StrEnum):
   CLI_MISSING = "cliMissing"
   UNSELECTED = "unselected"
   UNAVAILABLE = "unavailable"
-  LOADING = "loading"
   READY = "ready"
   ERROR = "error"
 
@@ -120,12 +119,12 @@ class ModelManager:
       selected = self.selected
       if selected is None:
         self._state = ModelState.UNSELECTED
-      elif (
-        (selected.repo_id, selected.revision) not in self._models
-        or not self._models[(selected.repo_id, selected.revision)].snapshot_path.is_dir()
-        or self._state not in {ModelState.LOADING, ModelState.READY}
-      ):
+      elif (selected.repo_id, selected.revision) not in self._models or not self._models[
+        (selected.repo_id, selected.revision)
+      ].snapshot_path.is_dir():
         self._state = ModelState.UNAVAILABLE
+      else:
+        self._state = ModelState.READY
       self._error = None
     return [model.public() for model in models]
 
@@ -136,28 +135,24 @@ class ModelManager:
       return None
     return model.snapshot_path
 
-  def begin_loading(self, reference: ModelReference) -> Path:
-    with self._lock:
-      self.selected = reference
-    path = self.resolve(reference)
-    if path is None:
-      with self._lock:
-        self._state = ModelState.UNAVAILABLE
-      raise ValueError("The selected model revision is not available in the Hugging Face cache")
-    with self._lock:
-      self._state = ModelState.LOADING
-      self._error = None
-    return path
+  def select(self, reference: ModelReference) -> None:
+    """Select one cached revision without loading its ASR runtime."""
 
-  def mark_ready(self) -> None:
     with self._lock:
+      model = self._models.get((reference.repo_id, reference.revision))
+      if model is None or not model.snapshot_path.is_dir():
+        raise ValueError("The selected model revision is not available in the Hugging Face cache")
+      self.selected = reference
       self._state = ModelState.READY
       self._error = None
 
-  def mark_error(self, message: str) -> None:
+  def restore(self, snapshot: ModelSnapshot) -> None:
+    """Restore an in-memory selection after its durable write fails."""
+
     with self._lock:
-      self._state = ModelState.ERROR
-      self._error = message
+      self.selected = snapshot.selected
+      self._state = snapshot.state
+      self._error = snapshot.error
 
 
 def _resolve_hf_executable() -> Path | None:

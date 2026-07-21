@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 import reco.engine as engine_module
-from reco.engine import ModelRuntime, RecoEngine, SessionControl
+from reco.engine import RecoEngine, SessionControl
 from reco.model_manager import ModelReference, ModelState
 from reco.protocol import NdjsonWriter, Request
 from reco.repository import ExportResult, NewSession, SessionMutationReceipt, SessionPage, SessionState
@@ -333,10 +333,6 @@ def test_stop_control_retains_system_sleep_reason_for_terminal_persistence() -> 
 
 
 def test_system_sleep_is_persisted_as_terminal_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-  class FakeRuntime:
-    def acquire(self) -> tuple[object, object]:
-      return object(), object()
-
   engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
   session_id = engine.repository.create_session(
     NewSession(
@@ -351,9 +347,14 @@ def test_system_sleep_is_persisted_as_terminal_reason(tmp_path: Path, monkeypatc
   )
   control = SessionControl()
   control.request_stop("systemSleep")
-  engine.runtime = cast(ModelRuntime, FakeRuntime())
   engine.model_manager.selected = ModelReference("model", "revision")
   engine.model_manager._state = ModelState.READY
+  monkeypatch.setattr(
+    engine,
+    "_acquire_runtime",
+    lambda reference: pytest.fail(f"stopped session unexpectedly loaded {reference}"),
+  )
+  monkeypatch.setattr(engine, "_release_runtime", lambda **options: True)
   monkeypatch.setattr(engine_module, "audio_file_duration_ms", lambda path: 1_000)
   monkeypatch.setattr(engine_module, "ensure_silero_vad_asset", lambda path: path)
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())

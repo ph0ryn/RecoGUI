@@ -376,6 +376,8 @@ def test_paused_session_and_resume_context_survive_repository_restart(tmp_path: 
     "source_path": "/private/tmp/lecture.wav",
     "source_device_id": "microphone-1",
     "source_fingerprint": "sha256:test",
+    "model": "model",
+    "model_revision": "revision",
     "resume_sample": 16_384,
     "total_segments": 1,
   }

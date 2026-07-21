@@ -146,8 +146,7 @@ function getSnippet(session: SessionEntity, query: string): string | undefined {
 function modelStatusText(model: ModelState): string {
   const labels: Record<ModelState["status"], string> = {
     cliMissing: "hf CLIが見つかりません。",
-    error: "選択したモデルを読み込めませんでした。",
-    loading: "モデルを読み込んでいます。",
+    error: "モデルを確認できませんでした。",
     ready: "利用可能",
     unavailable: "選択したモデルがHFキャッシュにありません。",
     unselected: "音声認識モデルが選択されていません。",
@@ -159,7 +158,7 @@ function modelStatusText(model: ModelState): string {
 function App() {
   const [initialPreferences] = useState(loadAppPreferences);
   const [sessionState, dispatchSessions] = useReducer(sessionStateReducer, initialSessionState);
-  const [model, setModel] = useState<ModelState>({ selected: null, status: "loading" });
+  const [model, setModel] = useState<ModelState>({ selected: null, status: "unselected" });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [anchorId, setAnchorId] = useState<string>();
   const [query, setQuery] = useState("");
@@ -574,6 +573,8 @@ function App() {
       const payload = message.payload as {
         characters?: number;
         endedAt?: string;
+        errorCode?: string;
+        errorMessage?: string;
         mediaDurationMs?: number;
         rowVersion?: number;
         state?: SessionStatus;
@@ -591,12 +592,17 @@ function App() {
           characterCount: payload.characters,
           durationMs: payload.mediaDurationMs,
           endedAt: payload.endedAt,
+          errorCode: payload.errorCode,
+          errorMessage: payload.errorMessage,
           rowVersion: payload.rowVersion,
           segmentCount: payload.totalSegments,
           sessionId: message.sessionId,
           status: payload.state,
           type: "statusChanged",
         });
+        if (payload.state === "paused" && payload.errorMessage) {
+          setToast(`再開できませんでした: ${payload.errorMessage}`);
+        }
       }
     }
     if (message.event === "session.completed") {
@@ -2313,7 +2319,6 @@ function SettingsDialog({
     try {
       const reference = { repoId: selected.repoId, revision: selected.revision };
 
-      onModelChange({ selected: reference, status: "loading" });
       onModelChange(await recoBridge.selectModel(reference));
     } catch (error) {
       setModelListError(error instanceof Error ? error.message : String(error));

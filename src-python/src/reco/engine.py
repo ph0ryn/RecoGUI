@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import gc
+import logging
 from collections.abc import Callable, Mapping
-from contextlib import suppress
 from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,7 @@ from reco.transcription import LocalAsrTranscriptionService
 from reco.vad import OnnxSileroProbabilityModel, SileroVadEngine, ensure_silero_vad_asset
 
 EngineEventCallback = Callable[[str, str | None, Mapping[str, object]], None]
+LOGGER = logging.getLogger(__name__)
 
 
 class EngineCommandError(RecoError):
@@ -81,7 +83,7 @@ class SessionControl:
 
 
 class ModelRuntime:
-  """Resident ASR worker that owns model loading and generation."""
+  """Processing-scoped ASR worker that owns model loading and generation."""
 
   def __init__(self, model_path: Path) -> None:
     self.model_path = model_path
@@ -116,7 +118,11 @@ class ModelRuntime:
       worker.stop(cancel_pending=True, timeout=DEFAULT_CONFIG.transcription.failed_worker_shutdown_timeout_seconds)
 
   def close(self) -> None:
-    self.invalidate()
+    try:
+      self.invalidate()
+    finally:
+      gc.collect()
+      _clear_mlx_cache()
 
 
 class RecoEngine:
@@ -129,6 +135,7 @@ class RecoEngine:
     selected = ModelReference(*selected_value) if selected_value is not None else None
     self.model_manager = ModelManager(models_directory, selected=selected)
     self.runtime: ModelRuntime | None = None
+    self._runtime_reference: ModelReference | None = None
     self._event_callback = event_callback
     self._active_session_id: str | None = None
     self._active_control: SessionControl | None = None
@@ -141,9 +148,6 @@ class RecoEngine:
     self._paused_queue_sessions: set[str] = set()
     self._model_lock = Lock()
     self.model_manager.list_models()
-    if selected is not None and self.model_manager.resolve(selected) is not None:
-      with suppress(EngineCommandError):
-        self._load_model(selected)
 
   def state(self) -> dict[str, object]:
     """Return the complete engine/model/session snapshot."""
@@ -161,11 +165,7 @@ class RecoEngine:
 
   def list_models(self) -> dict[str, object]:
     models = self.model_manager.list_models()
-    snapshot = self.model_manager.snapshot()
-    if snapshot.state is ModelState.UNAVAILABLE and self.runtime is not None:
-      self.runtime.close()
-      self.runtime = None
-    return {"models": models, "state": snapshot.public()}
+    return {"models": models, "state": self.model_manager.snapshot().public()}
 
   def select_model(self, repo_id: str, revision: str) -> dict[str, object]:
     if not repo_id.strip() or not revision.strip():
@@ -175,29 +175,61 @@ class RecoEngine:
         raise EngineCommandError("session_active", "The model cannot be changed during transcription")
       if self._queue_auto_advance or self._queue_scheduler_active:
         raise EngineCommandError("queue_active", "The model cannot be changed while the queue is running")
-    reference = ModelReference(repo_id, revision)
-    with self._model_lock:
-      if self.model_manager.resolve(reference) is None:
-        raise EngineCommandError("model_unavailable", "The selected model revision is unavailable")
-      self.repository.set_selected_model(repo_id, revision)
-      self._load_model(reference)
+      reference = ModelReference(repo_id, revision)
+      previous = self.model_manager.snapshot()
+      try:
+        self.model_manager.select(reference)
+      except ValueError as exc:
+        raise EngineCommandError("model_unavailable", str(exc)) from exc
+      try:
+        self.repository.set_selected_model(repo_id, revision)
+      except BaseException:
+        self.model_manager.restore(previous)
+        raise
     return self.model_manager.snapshot().public()
 
-  def _load_model(self, reference: ModelReference) -> None:
-    path = self.model_manager.begin_loading(reference)
-    previous = self.runtime
-    self.runtime = None
-    if previous is not None:
-      previous.close()
-    runtime = ModelRuntime(path)
+  def _acquire_runtime(self, reference: ModelReference) -> tuple[ModelRuntime, LocalAsrTranscriptionService, AsrWorker]:
+    """Load or reuse the runtime lease for one processing model revision."""
+
+    with self._model_lock:
+      if self.runtime is not None and self._runtime_reference == reference:
+        service, worker = self.runtime.acquire()
+        return self.runtime, service, worker
+      previous = self.runtime
+      self.runtime = None
+      self._runtime_reference = None
+      if previous is not None:
+        previous.close()
+      path = self.model_manager.resolve(reference)
+      if path is None:
+        raise EngineCommandError("model_unavailable", "The session model revision is unavailable")
+      runtime = ModelRuntime(path)
+      try:
+        service, worker = runtime.acquire()
+      except BaseException as exc:
+        runtime.close()
+        raise EngineCommandError("model_load_failed", str(exc)) from exc
+      self.runtime = runtime
+      self._runtime_reference = reference
+      return runtime, service, worker
+
+  def _release_runtime(self) -> bool:
+    """Release the processing lease and all reclaimable MLX memory."""
+
+    self._model_lock.acquire()
     try:
-      runtime.acquire()
-    except BaseException as exc:
-      runtime.close()
-      self.model_manager.mark_error(str(exc))
-      raise EngineCommandError("model_load_failed", str(exc)) from exc
-    self.runtime = runtime
-    self.model_manager.mark_ready()
+      runtime = self.runtime
+      self.runtime = None
+      self._runtime_reference = None
+      if runtime is not None:
+        try:
+          runtime.close()
+        except Exception:
+          LOGGER.exception("Could not fully release the ASR model runtime")
+          return False
+      return True
+    finally:
+      self._model_lock.release()
 
   def queue_state(self) -> dict[str, object]:
     """Return the durable queue plus the intentionally non-durable run toggle."""
@@ -337,30 +369,39 @@ class RecoEngine:
     title = str(
       payload.get("title") or (source_path.stem if source_path else datetime.now().strftime("Recording %Y-%m-%d %H:%M"))
     )
-    session_id = self.repository.create_session(
-      NewSession(
-        session_id=requested_session_id or "",
-        source_kind=source_kind,
-        source_display_name=display_name,
-        source_fingerprint=fingerprint.value if fingerprint else None,
-        source_path=str(source_path) if source_path is not None else None,
-        source_device_id=str(device) if device is not None else None,
-        model=selected.repo_id,
-        model_revision=selected.revision,
-        language=DEFAULT_CONFIG.cli.default_language,
-        sample_rate=SAMPLE_RATE,
-        title=title,
-        config={"vad": asdict(DEFAULT_CONFIG.vad), "transcription": asdict(DEFAULT_CONFIG.transcription)},
-      )
-    )
     control = SessionControl()
-    thread = Thread(
-      target=self._run_session,
-      args=(session_id, source_path, device, fingerprint, control, 0, 0),
-      daemon=True,
-      name=f"reco-session-{session_id}",
-    )
     with self._lock:
+      if self._shutting_down:
+        raise EngineCommandError("engine_shutting_down", "The engine is shutting down", recoverable=False)
+      if self._active_session_id is not None:
+        raise EngineCommandError("session_active", "Another transcription session is already active")
+      if self._queue_auto_advance:
+        raise EngineCommandError("queue_active", "The file queue is active")
+      current_model = self.model_manager.snapshot()
+      if current_model.state is not ModelState.READY or current_model.selected != selected:
+        raise EngineCommandError("model_changed", "The selected model changed before transcription started")
+      session_id = self.repository.create_session(
+        NewSession(
+          session_id=requested_session_id or "",
+          source_kind=source_kind,
+          source_display_name=display_name,
+          source_fingerprint=fingerprint.value if fingerprint else None,
+          source_path=str(source_path) if source_path is not None else None,
+          source_device_id=str(device) if device is not None else None,
+          model=selected.repo_id,
+          model_revision=selected.revision,
+          language=DEFAULT_CONFIG.cli.default_language,
+          sample_rate=SAMPLE_RATE,
+          title=title,
+          config={"vad": asdict(DEFAULT_CONFIG.vad), "transcription": asdict(DEFAULT_CONFIG.transcription)},
+        )
+      )
+      thread = Thread(
+        target=self._run_session,
+        args=(session_id, source_path, device, fingerprint, control, 0, 0, selected, False),
+        daemon=True,
+        name=f"reco-session-{session_id}",
+      )
       self._active_session_id = session_id
       self._active_control = control
       self._active_thread = thread
@@ -431,11 +472,26 @@ class RecoEngine:
           raise EngineCommandError("resume_source_changed", "The paused audio file has changed")
       resume_sample = int(context["resume_sample"])
       segment_offset = int(context["total_segments"])
+      model = context.get("model")
+      model_revision = context.get("model_revision")
+      if not isinstance(model, str) or not model or not isinstance(model_revision, str) or not model_revision:
+        raise EngineCommandError("model_unavailable", "The paused session has no restorable model revision")
+      model_reference = ModelReference(model, model_revision)
       control = SessionControl()
       receipt = self.repository.set_state(session_id, SessionState.PREPARING)
       thread = Thread(
         target=self._run_session,
-        args=(session_id, source_path, device, fingerprint, control, resume_sample, segment_offset),
+        args=(
+          session_id,
+          source_path,
+          device,
+          fingerprint,
+          control,
+          resume_sample,
+          segment_offset,
+          model_reference,
+          True,
+        ),
         daemon=True,
         name=f"reco-session-{session_id}",
       )
@@ -445,14 +501,14 @@ class RecoEngine:
       self._active_queue_origin = queue_origin
       if queue_origin:
         self._queue_auto_advance = True
+      self._emit("session.stateChanged", session_id, self._state_receipt(receipt))
       thread.start()
     if queue_origin:
       self._publish_queue_changed()
-    self._emit("session.stateChanged", session_id, self._state_receipt(receipt))
     return {"sessionId": session_id, **self._state_receipt(receipt)}
 
   def shutdown(self, timeout: float = 30.0) -> None:
-    """Gracefully stop the active session and resident model worker."""
+    """Gracefully stop the active session and its model runtime."""
 
     with self._lock:
       self._shutting_down = True
@@ -469,8 +525,8 @@ class RecoEngine:
       if thread.is_alive():
         with _ignore_repository_error():
           self.repository.set_state(session_id or "", SessionState.ABANDONED, end_reason="forceStop")
-    if self.runtime is not None:
-      self.runtime.close()
+    if thread is None or not thread.is_alive():
+      self._release_runtime()
 
   def _stop_queue_for_active_session(self) -> None:
     changed = False
@@ -484,6 +540,8 @@ class RecoEngine:
   def _schedule_next_queue_item(self) -> None:
     """Claim at most one valid item; terminal sessions call this again."""
 
+    release_idle_runtime = False
+    owns_scheduler = False
     with self._lock:
       if (
         not self._queue_auto_advance
@@ -491,8 +549,17 @@ class RecoEngine:
         or self._active_session_id is not None
         or self._shutting_down
       ):
-        return
-      self._queue_scheduler_active = True
+        release_idle_runtime = (
+          not self._queue_auto_advance and not self._queue_scheduler_active and self._active_session_id is None
+        )
+      else:
+        self._queue_scheduler_active = True
+        owns_scheduler = True
+    if release_idle_runtime:
+      self._release_runtime()
+      return
+    if not owns_scheduler:
+      return
     try:
       for item in self.repository.queue_items_private():
         item_id = str(item["item_id"])
@@ -508,51 +575,82 @@ class RecoEngine:
           self._publish_queue_changed()
           continue
         control = SessionControl()
+        abort = False
+        model_unavailable = False
+        release_aborted_runtime = False
         with self._lock:
           if not self._queue_auto_advance or self._active_session_id is not None or self._shutting_down:
-            return
-          selected = self.model_manager.snapshot().selected
-          if self.model_manager.snapshot().state is not ModelState.READY or selected is None:
+            abort = True
+            selected = None
+            release_aborted_runtime = self._active_session_id is None
+          else:
+            selected = self.model_manager.snapshot().selected
+          if not abort and (self.model_manager.snapshot().state is not ModelState.READY or selected is None):
             self._queue_auto_advance = False
-            return
-          try:
-            session_id = self.repository.claim_queue_item(
-              item_id,
-              NewSession(
-                source_kind="file",
-                source_display_name=str(item["display_name"]),
-                source_fingerprint=fingerprint.value,
-                source_path=str(source_path),
-                model=selected.repo_id,
-                model_revision=selected.revision,
-                language=DEFAULT_CONFIG.cli.default_language,
-                sample_rate=SAMPLE_RATE,
-                title=source_path.stem,
-                config={"vad": asdict(DEFAULT_CONFIG.vad), "transcription": asdict(DEFAULT_CONFIG.transcription)},
-              ),
+            model_unavailable = True
+          if abort or model_unavailable:
+            self._queue_scheduler_active = False
+            owns_scheduler = False
+          else:
+            assert selected is not None
+        if abort or model_unavailable:
+          if model_unavailable or release_aborted_runtime:
+            self._release_runtime()
+          if model_unavailable:
+            self._publish_queue_changed()
+          return
+        selected_reference = cast(ModelReference, selected)
+        claim_aborted = False
+        with self._lock:
+          if not self._queue_auto_advance or self._active_session_id is not None or self._shutting_down:
+            self._queue_scheduler_active = False
+            owns_scheduler = False
+            claim_aborted = True
+          else:
+            try:
+              session_id = self.repository.claim_queue_item(
+                item_id,
+                NewSession(
+                  source_kind="file",
+                  source_display_name=str(item["display_name"]),
+                  source_fingerprint=fingerprint.value,
+                  source_path=str(source_path),
+                  model=selected_reference.repo_id,
+                  model_revision=selected_reference.revision,
+                  language=DEFAULT_CONFIG.cli.default_language,
+                  sample_rate=SAMPLE_RATE,
+                  title=source_path.stem,
+                  config={"vad": asdict(DEFAULT_CONFIG.vad), "transcription": asdict(DEFAULT_CONFIG.transcription)},
+                ),
+              )
+            except RepositoryError:
+              continue
+            thread = Thread(
+              target=self._run_session,
+              args=(session_id, source_path, None, fingerprint, control, 0, 0, selected_reference, False),
+              daemon=True,
+              name=f"reco-session-{session_id}",
             )
-          except RepositoryError:
-            continue
-          thread = Thread(
-            target=self._run_session,
-            args=(session_id, source_path, None, fingerprint, control, 0, 0),
-            daemon=True,
-            name=f"reco-session-{session_id}",
-          )
-          self._active_session_id = session_id
-          self._active_control = control
-          self._active_thread = thread
-          self._active_queue_origin = True
-          self._queue_scheduler_active = False
-          thread.start()
+            self._active_session_id = session_id
+            self._active_control = control
+            self._active_thread = thread
+            self._active_queue_origin = True
+            self._queue_scheduler_active = False
+            owns_scheduler = False
+            thread.start()
+        if claim_aborted:
+          self._release_runtime()
+          return
         self._publish_queue_changed()
         return
       with self._lock:
         self._queue_auto_advance = False
+      self._release_runtime()
       self._publish_queue_changed()
     finally:
-      with self._lock:
-        self._queue_scheduler_active = False
+      if owns_scheduler:
+        with self._lock:
+          self._queue_scheduler_active = False
 
   def list_audio_inputs(self) -> list[dict[str, object]]:
     """Return current input-capable PortAudio devices."""
@@ -573,6 +671,21 @@ class RecoEngine:
       if int(device["max_input_channels"]) > 0
     ]
 
+  def _finish_before_running(self, session_id: str, control: SessionControl, resume_sample: int) -> None:
+    """Commit a stop requested before audio capture or generation begins."""
+
+    if control.stop_reason == "userPause":
+      paused_receipt = self.repository.pause_session(session_id, resume_sample)
+      self._emit("session.stateChanged", session_id, self._state_receipt(paused_receipt))
+      return
+    reason = "userCancel" if control.cancel_requested() else control.stop_reason
+    stopped_receipt = self.repository.set_state(session_id, SessionState.STOPPED, end_reason=reason)
+    self._emit(
+      "session.completed",
+      session_id,
+      {**self._state_receipt(stopped_receipt), "endReason": reason},
+    )
+
   def _run_session(
     self,
     session_id: str,
@@ -582,16 +695,28 @@ class RecoEngine:
     control: SessionControl,
     initial_sample: int = 0,
     segment_offset: int = 0,
+    model_reference: ModelReference | None = None,
+    resuming: bool = False,
   ) -> None:
     runtime: ModelRuntime | None = None
+    service: LocalAsrTranscriptionService | None = None
+    worker: AsrWorker | None = None
+    entered_running = False
+    runtime_failed = False
     try:
+      reference = model_reference or self.model_manager.snapshot().selected
+      if reference is None:
+        raise EngineCommandError("model_unavailable", "The session has no transcription model revision")
+      if control.stop_requested():
+        self._finish_before_running(session_id, control, initial_sample)
+        return
+      runtime, service, worker = self._acquire_runtime(reference)
+      if control.stop_requested():
+        self._finish_before_running(session_id, control, initial_sample)
+        return
       running_receipt = self.repository.set_state(session_id, SessionState.RUNNING)
+      entered_running = True
       self._emit("session.stateChanged", session_id, self._state_receipt(running_receipt))
-      runtime = self.runtime
-      selected = self.model_manager.snapshot().selected
-      if runtime is None or selected is None or self.model_manager.snapshot().state is not ModelState.READY:
-        raise EngineCommandError("model_unavailable", "No ready transcription model is selected")
-      service, worker = runtime.acquire()
       total_audio_ms = None
       if source_path is None:
         audio_input = MicrophoneInput(
@@ -610,9 +735,7 @@ class RecoEngine:
         audio_input,
         SileroVadEngine(model=OnnxSileroProbabilityModel(ensure_silero_vad_asset(self.model_manager.vad_asset_path))),
         service,
-        TranscriptModelMetadata(
-          path=str(self.model_manager.resolve(selected)), language=DEFAULT_CONFIG.cli.default_language
-        ),
+        TranscriptModelMetadata(path=str(runtime.model_path), language=DEFAULT_CONFIG.cli.default_language),
         asr_worker=worker,
         progress_callback=lambda progress: self._publish_progress(session_id, progress, total_audio_ms),
         segment_callback=lambda segment: self._persist_segment(
@@ -625,7 +748,6 @@ class RecoEngine:
       )
       if control.cancel_requested():
         state, reason = SessionState.STOPPED, "userCancel"
-        runtime.invalidate()
       elif control.stop_requested() and control.stop_reason == "userPause":
         resume_sample = round(document.timing.media_duration_ms * SAMPLE_RATE / 1000)
         paused_receipt = self.repository.pause_session(session_id, resume_sample)
@@ -647,6 +769,34 @@ class RecoEngine:
       )
     except BaseException as exc:
       code = exc.code if isinstance(exc, EngineCommandError) else "transcription_failed"
+      runtime_failed = True
+      if resuming and not entered_running:
+        queue_changed = False
+        with self._lock:
+          if self._active_queue_origin:
+            queue_changed = self._queue_auto_advance
+            self._queue_auto_advance = False
+        paused_receipt = None
+        with _ignore_repository_error():
+          paused_receipt = self.repository.set_state(
+            session_id,
+            SessionState.PAUSED,
+            end_reason="userPause",
+            error_code=code,
+            error_message=str(exc),
+          )
+        self._emit(
+          "session.stateChanged",
+          session_id,
+          {
+            **(self._state_receipt(paused_receipt) if paused_receipt is not None else {}),
+            "errorCode": code,
+            "errorMessage": str(exc),
+          },
+        )
+        if queue_changed:
+          self._publish_queue_changed()
+        return
       failed_receipt = None
       with _ignore_repository_error():
         failed_receipt = self.repository.set_state(
@@ -666,22 +816,27 @@ class RecoEngine:
           "recoverable": True,
         },
       )
-      with _ignore_repository_error():
-        if runtime is not None:
-          runtime.invalidate()
     finally:
       should_advance = False
+      was_queue_origin = False
       with self._lock:
         if self._active_session_id == session_id:
           was_queue_origin = self._active_queue_origin
-          self._active_session_id = None
-          self._active_control = None
-          self._active_thread = None
-          self._active_queue_origin = False
           if was_queue_origin:
             if control.stop_reason != "userPause":
               self._paused_queue_sessions.discard(session_id)
             should_advance = self._queue_auto_advance and not self._shutting_down
+      if runtime_failed or not should_advance:
+        runtime = None
+        service = None
+        worker = None
+        self._release_runtime()
+      with self._lock:
+        if self._active_session_id == session_id:
+          self._active_session_id = None
+          self._active_control = None
+          self._active_thread = None
+          self._active_queue_origin = False
       self._emit("history.changed", session_id, {"sessionId": session_id})
       if should_advance:
         self._schedule_next_queue_item()
@@ -754,6 +909,14 @@ class RecoEngine:
 
 def _restore_device_id(value: str) -> int | str:
   return int(value) if value.isdecimal() else value
+
+
+def _clear_mlx_cache() -> None:
+  """Release MLX allocator cache after the last model reference is gone."""
+
+  import mlx.core as mx
+
+  mx.clear_cache()
 
 
 class _ignore_repository_error:

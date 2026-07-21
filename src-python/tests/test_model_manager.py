@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from reco.model_manager import ModelManager, ModelReference, ModelState
 
 
@@ -80,7 +82,61 @@ def test_selected_snapshot_is_resolved_privately(tmp_path: Path) -> None:
   manager.list_models()
 
   assert manager.resolve(reference) == snapshot
+  assert manager.snapshot().state is ModelState.READY
   assert "snapshot" not in str(manager.snapshot().public())
+
+
+def test_select_updates_availability_without_loading_a_runtime(tmp_path: Path) -> None:
+  snapshot = tmp_path / "snapshot"
+  snapshot.mkdir()
+  payload = [
+    {
+      "repo_type": "model",
+      "repo_id": "owner/model",
+      "revision": "commit",
+      "snapshot_path": str(snapshot),
+    }
+  ]
+  manager = ModelManager(
+    tmp_path,
+    cli_runner=lambda argv: result(json.dumps(payload)),
+    executable_resolver=lambda: Path("/bin/hf"),
+  )
+  reference = ModelReference("owner/model", "commit")
+
+  manager.list_models()
+  manager.select(reference)
+
+  assert manager.snapshot().selected == reference
+  assert manager.snapshot().state is ModelState.READY
+  assert "loading" not in {state.value for state in ModelState}
+
+
+def test_missing_selection_does_not_replace_the_current_model(tmp_path: Path) -> None:
+  snapshot = tmp_path / "snapshot"
+  snapshot.mkdir()
+  current = ModelReference("owner/model", "commit")
+  payload = [
+    {
+      "repo_type": "model",
+      "repo_id": current.repo_id,
+      "revision": current.revision,
+      "snapshot_path": str(snapshot),
+    }
+  ]
+  manager = ModelManager(
+    tmp_path,
+    selected=current,
+    cli_runner=lambda argv: result(json.dumps(payload)),
+    executable_resolver=lambda: Path("/bin/hf"),
+  )
+  manager.list_models()
+
+  with pytest.raises(ValueError, match="not available"):
+    manager.select(ModelReference("owner/missing", "missing"))
+
+  assert manager.snapshot().selected == current
+  assert manager.snapshot().state is ModelState.READY
 
 
 def test_cli_and_json_failures_are_error_state(tmp_path: Path) -> None:
