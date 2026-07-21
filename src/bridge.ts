@@ -230,7 +230,11 @@ export const recoBridge = {
     return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.enqueueFiles", { files }));
   },
 
-  async exportSessions(sessionIds: string[], format: ExportFormat): Promise<ExportResult> {
+  async exportSessions(
+    sessionIds: string[],
+    format: ExportFormat,
+    sessionTitle: string,
+  ): Promise<ExportResult> {
     if (!hasTauriRuntime()) {
       return { canceled: false, completed: true, operationId: crypto.randomUUID() };
     }
@@ -243,15 +247,11 @@ export const recoBridge = {
       extension = "txt";
     }
 
-    if (sessionIds.length > 1) {
-      extension = "zip";
-    }
-
     const destination = await invoke<{ displayName: string; token: string } | null>(
       "select_export_destination",
       {
         extension,
-        suggestedName: sessionIds.length > 1 ? "Reco-exports" : "Reco-transcript",
+        suggestedName: sessionTitle.replace(/[\\/]/g, "-"),
       },
     );
 

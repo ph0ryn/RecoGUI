@@ -7,7 +7,7 @@ RecoGUI is a Japanese speech transcription desktop application for Apple Silicon
 - Microphone and audio-file transcription with a resident MLX model
 - Durable SQLite sessions and commit-before-display transcript segments
 - Searchable history, filtering, sorting, multi-selection, and permanent deletion
-- Plain TXT, timestamped TXT, Markdown, JSON, SRT, WebVTT, and multi-session ZIP export
+- Timestamped TXT, TXT without timestamps, Markdown, JSON, SRT, and WebVTT export
 - Stop, Cancel, crash recovery, and persisted partial results
 - A versioned NDJSON engine protocol and a compatible `reco` CLI adapter
 

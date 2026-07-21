@@ -53,15 +53,15 @@ const statusLabels: Record<SessionStatus, string> = {
 };
 
 const exportLabels: Record<ExportFormat, string> = {
-  json: "JSON（構造化データ）",
+  json: "JSON (構造化データ)",
   markdown: "Markdown",
   srt: "SRT字幕",
-  timestampedTxt: "タイムスタンプ付きテキスト",
-  txt: "テキスト",
+  timestampedTxt: "テキスト",
+  txt: "テキスト (タイムスタンプなし)",
   vtt: "WebVTT字幕",
 };
 
-const exportFormats = Object.keys(exportLabels) as ExportFormat[];
+const exportFormats: ExportFormat[] = ["timestampedTxt", "txt", "markdown", "json", "srt", "vtt"];
 const terminalStatuses: SessionStatus[] = ["completed", "stopped", "failed", "abandoned"];
 const deletableStatuses: SessionStatus[] = [...terminalStatuses, "paused"];
 const pausableStatuses: SessionStatus[] = ["preparing", "running", "pausing"];
@@ -174,7 +174,7 @@ function App() {
     "new" | "rename" | "delete" | "export" | "settings" | "close" | "forceClose" | null
   >(null);
   const [closeRequest, setCloseRequest] = useState<{ error?: string; sessionId?: string }>();
-  const [exportFormat, setExportFormat] = useState<ExportFormat>("txt");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("timestampedTxt");
   const [isWorking, setIsWorking] = useState(false);
   const [toast, setToast] = useState<string>();
   const [paneWidth, setPaneWidth] = useState(320);
@@ -968,7 +968,9 @@ function App() {
     setDialog(null);
     setExportOperation({ failedSessionIds: [], format, progress: 0, sessionIds, state: "running" });
     try {
-      const result = await recoBridge.exportSessions(sessionIds, format);
+      const sessionTitle = sessions.find(({ id }) => id === sessionIds[0])?.title;
+      if (!sessionTitle) throw new Error("Export session is unavailable");
+      const result = await recoBridge.exportSessions(sessionIds, format, sessionTitle);
 
       if (result.canceled) {
         setExportOperation(undefined);

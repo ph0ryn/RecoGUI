@@ -116,6 +116,20 @@ def test_render_timestamped_text_uses_segment_start_time(tmp_path: Path) -> None
   assert repository.render_sessions([session_id], "timestampedTxt") == "[12:30:12.453] text"
 
 
+def test_render_markdown_uses_hard_line_breaks_without_blank_lines(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  first_session_id = repository.create_session(new_session())
+  second_session_id = repository.create_session(replace(new_session(), title="Second"))
+  repository.append_segment(first_session_id, segment(text="first"))
+  repository.append_segment(first_session_id, segment(index=1, text="second"))
+  repository.append_segment(second_session_id, segment(text="third"))
+
+  rendered = repository.render_sessions([first_session_id, second_session_id], "markdown")
+
+  assert rendered == ("# Lecture\n[00:00:00.000] first  \n[00:00:01.000] second  \n# Second\n[00:00:00.000] third")
+  assert "\n\n" not in rendered
+
+
 def test_append_segment_returns_monotonic_committed_session_values(tmp_path: Path) -> None:
   repository = RecordingRepository(tmp_path / "reco.sqlite3")
   session_id = repository.create_session(new_session())

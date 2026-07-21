@@ -88,7 +88,7 @@ export const mockSnapshot: EngineSnapshot = {
           id: "s1-4",
           sequence: 4,
           startMs: 80_200,
-          text: "書き出し形式はテキスト、タイムスタンプ付きテキスト、Markdown、JSON、字幕に対応します。",
+          text: "書き出し形式はテキスト、テキスト (タイムスタンプなし)、Markdown、JSON、字幕に対応します。",
         },
       ],
       segmentsLoaded: true,
@@ -153,7 +153,7 @@ export const mockSnapshot: EngineSnapshot = {
       segmentsLoaded: true,
       startedAt: new Date(now - 172_241_000).toISOString(),
       status: "abandoned",
-      title: "講義録音（部分結果）",
+      title: "講義録音 (部分結果)",
     },
   ],
 };

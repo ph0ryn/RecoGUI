@@ -207,6 +207,10 @@ describe("RecoGUI", () => {
 
     fireEvent.keyDown(window, { key: "s", metaKey: true });
     const exportDialog = screen.getByRole("dialog", { name: "文字起こしをExport" });
+    expect(within(exportDialog).getByRole("radio", { name: "テキスト" })).toBeChecked();
+    expect(
+      within(exportDialog).getByRole("radio", { name: "テキスト (タイムスタンプなし)" }),
+    ).not.toBeChecked();
 
     await user.click(within(exportDialog).getByRole("button", { name: "閉じる" }));
 
@@ -500,7 +504,11 @@ describe("RecoGUI", () => {
     await user.click(screen.getByRole("button", { name: "保存先を選択…" }));
 
     await waitFor(() =>
-      expect(bridgeMocks.exportSessions).toHaveBeenCalledWith(["session-1"], "json"),
+      expect(bridgeMocks.exportSessions).toHaveBeenCalledWith(
+        ["session-1"],
+        "json",
+        "プロジェクト定例",
+      ),
     );
   });
 

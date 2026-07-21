@@ -961,7 +961,12 @@ def _render_export(snapshots: list[dict[str, Any]], export_format: str) -> bytes
       )
     elif export_format == "md":
       blocks.append(
-        f"# {snapshot['title']}\n\n" + "\n\n".join(segment["text"] for segment in segments if segment["text"])
+        f"# {snapshot['title']}\n"
+        + "  \n".join(
+          f"[{_timestamp(round(segment['start_sample'] * 1000 / snapshot['sample_rate']), vtt=True)}] {segment['text']}"
+          for segment in segments
+          if segment["text"]
+        )
       )
     elif export_format in {"srt", "vtt"}:
       cues = ["WEBVTT", ""] if export_format == "vtt" else []
@@ -972,7 +977,8 @@ def _render_export(snapshots: list[dict[str, Any]], export_format: str) -> bytes
           cues.append(str(index))
         cues.extend((f"{start} --> {end}", segment["text"], ""))
       blocks.append("\n".join(cues))
-  return "\n\n".join(blocks).encode()
+  block_separator = "  \n" if export_format == "md" else "\n\n"
+  return block_separator.join(blocks).encode()
 
 
 def _timestamp(milliseconds: int, *, vtt: bool) -> str:
