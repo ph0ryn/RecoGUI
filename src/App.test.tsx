@@ -187,6 +187,27 @@ describe("RecoGUI", () => {
     expect(screen.getByText("4セグメント")).toBeInTheDocument();
   });
 
+  it("shows file transcription progress in the session metadata", async () => {
+    bridgeMocks.getSnapshot.mockResolvedValue({
+      ...structuredClone(mockSnapshot),
+      sessions: structuredClone(mockSnapshot.sessions).map((session) =>
+        session.id === "session-live"
+          ? { ...session, inputKind: "file" as const, inputName: "lecture.wav" }
+          : session,
+      ),
+    });
+    await renderLoadedApp();
+
+    bridgeMocks.eventHandler?.({
+      event: "session.progress",
+      payload: { processedAudioMs: 15_000, totalAudioMs: 60_000 },
+      sequence: 22,
+      sessionId: "session-live",
+    });
+
+    expect(await screen.findByText("25%")).toBeInTheDocument();
+  });
+
   it("pauses the active session", async () => {
     const user = userEvent.setup();
 

@@ -254,6 +254,7 @@ def test_system_sleep_is_persisted_as_terminal_reason(tmp_path: Path, monkeypatc
   control = SessionControl()
   control.request_stop("systemSleep")
   engine.runtime = cast(ModelRuntime, FakeRuntime())
+  monkeypatch.setattr(engine_module, "audio_file_duration_ms", lambda path: 1_000)
   monkeypatch.setattr(engine_module, "ensure_silero_vad_asset", lambda path: path)
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())

@@ -18,6 +18,7 @@ from reco.audio import (
   LocalAudioFileInput,
   MicrophoneInput,
   SourceMetadata,
+  audio_file_duration_ms,
   normalize_channels,
   resolve_microphone_device_name,
   validate_audio_file,
@@ -85,6 +86,13 @@ def test_local_audio_file_input_streams_resampled_frames_without_losing_tail(tmp
   assert all(chunk.sample_rate == SAMPLE_RATE for chunk in chunks)
   assert [chunk.start_sample for chunk in chunks] == [0, 512, 1_024, 1_536]
   assert 1_590 <= sum(chunk.samples.size for chunk in chunks) <= 1_610
+
+
+def test_audio_file_duration_uses_source_metadata(tmp_path: Path) -> None:
+  path = tmp_path / "tone.wav"
+  sf.write(path, np.zeros(44_100, dtype=np.float32), 44_100, format="WAV")
+
+  assert audio_file_duration_ms(path) == 1_000
 
 
 def test_streaming_resampler_preserves_nonzero_signal_values(tmp_path: Path) -> None:

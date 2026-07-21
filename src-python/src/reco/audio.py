@@ -243,6 +243,18 @@ def validate_audio_file(path: Path) -> None:
     raise RecoError(f"Audio file has invalid stream metadata: {path}")
 
 
+def audio_file_duration_ms(path: Path) -> int:
+  """Return the source audio duration for finite-file progress reporting."""
+
+  try:
+    info = sf.info(path)
+  except RuntimeError as exc:
+    raise RecoError(f"Could not read audio file: {path}") from exc
+  if info.samplerate <= 0 or info.frames < 0:
+    raise RecoError(f"Audio file has invalid stream metadata: {path}")
+  return round(info.frames * 1_000 / info.samplerate)
+
+
 def iter_audio_file_frames(
   path: Path,
   frame_samples: int = VAD_FRAME_SAMPLES,

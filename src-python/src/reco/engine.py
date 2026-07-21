@@ -16,6 +16,7 @@ from reco.audio import (
   SAMPLE_RATE,
   LocalAudioFileInput,
   MicrophoneInput,
+  audio_file_duration_ms,
   resolve_microphone_device_name,
   validate_audio_file,
 )
@@ -317,6 +318,7 @@ class RecoEngine:
       running_receipt = self.repository.set_state(session_id, SessionState.RUNNING)
       self._emit("session.stateChanged", session_id, self._state_receipt(running_receipt))
       service, worker = self.runtime.acquire()
+      total_audio_ms = None
       if source_path is None:
         audio_input = MicrophoneInput(
           device=device if isinstance(device, int | str) else None,
@@ -324,6 +326,7 @@ class RecoEngine:
         )
       else:
         expected_identity = getattr(fingerprint, "identity", None)
+        total_audio_ms = audio_file_duration_ms(source_path)
         audio_input = LocalAudioFileInput(
           source_path,
           expected_identity=expected_identity,
@@ -337,7 +340,7 @@ class RecoEngine:
           path=str(self.model_manager.model_directory), language=DEFAULT_CONFIG.cli.default_language
         ),
         asr_worker=worker,
-        progress_callback=lambda progress: self._publish_progress(session_id, progress),
+        progress_callback=lambda progress: self._publish_progress(session_id, progress, total_audio_ms),
         segment_callback=lambda segment: self._persist_segment(
           session_id,
           replace(segment, index=segment.index + segment_offset),
@@ -419,12 +422,18 @@ class RecoEngine:
       },
     )
 
-  def _publish_progress(self, session_id: str, progress: TranscriptionProgress) -> None:
+  def _publish_progress(
+    self,
+    session_id: str,
+    progress: TranscriptionProgress,
+    total_audio_ms: int | None = None,
+  ) -> None:
     self._emit(
       "session.progress",
       session_id,
       {
         "processedAudioMs": progress.processed_audio_ms,
+        "totalAudioMs": total_audio_ms,
         "totalSegments": progress.total_segments,
         "recognizedSegments": progress.recognized_segments,
         "queueDepth": progress.queue_depth,

@@ -11,6 +11,7 @@ import pytest
 import reco.engine as engine_module
 from reco.engine import EngineCommandError, ModelRuntime, RecoEngine, SessionControl
 from reco.models import SplitReason, TranscriptionDiagnostics, TranscriptSegment, VadDiagnostics
+from reco.pipeline import TranscriptionProgress
 from reco.repository import NewSession, RecordingRepository, RepositoryError, SessionState
 
 
@@ -59,6 +60,27 @@ def test_persisted_segment_event_contains_committed_receipt(tmp_path: Path) -> N
     "mediaDurationMs": 1000,
   }
   assert repository.get_session(session_id)["row_version"] == payload["rowVersion"]
+
+
+def test_file_progress_event_includes_total_audio_duration(tmp_path: Path) -> None:
+  engine, events = engine_with_repository(RecordingRepository(tmp_path / "reco.sqlite3"))
+  progress = TranscriptionProgress("chunk", 2_500, 3, 2, 10, 1, 2)
+
+  engine._publish_progress("session-1", progress, 10_000)
+
+  assert events == [
+    (
+      "session.progress",
+      "session-1",
+      {
+        "processedAudioMs": 2_500,
+        "totalAudioMs": 10_000,
+        "totalSegments": 3,
+        "recognizedSegments": 2,
+        "queueDepth": 1,
+      },
+    )
+  ]
 
 
 def test_persisted_segment_event_is_not_emitted_when_commit_fails(tmp_path: Path) -> None:

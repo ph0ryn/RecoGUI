@@ -146,6 +146,7 @@ function App() {
     () => localStorage.getItem("reco.defaultInputDeviceId") ?? "",
   );
   const [exportOperation, setExportOperation] = useState<ExportOperation>();
+  const [sessionProgress, setSessionProgress] = useState<Record<string, number>>({});
   const [contextMenu, setContextMenu] = useState<{
     session: SessionEntity;
     x: number;
@@ -399,6 +400,16 @@ function App() {
       }
 
       dispatchSessions({ receipt: { ...payload, sessionId }, type: "segmentPersisted" });
+    }
+    if (message.event === "session.progress") {
+      const payload = message.payload as { processedAudioMs?: number; totalAudioMs?: number };
+
+      if (message.sessionId && payload.processedAudioMs !== undefined && payload.totalAudioMs) {
+        const sessionId = message.sessionId;
+        const progress = Math.min(1, Math.max(0, payload.processedAudioMs / payload.totalAudioMs));
+
+        setSessionProgress((current) => ({ ...current, [sessionId]: progress }));
+      }
     }
     if (message.event === "session.stateChanged") {
       const payload = message.payload as {
@@ -1070,6 +1081,7 @@ function App() {
               onPause={() => void pauseActive()}
               onQueryChange={setDetailQuery}
               onResume={() => void resumePaused(selectedSession.id)}
+              progress={sessionProgress[selectedSession.id]}
               session={selectedSession}
             />
             <Transcript
@@ -1262,6 +1274,7 @@ interface SessionHeaderProps {
   onPause: () => void;
   onQueryChange: (value: string) => void;
   onResume: () => void;
+  progress?: number;
 }
 
 function SessionHeader({
@@ -1274,6 +1287,7 @@ function SessionHeader({
   onPause,
   onQueryChange,
   onResume,
+  progress,
   session,
 }: SessionHeaderProps) {
   return (
@@ -1336,6 +1350,11 @@ function SessionHeader({
         <span>{session.language}</span>
         <span>{session.model}</span>
         <span>{session.segmentCount}セグメント</span>
+        {session.inputKind === "file" && progress !== undefined && (
+          <span>
+            {session.status === "completed" ? 100 : Math.min(99, Math.round(progress * 100))}%
+          </span>
+        )}
       </div>
       <label className="detail-search">
         <span aria-hidden="true">⌕</span>
