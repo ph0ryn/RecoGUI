@@ -37,7 +37,7 @@ from reco.repository import (
   SessionState,
 )
 from reco.transcription import LocalAsrTranscriptionService
-from reco.vad import OnnxSileroProbabilityModel, SileroVadEngine, ensure_silero_vad_asset
+from reco.vad import OnnxSileroProbabilityModel, SileroVadEngine
 
 EngineEventCallback = Callable[[str, str | None, Mapping[str, object]], None]
 LOGGER = logging.getLogger(__name__)
@@ -128,12 +128,13 @@ class ModelRuntime:
 class RecoEngine:
   """Single-session application engine with durable history."""
 
-  def __init__(self, database: Path, models_directory: Path, event_callback: EngineEventCallback | None = None) -> None:
+  def __init__(self, database: Path, vad_model: Path, event_callback: EngineEventCallback | None = None) -> None:
     self.repository = RecordingRepository(database)
     self.repository.recover_abandoned()
     selected_value = self.repository.get_selected_model()
     selected = ModelReference(*selected_value) if selected_value is not None else None
-    self.model_manager = ModelManager(models_directory, selected=selected)
+    self.model_manager = ModelManager(selected=selected)
+    self.vad_model = vad_model
     self.runtime: ModelRuntime | None = None
     self._runtime_reference: ModelReference | None = None
     self._event_callback = event_callback
@@ -737,7 +738,7 @@ class RecoEngine:
         )
       document = run_transcription(
         audio_input,
-        SileroVadEngine(model=OnnxSileroProbabilityModel(ensure_silero_vad_asset(self.model_manager.vad_asset_path))),
+        SileroVadEngine(model=OnnxSileroProbabilityModel(self.vad_model)),
         service,
         TranscriptModelMetadata(path=str(runtime.model_path), language=DEFAULT_CONFIG.engine.default_language),
         asr_worker=worker,

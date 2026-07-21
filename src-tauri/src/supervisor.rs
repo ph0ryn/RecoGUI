@@ -149,19 +149,31 @@ impl EngineSupervisor {
                 .engine_project
                 .join("pyproject.toml")
                 .is_file()
+                || !self.inner.paths.engine_archive.is_file()
+                || !self.inner.paths.engine_vad_model.is_file()
             {
                 return Err(SupervisorError::Unavailable(format!(
-                    "expected bundled engine project {}",
+                    "expected bundled engine project, archive, and VAD model in {}",
                     self.inner.paths.engine_project.display()
                 )));
             }
-            self.set_state(EngineConnectionState::Starting).await;
-            *self.inner.intentionally_stopping.write().await = false;
-
             let uv_executable = resolve_uv_executable().ok_or_else(|| {
                 SupervisorError::Unavailable("uv installation was not found".into())
             })?;
-            let mut child = engine_command(&self.inner.paths, &uv_executable).spawn()?;
+            self.set_state(EngineConnectionState::Starting).await;
+            *self.inner.intentionally_stopping.write().await = false;
+
+            if let Err(error) = sync_engine_environment(&self.inner.paths, &uv_executable).await {
+                self.set_state(EngineConnectionState::Offline).await;
+                return Err(error);
+            }
+            let mut child = match engine_command(&self.inner.paths).spawn() {
+                Ok(child) => child,
+                Err(error) => {
+                    self.set_state(EngineConnectionState::Offline).await;
+                    return Err(error.into());
+                }
+            };
             let pid = child
                 .id()
                 .ok_or_else(|| SupervisorError::Unavailable("engine PID is unavailable".into()))?;
@@ -503,25 +515,49 @@ impl EngineSupervisor {
     }
 }
 
-fn engine_command(paths: &AppPaths, uv_executable: &Path) -> Command {
+async fn sync_engine_environment(
+    paths: &AppPaths,
+    uv_executable: &Path,
+) -> Result<(), SupervisorError> {
+    let output = sync_command(paths, uv_executable).output().await?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let detail = stderr.trim();
+    Err(SupervisorError::Unavailable(if detail.is_empty() {
+        format!("uv sync exited with {}", output.status)
+    } else {
+        format!("uv sync failed: {detail}")
+    }))
+}
+
+fn sync_command(paths: &AppPaths, uv_executable: &Path) -> Command {
     let mut command = Command::new(uv_executable);
     command
-        .arg("run")
+        .arg("sync")
         .arg("--project")
         .arg(&paths.engine_project)
         .arg("--frozen")
         .arg("--no-dev")
-        .arg("reco-engine")
+        .arg("--no-install-project")
+        .env("UV_PROJECT_ENVIRONMENT", &paths.engine_environment);
+    command
+}
+
+fn engine_command(paths: &AppPaths) -> Command {
+    let mut command = Command::new(paths.engine_environment.join("bin/python"));
+    command
+        .arg(&paths.engine_archive)
         .arg("serve")
         .arg("--protocol-version")
         .arg(PROTOCOL_VERSION.to_string())
         .arg("--database")
         .arg(&paths.database)
-        .arg("--assets-directory")
-        .arg(&paths.assets)
+        .arg("--vad-model")
+        .arg(&paths.engine_vad_model)
         .arg("--logs-directory")
         .arg(&paths.logs)
-        .env("UV_PROJECT_ENVIRONMENT", &paths.engine_environment)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -593,24 +629,33 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn engine_command_uses_frozen_runtime_dependencies() {
+    fn app_paths() -> AppPaths {
         let root = PathBuf::from("/tmp/reco-app-data");
-        let paths = AppPaths {
+        AppPaths {
             root: root.clone(),
             database: root.join("reco.sqlite3"),
             backups: root.join("backups"),
-            assets: root.join("assets"),
             logs: root.join("logs"),
             engine_lock: root.join("engine.lock"),
             engine_environment: root.join("python-env"),
             engine_project: PathBuf::from(
                 "/Applications/RecoGUI.app/Contents/Resources/src-python",
             ),
-        };
+            engine_archive: PathBuf::from(
+                "/Applications/RecoGUI.app/Contents/Resources/src-python/reco-engine.pyz",
+            ),
+            engine_vad_model: PathBuf::from(
+                "/Applications/RecoGUI.app/Contents/Resources/src-python/assets/silero_vad.onnx",
+            ),
+        }
+    }
+
+    #[test]
+    fn sync_command_installs_only_frozen_runtime_dependencies() {
+        let paths = app_paths();
 
         let uv_executable = PathBuf::from("/opt/homebrew/bin/uv");
-        let command = engine_command(&paths, &uv_executable);
+        let command = sync_command(&paths, &uv_executable);
         let command = command.as_std();
         let arguments = command.get_args().collect::<Vec<_>>();
         let project_argument = arguments
@@ -619,9 +664,11 @@ mod tests {
             .and_then(|index| arguments.get(index + 1));
 
         assert_eq!(command.get_program(), uv_executable.as_os_str());
+        assert_eq!(arguments.first(), Some(&OsStr::new("sync")));
         assert_eq!(project_argument, Some(&paths.engine_project.as_os_str()));
         assert!(arguments.contains(&OsStr::new("--frozen")));
         assert!(arguments.contains(&OsStr::new("--no-dev")));
+        assert!(arguments.contains(&OsStr::new("--no-install-project")));
         assert_eq!(
             command
                 .get_envs()
@@ -629,6 +676,24 @@ mod tests {
                 .and_then(|(_, value)| value),
             Some(paths.engine_environment.as_os_str())
         );
+    }
+
+    #[test]
+    fn engine_command_runs_the_archive_with_the_managed_python() {
+        let paths = app_paths();
+
+        let command = engine_command(&paths);
+        let command = command.as_std();
+        let arguments = command.get_args().collect::<Vec<_>>();
+
+        assert_eq!(
+            command.get_program(),
+            paths.engine_environment.join("bin/python").as_os_str()
+        );
+        assert_eq!(arguments.first(), Some(&paths.engine_archive.as_os_str()));
+        assert!(arguments.contains(&OsStr::new("serve")));
+        assert!(arguments.contains(&OsStr::new("--vad-model")));
+        assert!(arguments.contains(&paths.engine_vad_model.as_os_str()));
     }
 
     #[test]

@@ -356,7 +356,6 @@ def test_system_sleep_is_persisted_as_terminal_reason(tmp_path: Path, monkeypatc
   )
   monkeypatch.setattr(engine, "_release_runtime", lambda **options: True)
   monkeypatch.setattr(engine_module, "audio_file_duration_ms", lambda path: 1_000)
-  monkeypatch.setattr(engine_module, "ensure_silero_vad_asset", lambda path: path)
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
   monkeypatch.setattr(engine_module, "run_transcription", lambda *args, **options: SimpleNamespace(total_segments=0))

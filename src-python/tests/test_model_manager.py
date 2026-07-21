@@ -27,7 +27,6 @@ def test_lists_every_cached_model_revision_without_exposing_paths(tmp_path: Path
   snapshot = tmp_path / "snapshot"
   snapshot.mkdir()
   manager = ModelManager(
-    tmp_path,
     cache_scanner=lambda: cache_info(("owner/non-mlx-model", "commit", snapshot)),
   )
 
@@ -47,7 +46,6 @@ def test_selected_snapshot_is_resolved_privately(tmp_path: Path) -> None:
   snapshot.mkdir()
   reference = ModelReference("owner/model", "commit")
   manager = ModelManager(
-    tmp_path,
     selected=reference,
     cache_scanner=lambda: cache_info(("owner/model", "commit", snapshot)),
   )
@@ -63,7 +61,6 @@ def test_select_updates_availability_without_loading_a_runtime(tmp_path: Path) -
   snapshot = tmp_path / "snapshot"
   snapshot.mkdir()
   manager = ModelManager(
-    tmp_path,
     cache_scanner=lambda: cache_info(("owner/model", "commit", snapshot)),
   )
   reference = ModelReference("owner/model", "commit")
@@ -81,7 +78,6 @@ def test_missing_selection_does_not_replace_the_current_model(tmp_path: Path) ->
   snapshot.mkdir()
   current = ModelReference("owner/model", "commit")
   manager = ModelManager(
-    tmp_path,
     selected=current,
     cache_scanner=lambda: cache_info((current.repo_id, current.revision, snapshot)),
   )
@@ -94,19 +90,17 @@ def test_missing_selection_does_not_replace_the_current_model(tmp_path: Path) ->
   assert manager.snapshot().state is ModelState.READY
 
 
-def test_cache_scan_failures_are_error_state(tmp_path: Path) -> None:
+def test_cache_scan_failures_are_error_state() -> None:
   def fail() -> SimpleNamespace:
     raise RuntimeError("broken")
 
   manager = ModelManager(
-    tmp_path,
     cache_scanner=lambda: SimpleNamespace(),
   )
   manager.list_models()
   assert manager.snapshot().state is ModelState.ERROR
 
   manager = ModelManager(
-    tmp_path,
     cache_scanner=fail,
   )
   manager.list_models()

@@ -23,6 +23,7 @@ from reco.protocol import (
   parse_request,
 )
 from reco.repository import ExportCancelled, ExportFailure, SessionState
+from reco.vad import validate_silero_vad_asset
 
 LOG = logging.getLogger("reco-engine")
 
@@ -30,9 +31,9 @@ LOG = logging.getLogger("reco-engine")
 class SidecarServer:
   """Strict request dispatcher whose stdout contains protocol messages only."""
 
-  def __init__(self, database: Path, assets_directory: Path, output: Any = None) -> None:
+  def __init__(self, database: Path, vad_model: Path, output: Any = None) -> None:
     self.writer = NdjsonWriter(output or sys.stdout)
-    self.engine = RecoEngine(database, assets_directory, self._event)
+    self.engine = RecoEngine(database, vad_model, self._event)
     self._stopped = Event()
     self._previous_request_sequence = 0
     self._export_lock = Lock()
@@ -333,7 +334,7 @@ def build_parser() -> argparse.ArgumentParser:
   serve = subparsers.add_parser("serve")
   serve.add_argument("--protocol-version", type=int, required=True)
   serve.add_argument("--database", type=Path, required=True)
-  serve.add_argument("--assets-directory", type=Path, required=True)
+  serve.add_argument("--vad-model", type=Path, required=True)
   serve.add_argument("--logs-directory", type=Path, required=True)
   return parser
 
@@ -345,7 +346,7 @@ def main(argv: list[str] | None = None) -> int:
     return 2
   args.logs_directory.mkdir(parents=True, exist_ok=True)
   logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(levelname)s %(message)s")
-  return SidecarServer(args.database, args.assets_directory).serve()
+  return SidecarServer(args.database, validate_silero_vad_asset(args.vad_model)).serve()
 
 
 def _session_id(request: Request, payload: Mapping[str, object]) -> str:

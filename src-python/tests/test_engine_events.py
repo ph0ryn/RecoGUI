@@ -602,7 +602,6 @@ def test_drained_pause_persists_the_resume_sample(tmp_path: Path, monkeypatch: p
   engine.runtime = cast(ModelRuntime, runtime)
   engine._runtime_reference = ModelReference("model", "revision")
   monkeypatch.setattr(engine, "_acquire_runtime", lambda reference: (runtime, object(), object()))
-  monkeypatch.setattr(engine_module, "ensure_silero_vad_asset", lambda path: path)
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
 
@@ -655,7 +654,6 @@ def test_session_loads_runtime_on_demand_and_releases_it_after_completion(
   monkeypatch.setattr(engine.model_manager, "resolve", lambda requested: snapshot if requested == reference else None)
   monkeypatch.setattr(engine_module, "ModelRuntime", FakeRuntime)
   monkeypatch.setattr(engine_module, "MicrophoneInput", lambda **options: object())
-  monkeypatch.setattr(engine_module, "ensure_silero_vad_asset", lambda path: path)
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
   monkeypatch.setattr(
@@ -709,7 +707,6 @@ def test_session_drops_local_model_references_before_runtime_release(
 
   monkeypatch.setattr(engine, "_acquire_runtime", acquire)
   monkeypatch.setattr(engine_module, "MicrophoneInput", lambda **options: object())
-  monkeypatch.setattr(engine_module, "ensure_silero_vad_asset", lambda path: path)
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
   monkeypatch.setattr(
@@ -744,7 +741,6 @@ def test_runtime_release_failure_does_not_keep_the_active_slot(tmp_path: Path, m
   engine._runtime_reference = reference
   monkeypatch.setattr(engine, "_acquire_runtime", lambda requested: (runtime, object(), object()))
   monkeypatch.setattr(engine_module, "MicrophoneInput", lambda **options: object())
-  monkeypatch.setattr(engine_module, "ensure_silero_vad_asset", lambda path: path)
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
   monkeypatch.setattr(
@@ -789,7 +785,6 @@ def test_terminal_outcomes_release_runtime_once(
   engine._runtime_reference = reference
   monkeypatch.setattr(engine, "_acquire_runtime", lambda requested: (runtime, object(), object()))
   monkeypatch.setattr(engine_module, "MicrophoneInput", lambda **options: object())
-  monkeypatch.setattr(engine_module, "ensure_silero_vad_asset", lambda path: path)
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
 
@@ -1054,7 +1049,6 @@ def test_continuous_queue_reuses_runtime_until_the_last_file_finishes(
   monkeypatch.setattr(engine_module, "validate_audio_file", lambda path: None)
   monkeypatch.setattr(engine_module, "audio_file_duration_ms", lambda path: 1_000)
   monkeypatch.setattr(engine_module, "LocalAudioFileInput", lambda *args, **options: object())
-  monkeypatch.setattr(engine_module, "ensure_silero_vad_asset", lambda path: path)
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
   monkeypatch.setattr(

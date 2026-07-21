@@ -5,9 +5,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from hashlib import sha256
-from importlib.resources import as_file, files
 from pathlib import Path
-from shutil import copyfile
 from typing import Any, Protocol
 
 import numpy as np
@@ -31,7 +29,6 @@ class VadEngine(Protocol):
     """Finish the current stream."""
 
 
-SILERO_VAD_VERSION = "6.2.1"
 SILERO_VAD_SHA256 = "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
 
 
@@ -96,8 +93,8 @@ class _BufferedFrame:
 class SileroVadEngine:
   """Silero probability stream with sample-accurate adaptive segmentation."""
 
+  model: SileroProbabilityModel
   config: VadConfig = DEFAULT_VAD_CONFIG
-  model: SileroProbabilityModel | None = None
   _history: deque[_BufferedFrame] = field(default_factory=deque, init=False)
   _active_frames: list[_BufferedFrame] = field(default_factory=list, init=False)
   _active: bool = field(default=False, init=False)
@@ -107,10 +104,6 @@ class SileroVadEngine:
   _silence_started_sample: int | None = field(default=None, init=False)
   _last_end_sample: int | None = field(default=None, init=False)
   _last_frame_was_partial: bool = field(default=False, init=False)
-
-  def __post_init__(self) -> None:
-    if self.model is None:
-      self.model = OnnxSileroProbabilityModel(ensure_silero_vad_asset())
 
   def reset(self) -> None:
     reset_states = getattr(self.model, "reset_states", None)
@@ -227,8 +220,6 @@ class SileroVadEngine:
     return round(self.config.max_segment_duration_ms * SAMPLE_RATE / 1000)
 
   def _speech_probability(self, samples: FloatArray) -> float:
-    if self.model is None:
-      raise RuntimeError("Silero VAD model is not loaded")
     try:
       prediction = self.model(pad_frame(samples), SAMPLE_RATE)
     except Exception as exc:
@@ -371,34 +362,12 @@ def _partition_frames(
   return left, right
 
 
-def ensure_silero_vad_asset(destination: Path | None = None) -> Path:
-  """Extract the bundled MIT-licensed Silero ONNX asset with hash verification."""
+def validate_silero_vad_asset(path: Path) -> Path:
+  """Validate the immutable Silero ONNX resource bundled beside the sidecar."""
 
-  resolved = destination or (
-    Path.home()
-    / "Library"
-    / "Application Support"
-    / "com.ph0ryn.recogui"
-    / "models"
-    / f"silero-vad-{SILERO_VAD_VERSION}.onnx"
-  )
-  if resolved.is_file() and _file_sha256(resolved) == SILERO_VAD_SHA256:
-    return resolved
-  resolved.parent.mkdir(parents=True, exist_ok=True)
-  temporary = resolved.with_suffix(resolved.suffix + ".part")
-  try:
-    resource = files("reco").joinpath("assets", "silero_vad.onnx")
-    with as_file(resource) as bundled:
-      if _file_sha256(bundled) != SILERO_VAD_SHA256:
-        raise RecoError("Bundled Silero VAD asset failed SHA-256 verification")
-      copyfile(bundled, temporary)
-    if _file_sha256(temporary) != SILERO_VAD_SHA256:
-      raise RecoError("Extracted Silero VAD asset failed SHA-256 verification")
-    temporary.replace(resolved)
-  except BaseException:
-    temporary.unlink(missing_ok=True)
-    raise
-  return resolved
+  if not path.is_file() or _file_sha256(path) != SILERO_VAD_SHA256:
+    raise RecoError("Bundled Silero VAD asset failed SHA-256 verification")
+  return path
 
 
 def _file_sha256(path: Path) -> str:

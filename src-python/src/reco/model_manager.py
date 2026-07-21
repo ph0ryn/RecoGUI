@@ -12,8 +12,6 @@ from typing import Any
 
 from huggingface_hub import scan_cache_dir
 
-from reco.vad import SILERO_VAD_VERSION
-
 
 class ModelState(StrEnum):
   UNSELECTED = "unselected"
@@ -71,20 +69,16 @@ class ModelManager:
 
   def __init__(
     self,
-    assets_directory: Path,
     *,
     selected: ModelReference | None = None,
     cache_scanner: CacheScanner | None = None,
   ) -> None:
-    self.assets_directory = assets_directory
-    self.vad_asset_path = assets_directory / f"silero-vad-{SILERO_VAD_VERSION}.onnx"
     self.selected = selected
     self._models: dict[tuple[str, str], CachedModel] = {}
     self._state = ModelState.UNSELECTED if selected is None else ModelState.UNAVAILABLE
     self._error: str | None = None
     self._cache_scanner = cache_scanner or scan_cache_dir
     self._lock = Lock()
-    assets_directory.mkdir(parents=True, exist_ok=True)
 
   def snapshot(self) -> ModelSnapshot:
     with self._lock:

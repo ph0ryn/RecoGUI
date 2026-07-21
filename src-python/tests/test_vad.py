@@ -11,7 +11,13 @@ from reco.audio import SAMPLE_RATE, VAD_FRAME_SAMPLES, AudioChunk
 from reco.config import VadConfig
 from reco.errors import RecoError
 from reco.models import SpeechSegment, SplitReason
-from reco.vad import SILERO_VAD_SHA256, OnnxSileroProbabilityModel, SileroVadEngine, ensure_silero_vad_asset, pad_frame
+from reco.vad import (
+  SILERO_VAD_SHA256,
+  OnnxSileroProbabilityModel,
+  SileroVadEngine,
+  pad_frame,
+  validate_silero_vad_asset,
+)
 
 
 class ProbabilityModel:
@@ -88,13 +94,19 @@ def test_onnx_wrapper_preserves_silero_context_state_and_numerical_tolerance() -
   np.testing.assert_array_equal(model._state, np.zeros((2, 1, 128), dtype=np.float32))
 
 
-def test_bundled_onnx_asset_extracts_offline_with_expected_hash(tmp_path: Path) -> None:
-  destination = tmp_path / "silero_vad.onnx"
+def test_bundled_onnx_asset_has_the_expected_hash() -> None:
+  asset = Path(__file__).resolve().parents[1] / "assets" / "silero_vad.onnx"
 
-  extracted = ensure_silero_vad_asset(destination)
+  assert validate_silero_vad_asset(asset) == asset
+  assert hashlib.sha256(asset.read_bytes()).hexdigest() == SILERO_VAD_SHA256
 
-  assert extracted == destination
-  assert hashlib.sha256(destination.read_bytes()).hexdigest() == SILERO_VAD_SHA256
+
+def test_invalid_onnx_asset_is_rejected(tmp_path: Path) -> None:
+  asset = tmp_path / "silero_vad.onnx"
+  asset.write_bytes(b"invalid")
+
+  with pytest.raises(RecoError, match="SHA-256"):
+    validate_silero_vad_asset(asset)
 
 
 def test_silence_boundary_includes_exact_pre_and_post_roll() -> None:

@@ -54,6 +54,22 @@ RecoGUI/
 元のReco repositoryは参照元として保持し、変更しない。コピー元は
 `src-python/SOURCE.md`に記録し、RecoGUI内のコードを以後の正本とする。
 
+開発時は`src-python/src/reco`を編集する。Silero VADの正本は
+`src-python/assets/silero_vad.onnx`に置く。Tauriの開発起動とbuildの前に、Python codeだけを
+圧縮した`src-python/dist/reco-engine.pyz`を生成する。Tauri bundleにはこのarchive、VAD asset、
+依存関係の`pyproject.toml`と`uv.lock`、ライセンス情報だけを含め、source tree、test、`.venv`は
+含めない。
+
+`pnpm dev`も起動前にarchiveを生成する。frontendのhot reloadはPython archiveを再生成しないため、
+Python codeを変更した場合は開発applicationを再起動する。
+
+Rustは`uv sync --no-install-project`でApplication Supportの`python-env`へ第三者依存だけを同期し、
+同期後にその環境の`bin/python`で`.app`内の`reco-engine.pyz`を直接実行する。Reco package自体を
+環境へinstallしないため、application更新後もarchiveが常に実行コードの正本となり、`.app`内へ
+`__pycache__`を作成しない。VADは`.app`内の独立したresource pathをsidecarへ渡し、
+Application Supportへ複製せずONNX Runtimeから直接読み込む。
+旧versionがApplication Supportへ展開したVAD assetは参照しないが、この変更では自動削除しない。
+
 ## 状態と永続化
 
 ### 状態の正本
@@ -240,8 +256,8 @@ databaseへ保存しない。
 - 解放はworker停止、serviceとmodelの参照破棄、`gc.collect()`、`mlx.core.clear_cache()`まで行う。
   cache再一覧はactive leaseを途中で閉じない。
 - 既存の`app_sessions.model`と`model_revision`を使用するためdatabase migrationは不要とする。
-- Silero VADは同梱assetとしてapplication data directoryへ検証付きで展開し、
-  Hugging FaceのASR model管理と分離する。
+- Silero VADは`.app`内の独立した同梱assetとしてhashを検証し、Hugging FaceのASR model管理と
+  Application Supportへの保存から分離する。
 - logはapplication data directoryの`logs/`へ保存する。
 - 履歴削除は入力元ファイルや既存のExportを削除しない。
 

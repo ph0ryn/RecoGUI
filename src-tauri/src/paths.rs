@@ -20,12 +20,13 @@ pub struct AppPaths {
     pub database: PathBuf,
     #[allow(dead_code)]
     pub backups: PathBuf,
-    pub assets: PathBuf,
     pub logs: PathBuf,
     #[allow(dead_code)]
     pub engine_lock: PathBuf,
     pub engine_environment: PathBuf,
     pub engine_project: PathBuf,
+    pub engine_archive: PathBuf,
+    pub engine_vad_model: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -42,23 +43,23 @@ impl AppPaths {
             .app_data_dir()
             .map_err(|_| PathError::AppDataUnavailable)?;
         let backups = root.join("backups");
-        let assets = root.join("assets");
         let logs = root.join("logs");
-        for directory in [&root, &backups, &assets, &logs] {
+        for directory in [&root, &backups, &logs] {
             std::fs::create_dir_all(directory)?;
         }
 
-        let engine_project = resolve_engine_project(app)?;
+        let (engine_project, engine_archive, engine_vad_model) = resolve_engine_bundle(app)?;
         let engine_environment = root.join("python-env");
         Ok(Self {
             database: root.join("reco.sqlite3"),
             engine_lock: root.join("engine.lock"),
             root,
             backups,
-            assets,
             logs,
             engine_environment,
             engine_project,
+            engine_archive,
+            engine_vad_model,
         })
     }
 
@@ -70,25 +71,35 @@ impl AppPaths {
     }
 }
 
-fn resolve_engine_project(app: &AppHandle) -> Result<PathBuf, PathError> {
+fn resolve_engine_bundle(app: &AppHandle) -> Result<(PathBuf, PathBuf, PathBuf), PathError> {
     let resource_path = app
         .path()
         .resource_dir()
         .map_err(|_| PathError::EngineProjectMissing)?
         .join("src-python");
-    if resource_path.join("pyproject.toml").is_file() {
-        return Ok(resource_path);
+    let resource_archive = resource_path.join("reco-engine.pyz");
+    let resource_vad_model = resource_path.join("assets/silero_vad.onnx");
+    if resource_path.join("pyproject.toml").is_file()
+        && resource_archive.is_file()
+        && resource_vad_model.is_file()
+    {
+        return Ok((resource_path, resource_archive, resource_vad_model));
     }
 
     let development_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")))
         .join("src-python");
-    if development_path.join("pyproject.toml").is_file() {
-        return Ok(development_path);
+    let development_archive = development_path.join("dist/reco-engine.pyz");
+    let development_vad_model = development_path.join("assets/silero_vad.onnx");
+    if development_path.join("pyproject.toml").is_file()
+        && development_archive.is_file()
+        && development_vad_model.is_file()
+    {
+        return Ok((development_path, development_archive, development_vad_model));
     }
 
     // Keep application startup recoverable. The supervisor reports the missing
     // project only when the engine is requested.
-    Ok(resource_path)
+    Ok((resource_path, resource_archive, resource_vad_model))
 }

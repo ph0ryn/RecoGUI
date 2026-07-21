@@ -35,9 +35,6 @@ dev = [
   "ty>=0.0.35",
 ]
 
-[tool.hatch]
-[tool.hatch.build]
-artifacts = [ "src/reco/assets/*.onnx" ]
 [tool.hatch.build.targets]
 [tool.hatch.build.targets.wheel]
 packages = [ "src/reco" ]
@@ -79,5 +76,6 @@ format = "uv run ruff format ."
 typecheck = "uv run ty check"
 test = "uv run pytest"
 build = "uv build"
-verify = "uv run task lint && uv run task typecheck && uv run task test && uv run task build"
+bundle = "python build_sidecar.py"
+verify = "uv run task lint && uv run task typecheck && uv run task test && uv run task build && uv run task bundle"
 fix = "uv run task lint --fix --unsafe-fixes && uv run task format && uv run task typecheck"

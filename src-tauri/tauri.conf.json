@@ -4,9 +4,9 @@
   "version": "../package.json",
   "identifier": "com.ph0ryn.recogui",
   "build": {
-    "beforeDevCommand": "pnpm exec vite",
+    "beforeDevCommand": "pnpm build:python-sidecar && pnpm exec vite",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm typecheck:typescript && pnpm exec vite build",
+    "beforeBuildCommand": "pnpm build:python-sidecar && pnpm typecheck:typescript && pnpm exec vite build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -39,9 +39,9 @@
       "../src-python/LICENSE": "src-python/LICENSE",
       "../src-python/SOURCE.md": "src-python/SOURCE.md",
       "../src-python/THIRD_PARTY_NOTICES.md": "src-python/THIRD_PARTY_NOTICES.md",
+      "../src-python/assets": "src-python/assets",
       "../src-python/pyproject.toml": "src-python/pyproject.toml",
-      "../src-python/src/reco/*.py": "src-python/src/reco",
-      "../src-python/src/reco/assets": "src-python/src/reco/assets",
+      "../src-python/dist/reco-engine.pyz": "src-python/reco-engine.pyz",
       "../src-python/uv.lock": "src-python/uv.lock"
     },
     "macOS": {
