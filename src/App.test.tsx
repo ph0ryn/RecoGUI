@@ -127,6 +127,7 @@ beforeEach(() => {
   bridgeMocks.deleteSessions.mockClear();
   bridgeMocks.exportSessions.mockClear();
   bridgeMocks.pauseSession.mockClear();
+  bridgeMocks.pauseQueue.mockClear();
   bridgeMocks.resumeSession.mockClear();
   bridgeMocks.enqueueFiles.mockClear();
 });
@@ -239,6 +240,25 @@ describe("RecoGUI", () => {
     await renderLoadedApp();
     await user.click(screen.getByRole("button", { name: "文字起こしを一時停止" }));
     await waitFor(() => expect(bridgeMocks.pauseSession).toHaveBeenCalledWith("session-live"));
+  });
+
+  it("shows pause for a running queued file even when the snapshot omits the active id", async () => {
+    const user = userEvent.setup();
+
+    bridgeMocks.getSnapshot.mockResolvedValue({
+      ...structuredClone(mockSnapshot),
+      activeSessionId: undefined,
+      sessions: structuredClone(mockSnapshot.sessions).map((session) =>
+        session.id === "session-live"
+          ? { ...session, inputKind: "file" as const, inputName: "lecture.wav" }
+          : session,
+      ),
+    });
+    await renderLoadedApp();
+    await user.click(screen.getByRole("button", { name: "文字起こしを一時停止" }));
+
+    await waitFor(() => expect(bridgeMocks.pauseQueue).toHaveBeenCalledOnce());
+    expect(bridgeMocks.pauseSession).toHaveBeenCalledWith("session-live");
   });
 
   it("resumes a paused session when no other session is active", async () => {

@@ -127,6 +127,15 @@ describe("sessionStateReducer", () => {
     expect(reconciled.activeSessionId).toBeUndefined();
   });
 
+  it("infers the active session from a running snapshot when its id is omitted", () => {
+    const state = sessionStateReducer(initialSessionState, {
+      sessions: [summary({ inputKind: "file", status: "running" })],
+      type: "bootstrap",
+    });
+
+    expect(state.activeSessionId).toBe("session-1");
+  });
+
   it("preserves loaded detail when a summary page is merged", () => {
     const state = sessionStateReducer(
       sessionStateReducer(initialSessionState, {

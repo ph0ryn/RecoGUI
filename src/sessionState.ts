@@ -165,7 +165,9 @@ export function sessionStateReducer(state: SessionState, action: SessionAction):
       }
 
       return {
-        activeSessionId: action.activeSessionId,
+        activeSessionId:
+          action.activeSessionId ??
+          action.sessions.find(({ status }) => claimsActiveSession(status))?.id,
         orderedSessionIds: addMissingIds(
           action.sessions.map(({ id }) => id),
           state.orderedSessionIds
@@ -212,6 +214,7 @@ export function sessionStateReducer(state: SessionState, action: SessionAction):
 
       return {
         ...state,
+        activeSessionId: claimsActiveSession(session.status) ? session.id : state.activeSessionId,
         orderedSessionIds: state.orderedSessionIds.includes(session.id)
           ? state.orderedSessionIds
           : [...state.orderedSessionIds, session.id],

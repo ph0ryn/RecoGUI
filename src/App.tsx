@@ -59,6 +59,7 @@ const exportLabels: Record<ExportFormat, string> = {
 
 const exportFormats = Object.keys(exportLabels) as ExportFormat[];
 const terminalStatuses: SessionStatus[] = ["completed", "stopped", "failed", "abandoned"];
+const pausableStatuses: SessionStatus[] = ["preparing", "running", "pausing"];
 const emptyQueue: QueueSnapshot = { autoAdvanceEnabled: false, items: [], revision: 0 };
 
 function formatDuration(milliseconds: number): string {
@@ -733,14 +734,15 @@ function App() {
     }
   }
 
-  async function pauseActive(): Promise<void> {
-    if (!activeSessionId) return;
+  async function pauseActive(sessionId: string): Promise<void> {
+    const session = sessions.find(({ id }) => id === sessionId);
+
     setIsWorking(true);
     try {
-      if (activeSession?.inputKind === "file") {
+      if (session?.inputKind === "file") {
         setQueue(await recoBridge.pauseQueue());
       }
-      await recoBridge.pauseSession(activeSessionId);
+      await recoBridge.pauseSession(sessionId);
       setToast("処理待ちを完了して一時停止します。");
     } catch {
       setToast("一時停止できませんでした。");
@@ -1154,10 +1156,9 @@ function App() {
               detailQuery={detailQuery}
               disabled={isWorking}
               hasActiveSession={activeSessionId !== undefined}
-              isActive={selectedSession.id === activeSessionId}
               onDelete={() => openDialog("delete")}
               onExport={() => openDialog("export")}
-              onPause={() => void pauseActive()}
+              onPause={() => void pauseActive(selectedSession.id)}
               onQueryChange={setDetailQuery}
               onResume={() => void resumePaused(selectedSession.id)}
               queueIsRunning={queue.autoAdvanceEnabled}
@@ -1484,7 +1485,6 @@ interface SessionHeaderProps {
   detailQuery: string;
   disabled: boolean;
   hasActiveSession: boolean;
-  isActive: boolean;
   session: SessionEntity;
   onDelete: () => void;
   onExport: () => void;
@@ -1499,7 +1499,6 @@ function SessionHeader({
   detailQuery,
   disabled,
   hasActiveSession,
-  isActive,
   onDelete,
   onExport,
   onPause,
@@ -1516,7 +1515,7 @@ function SessionHeader({
           <h1>{session.title}</h1>
         </div>
         <div className="header-actions">
-          {(isActive || session.status === "paused") && (
+          {(pausableStatuses.includes(session.status) || session.status === "paused") && (
             <>
               {session.status === "paused" ? (
                 <button
