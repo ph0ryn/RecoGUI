@@ -213,6 +213,7 @@ button:disabled {
 }
 
 .queue-panel {
+  grid-row: 1;
   min-width: 0;
   max-height: min(34vh, 320px);
   padding: 7px;
@@ -326,6 +327,7 @@ button:disabled {
 }
 
 .history-toolbar {
+  grid-row: 2;
   border-bottom: 1px solid var(--line);
 }
 
@@ -394,6 +396,7 @@ button:disabled {
 }
 
 .history-list {
+  grid-row: 3;
   min-height: 0;
   overflow: auto;
   padding-bottom: 72px;
@@ -553,6 +556,7 @@ button:disabled {
 }
 
 .input-status {
+  grid-row: 4;
   display: flex;
   align-items: center;
   gap: 7px;
