@@ -1,6 +1,9 @@
 use std::{
     collections::{HashMap, VecDeque},
+    ffi::OsStr,
     future::Future,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
     sync::{
@@ -155,13 +158,10 @@ impl EngineSupervisor {
             self.set_state(EngineConnectionState::Starting).await;
             *self.inner.intentionally_stopping.write().await = false;
 
-            let mut child = engine_command(&self.inner.paths).spawn().map_err(|error| {
-                if error.kind() == std::io::ErrorKind::NotFound {
-                    SupervisorError::Unavailable("uv was not found on PATH".into())
-                } else {
-                    SupervisorError::Io(error.to_string())
-                }
+            let uv_executable = resolve_uv_executable().ok_or_else(|| {
+                SupervisorError::Unavailable("uv installation was not found".into())
             })?;
+            let mut child = engine_command(&self.inner.paths, &uv_executable).spawn()?;
             let pid = child
                 .id()
                 .ok_or_else(|| SupervisorError::Unavailable("engine PID is unavailable".into()))?;
@@ -503,8 +503,8 @@ impl EngineSupervisor {
     }
 }
 
-fn engine_command(paths: &AppPaths) -> Command {
-    let mut command = Command::new("uv");
+fn engine_command(paths: &AppPaths, uv_executable: &Path) -> Command {
+    let mut command = Command::new(uv_executable);
     command
         .arg("run")
         .arg("--project")
@@ -529,6 +529,56 @@ fn engine_command(paths: &AppPaths) -> Command {
     command
 }
 
+fn resolve_uv_executable() -> Option<PathBuf> {
+    resolve_uv_executable_from(
+        std::env::var_os("PATH").as_deref(),
+        std::env::var_os("HOME").as_deref().map(Path::new),
+        is_executable_file,
+    )
+}
+
+fn resolve_uv_executable_from(
+    path: Option<&OsStr>,
+    home: Option<&Path>,
+    is_executable: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    let mut candidates = path
+        .into_iter()
+        .flat_map(std::env::split_paths)
+        .map(|directory| directory.join("uv"))
+        .collect::<Vec<_>>();
+
+    if let Some(home) = home {
+        candidates.push(home.join(".local/bin/uv"));
+        candidates.push(home.join(".nix-profile/bin/uv"));
+        if let Some(user_name) = home.file_name() {
+            candidates.push(
+                Path::new("/etc/profiles/per-user")
+                    .join(user_name)
+                    .join("bin/uv"),
+            );
+        }
+    }
+
+    candidates.extend(
+        [
+            "/opt/homebrew/bin/uv",
+            "/usr/local/bin/uv",
+            "/opt/local/bin/uv",
+        ]
+        .into_iter()
+        .map(PathBuf::from),
+    );
+    candidates
+        .into_iter()
+        .find(|candidate| is_executable(candidate))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    path.metadata()
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+}
+
 async fn drain_stderr(app: AppHandle, stderr: tokio::process::ChildStderr) {
     let mut lines = BufReader::new(stderr).lines();
     while let Ok(Some(line)) = lines.next_line().await {
@@ -539,7 +589,7 @@ async fn drain_stderr(app: AppHandle, stderr: tokio::process::ChildStderr) {
 
 #[cfg(test)]
 mod tests {
-    use std::{ffi::OsStr, path::PathBuf};
+    use std::{ffi::OsString, path::PathBuf};
 
     use super::*;
 
@@ -559,7 +609,8 @@ mod tests {
             ),
         };
 
-        let command = engine_command(&paths);
+        let uv_executable = PathBuf::from("/opt/homebrew/bin/uv");
+        let command = engine_command(&paths, &uv_executable);
         let command = command.as_std();
         let arguments = command.get_args().collect::<Vec<_>>();
         let project_argument = arguments
@@ -567,7 +618,7 @@ mod tests {
             .position(|argument| *argument == OsStr::new("--project"))
             .and_then(|index| arguments.get(index + 1));
 
-        assert_eq!(command.get_program(), OsStr::new("uv"));
+        assert_eq!(command.get_program(), uv_executable.as_os_str());
         assert_eq!(project_argument, Some(&paths.engine_project.as_os_str()));
         assert!(arguments.contains(&OsStr::new("--frozen")));
         assert!(arguments.contains(&OsStr::new("--no-dev")));
@@ -578,5 +629,46 @@ mod tests {
                 .and_then(|(_, value)| value),
             Some(paths.engine_environment.as_os_str())
         );
+    }
+
+    #[test]
+    fn resolves_uv_from_nix_profile_when_finder_path_is_minimal() {
+        let finder_path = std::env::join_paths(["/usr/bin", "/bin", "/usr/sbin", "/sbin"]).unwrap();
+        let expected = PathBuf::from("/etc/profiles/per-user/test-user/bin/uv");
+
+        let resolved = resolve_uv_executable_from(
+            Some(&finder_path),
+            Some(Path::new("/Users/test-user")),
+            |candidate| candidate == expected,
+        );
+
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn resolves_uv_from_standard_user_install_location() {
+        let expected = PathBuf::from("/Users/test-user/.local/bin/uv");
+
+        let resolved = resolve_uv_executable_from(
+            Some(OsString::from("/usr/bin:/bin").as_os_str()),
+            Some(Path::new("/Users/test-user")),
+            |candidate| candidate == expected,
+        );
+
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn prefers_uv_available_on_process_path() {
+        let path = std::env::join_paths(["/custom/bin", "/usr/bin"]).unwrap();
+        let expected = PathBuf::from("/custom/bin/uv");
+
+        let resolved = resolve_uv_executable_from(
+            Some(&path),
+            Some(Path::new("/Users/test-user")),
+            |candidate| candidate == expected,
+        );
+
+        assert_eq!(resolved, Some(expected));
     }
 }

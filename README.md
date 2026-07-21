@@ -82,5 +82,7 @@ The original Reco repository is not modified by this project.
 
 ## Distribution
 
-Release bundles require `uv` on `PATH`. The first launch may download Python and runtime dependencies
-before the engine becomes ready. Developer ID signing and notarization are not configured.
+Release bundles require `uv` to be installed. The application discovers standard user, Homebrew,
+MacPorts, and Nix installation locations even when Finder does not inherit the user's shell `PATH`.
+The first launch may download Python and runtime dependencies before the engine becomes ready.
+Developer ID signing and notarization are not configured.
