@@ -4,7 +4,7 @@ export default defineConfig({
   arrowParens: "always",
   bracketSpacing: true,
   endOfLine: "lf",
-  ignorePatterns: ["package.json", "pnpm-*.yaml", "src-python/**", "src-tauri/**"],
+  ignorePatterns: ["package.json", "pnpm-*.yaml", "*.md", "src-python/**", "src-tauri/**"],
   insertFinalNewline: true,
   printWidth: 100,
   semi: true,
