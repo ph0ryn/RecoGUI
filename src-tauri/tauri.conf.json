@@ -12,8 +12,15 @@
   "app": {
     "windows": [
       {
+        "decorations": true,
+        "hiddenTitle": true,
         "label": "main",
         "title": "RecoGUI",
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 18
+        },
         "width": 1120,
         "height": 720,
         "minWidth": 860,
