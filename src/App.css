@@ -1295,19 +1295,59 @@ button:disabled {
   font-size: 10px;
 }
 
-.model-row {
+.model-picker {
+  display: grid;
+  gap: 7px;
+}
+
+.model-picker-control,
+.model-picker-meta,
+.model-status,
+.model-refresh-button {
   display: flex;
   align-items: center;
 }
 
-.model-row {
-  justify-content: space-between;
-  gap: 20px;
+.model-picker-meta {
+  color: var(--muted);
+  font-size: 9px;
 }
 
-.model-row span {
+.model-status {
+  flex: 0 0 auto;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.model-picker-control {
+  align-items: end;
+  gap: 8px;
+}
+
+.model-picker-control label {
+  min-width: 0;
+  flex: 1;
+}
+
+.model-picker-control select {
+  width: 100%;
+  height: 30px;
+}
+
+.model-refresh-button {
+  height: 30px;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.model-refresh-button > span {
+  font-size: 13px;
+}
+
+.model-picker-meta {
+  justify-content: flex-start;
+  gap: 12px;
 }
 
 .model-dot {

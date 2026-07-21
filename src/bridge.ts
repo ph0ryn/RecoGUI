@@ -394,8 +394,19 @@ export const recoBridge = {
 
   async listModels(): Promise<ModelList> {
     if (!hasTauriRuntime()) {
+      const selected = mockSnapshot.model.selected;
+
       return {
-        models: [],
+        models: selected
+          ? [
+              {
+                ...selected,
+                lastModified: "2 months ago",
+                refs: ["main"],
+                size: "2.5G",
+              },
+            ]
+          : [],
         state: structuredClone(mockSnapshot.model),
       };
     }

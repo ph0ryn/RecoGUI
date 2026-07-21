@@ -2179,6 +2179,11 @@ function SettingsDialog({
     }
   }
 
+  const selectedModel = models.find(
+    ({ repoId, revision }) =>
+      repoId === model.selected?.repoId && revision === model.selected.revision,
+  );
+
   return (
     <DialogFrame onClose={onClose} title="設定" titleId="settings-title">
       <div className="settings-section">
@@ -2197,46 +2202,49 @@ function SettingsDialog({
       </div>
       <div className="settings-section">
         <h3>音声認識モデル</h3>
-        <label>
-          使用するモデル
-          <select
-            disabled={disabled || isModelWorking || model.status === "cliMissing"}
-            onChange={(event) => void selectModel(event.target.value)}
-            value={model.selected ? `${model.selected.repoId}\n${model.selected.revision}` : ""}
-          >
-            <option value="">モデルを選択…</option>
-            {model.selected &&
-              !models.some(
-                ({ repoId, revision }) =>
-                  repoId === model.selected?.repoId && revision === model.selected.revision,
-              ) && (
-                <option value={`${model.selected.repoId}\n${model.selected.revision}`}>
-                  {model.selected.repoId} — {model.selected.revision.slice(0, 8)} — 利用不可
-                </option>
-              )}
-            {models.map((candidate) => (
-              <option
-                key={`${candidate.repoId}:${candidate.revision}`}
-                value={`${candidate.repoId}\n${candidate.revision}`}
+        <div className="model-picker">
+          <div className="model-picker-control">
+            <label>
+              <span>使用するモデル</span>
+              <select
+                disabled={disabled || isModelWorking || model.status === "cliMissing"}
+                onChange={(event) => void selectModel(event.target.value)}
+                value={model.selected ? `${model.selected.repoId}\n${model.selected.revision}` : ""}
               >
-                {candidate.repoId} — {candidate.revision.slice(0, 8)} — {candidate.size}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="model-row">
-          <span>
-            <span className={`model-dot model-${model.status}`} />
-            {modelStatusText(model)}
-          </span>
-          <button
-            className="secondary-button"
-            disabled={disabled || isModelWorking}
-            onClick={() => void reloadModels()}
-            type="button"
-          >
-            {isModelWorking ? "確認中…" : "一覧を再読み込み"}
-          </button>
+                <option disabled value="">
+                  モデルを選択…
+                </option>
+                {model.selected && !selectedModel && (
+                  <option value={`${model.selected.repoId}\n${model.selected.revision}`}>
+                    {model.selected.repoId} — {model.selected.revision.slice(0, 8)} — 利用不可
+                  </option>
+                )}
+                {models.map((candidate) => (
+                  <option
+                    key={`${candidate.repoId}:${candidate.revision}`}
+                    value={`${candidate.repoId}\n${candidate.revision}`}
+                  >
+                    {candidate.repoId} — {candidate.revision.slice(0, 8)} — {candidate.size}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="secondary-button model-refresh-button"
+              disabled={disabled || isModelWorking}
+              onClick={() => void reloadModels()}
+              type="button"
+            >
+              <span aria-hidden="true">↻</span>
+              {isModelWorking ? "確認中…" : "再読み込み"}
+            </button>
+          </div>
+          <div className="model-picker-meta">
+            <span className={`model-status model-status-${model.status}`}>
+              <span className={`model-dot model-${model.status}`} />
+              {modelStatusText(model)}
+            </span>
+          </div>
         </div>
         {disabled && <p>処理中はモデルを変更できません。</p>}
         {(model.errorMessage || modelListError) && (

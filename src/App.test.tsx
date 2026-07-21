@@ -595,6 +595,7 @@ describe("RecoGUI", () => {
     const selector = await screen.findByRole("combobox", { name: "使用するモデル" });
 
     expect(within(selector).getAllByRole("option")).toHaveLength(3);
+    expect(within(selector).getByRole("option", { name: "モデルを選択…" })).toBeDisabled();
     await user.selectOptions(selector, "owner/another-model\nanother-revision");
     await waitFor(() =>
       expect(bridgeMocks.selectModel).toHaveBeenCalledWith({
