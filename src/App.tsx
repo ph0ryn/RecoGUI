@@ -402,6 +402,81 @@ function App() {
   }, [selectedSessions.length]);
 
   useEffect(() => {
+    function handleShortcut(event: globalThis.KeyboardEvent): void {
+      if (
+        !event.metaKey ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.repeat ||
+        event.isComposing ||
+        dialog
+      )
+        return;
+
+      const key = event.key.toLocaleLowerCase();
+
+      if (key === "f") {
+        event.preventDefault();
+        const input = document.querySelector<HTMLInputElement>(
+          event.shiftKey ? ".history-search input" : ".detail-search input",
+        );
+
+        input?.focus();
+        input?.select();
+        return;
+      }
+      if (key === "backspace" && !event.shiftKey) {
+        const target = event.target;
+        const isEditable =
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          (target instanceof HTMLElement && target.isContentEditable);
+
+        if (isEditable) return;
+        event.preventDefault();
+        if (
+          !isWorking &&
+          selectedSessions.length > 0 &&
+          selectedSessions.every(({ status }) => deletableStatuses.includes(status))
+        )
+          openDialog("delete");
+        return;
+      }
+      if (key === "s" && !event.shiftKey) {
+        event.preventDefault();
+        if (!isWorking && selectedSessions.length > 0) openDialog("export");
+        return;
+      }
+      if (key === "n") {
+        event.preventDefault();
+        if (model.status !== "ready") return;
+        if (event.shiftKey) {
+          if (!isWorking && !isQueueWorking) void startSession("file");
+        } else if (!isWorking && activeSessionId === undefined && !queue.autoAdvanceEnabled) {
+          void startSession("microphone");
+        }
+        return;
+      }
+      if (key === "," && !event.shiftKey) {
+        event.preventDefault();
+        openDialog("settings");
+      }
+    }
+
+    window.addEventListener("keydown", handleShortcut);
+
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [
+    activeSessionId,
+    dialog,
+    isQueueWorking,
+    isWorking,
+    model.status,
+    queue.autoAdvanceEnabled,
+    selectedSessions,
+  ]);
+
+  useEffect(() => {
     if (!contextMenu) return;
     const close = () => setContextMenu(undefined);
 
@@ -1877,9 +1952,47 @@ function DialogFrame({
     const dialogElement = dialogRef.current;
 
     dialogElement?.showModal();
+    dialogElement?.querySelector<HTMLElement>("[autofocus]")?.focus();
 
     return () => dialogElement?.close();
   }, []);
+
+  function moveActionFocus(event: KeyboardEvent<HTMLDialogElement>): void {
+    if (!["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"].includes(event.key)) return;
+    if (
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      event.nativeEvent.isComposing
+    )
+      return;
+    if (
+      event.target instanceof HTMLElement &&
+      event.target.closest("input, select, textarea, [contenteditable='true']")
+    )
+      return;
+
+    const buttons = [
+      ...(event.currentTarget.querySelector(".dialog-actions")?.querySelectorAll("button") ?? []),
+    ].filter(
+      (button): button is HTMLButtonElement =>
+        button instanceof HTMLButtonElement && !button.disabled,
+    );
+
+    if (!buttons.length) return;
+    event.preventDefault();
+    const currentIndex = buttons.findIndex((button) => button === document.activeElement);
+    const offset = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
+    const nextIndex =
+      currentIndex < 0
+        ? offset > 0
+          ? 0
+          : buttons.length - 1
+        : (currentIndex + offset + buttons.length) % buttons.length;
+
+    buttons[nextIndex]?.focus();
+  }
 
   return (
     <dialog
@@ -1889,6 +2002,7 @@ function DialogFrame({
         event.preventDefault();
         onClose();
       }}
+      onKeyDownCapture={moveActionFocus}
       ref={dialogRef}
     >
       <div className="dialog-title">
@@ -1906,6 +2020,10 @@ function DialogFrame({
       {children}
     </dialog>
   );
+}
+
+function DialogActions({ children }: { children: React.ReactNode }) {
+  return <div className="dialog-actions">{children}</div>;
 }
 
 function NewSessionDialog({
@@ -1992,14 +2110,14 @@ function RenameDialog({
             value={title}
           />
         </label>
-        <div className="dialog-actions">
+        <DialogActions>
           <button className="secondary-button" onClick={onClose} type="button">
             キャンセル
           </button>
           <button className="primary-button" disabled={disabled || !normalized} type="submit">
             変更
           </button>
-        </div>
+        </DialogActions>
       </form>
     </DialogFrame>
   );
@@ -2042,7 +2160,7 @@ function DeleteDialog({
           処理中のセッションは削除できません。
         </p>
       )}
-      <div className="dialog-actions">
+      <DialogActions>
         <button autoFocus className="secondary-button" onClick={onClose} type="button">
           キャンセル
         </button>
@@ -2054,7 +2172,7 @@ function DeleteDialog({
         >
           完全に削除
         </button>
-      </div>
+      </DialogActions>
     </DialogFrame>
   );
 }
@@ -2108,14 +2226,14 @@ function ExportDialog({
       {sessions.length > 1 && (
         <p className="info-note">各セッションのファイルとmanifestをZIPにまとめます。</p>
       )}
-      <div className="dialog-actions">
+      <DialogActions>
         <button className="primary-button" disabled={disabled} onClick={onCopy} type="button">
           コピー
         </button>
         <button className="primary-button" disabled={disabled} onClick={onConfirm} type="button">
           保存先を選択…
         </button>
-      </div>
+      </DialogActions>
     </DialogFrame>
   );
 }
@@ -2276,11 +2394,11 @@ function SettingsDialog({
           </div>
         </dl>
       </div>
-      <div className="dialog-actions">
+      <DialogActions>
         <button className="primary-button" onClick={onClose} type="button">
           完了
         </button>
-      </div>
+      </DialogActions>
     </DialogFrame>
   );
 }
@@ -2298,7 +2416,7 @@ function CloseConfirmationDialog({
     <DialogFrame onClose={onCancel} title="録音を停止して終了しますか？" titleId="close-title">
       <p>処理中の文字起こしがあります。Stopと同じ手順で保存を完了してから終了します。</p>
       <p className="dialog-warning">保存済みの文字起こしは履歴に残ります。</p>
-      <div className="dialog-actions">
+      <DialogActions>
         <button autoFocus className="secondary-button" onClick={onCancel} type="button">
           アプリに戻る
         </button>
@@ -2310,7 +2428,7 @@ function CloseConfirmationDialog({
         >
           停止して終了
         </button>
-      </div>
+      </DialogActions>
     </DialogFrame>
   );
 }
@@ -2335,14 +2453,14 @@ function ForceCloseDialog({
       <p className="dialog-warning">
         強制終了すると、未処理の音声は失われます。すでに保存された部分は次回起動時に履歴へ残ります。
       </p>
-      <div className="dialog-actions">
+      <DialogActions>
         <button autoFocus className="secondary-button" onClick={onCancel} type="button">
           アプリに戻る
         </button>
         <button className="danger-button" disabled={disabled} onClick={onForceQuit} type="button">
           強制終了
         </button>
-      </div>
+      </DialogActions>
     </DialogFrame>
   );
 }

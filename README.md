@@ -32,6 +32,21 @@ hf cache rm model/ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit
 
 RecoGUI does not install `hf`, download models, verify them, or remove them.
 
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `⌘F` | Search within the selected transcript |
+| `⌘⇧F` | Search all transcription history |
+| `⌘⌫` | Open permanent deletion confirmation for the selection |
+| `⌘S` | Export the selected transcription sessions |
+| `⌘N` | Start microphone transcription |
+| `⌘⇧N` | Select audio files for transcription |
+| `⌘,` | Open settings |
+| Arrow keys | Move between dialog actions |
+| `Enter` | Activate the focused dialog action |
+| `Esc` | Close or cancel the current dialog |
+
 ## Development
 
 ```sh

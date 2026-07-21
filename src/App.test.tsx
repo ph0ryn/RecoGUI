@@ -154,6 +154,7 @@ beforeEach(() => {
   bridgeMocks.pauseSession.mockClear();
   bridgeMocks.pauseQueue.mockClear();
   bridgeMocks.resumeSession.mockClear();
+  bridgeMocks.startSession.mockClear();
   bridgeMocks.renameSession.mockImplementation((sessionId: string, title: string) =>
     Promise.resolve({ rowVersion: 7, sessionId, title }),
   );
@@ -181,6 +182,59 @@ function useInactiveSnapshot() {
 }
 
 describe("RecoGUI", () => {
+  it("focuses transcript and history search with their shortcuts", async () => {
+    await renderLoadedApp();
+
+    fireEvent.keyDown(window, { key: "f", metaKey: true });
+    expect(screen.getByRole("searchbox", { name: "この文字起こし内を検索" })).toHaveFocus();
+
+    fireEvent.keyDown(window, { key: "f", metaKey: true, shiftKey: true });
+    expect(screen.getByRole("searchbox", { name: "履歴を検索" })).toHaveFocus();
+  });
+
+  it("opens delete, export, and settings dialogs with shortcuts", async () => {
+    const user = userEvent.setup();
+
+    await renderLoadedApp();
+    await user.click(screen.getByRole("option", { name: /プロジェクト定例/ }));
+
+    fireEvent.keyDown(window, { key: "Backspace", metaKey: true });
+    const deleteDialog = screen.getByRole("dialog", { name: "文字起こしを完全に削除" });
+
+    await user.click(within(deleteDialog).getByRole("button", { name: "閉じる" }));
+
+    fireEvent.keyDown(window, { key: "s", metaKey: true });
+    const exportDialog = screen.getByRole("dialog", { name: "文字起こしをExport" });
+
+    await user.click(within(exportDialog).getByRole("button", { name: "閉じる" }));
+
+    fireEvent.keyDown(window, { key: ",", metaKey: true });
+    expect(screen.getByRole("dialog", { name: "設定" })).toBeInTheDocument();
+  });
+
+  it("starts microphone transcription with Cmd+N", async () => {
+    useInactiveSnapshot();
+    await renderLoadedApp();
+
+    fireEvent.keyDown(window, { key: "n", metaKey: true });
+    await waitFor(() =>
+      expect(bridgeMocks.startSession).toHaveBeenCalledWith({
+        deviceId: undefined,
+        inputKind: "microphone",
+      }),
+    );
+  });
+
+  it("opens file selection with Cmd+Shift+N while another session is active", async () => {
+    await renderLoadedApp();
+
+    fireEvent.keyDown(window, { key: "n", metaKey: true, shiftKey: true });
+    await waitFor(() => expect(bridgeMocks.pickAudioFiles).toHaveBeenCalled());
+    expect(bridgeMocks.enqueueFiles).toHaveBeenCalledWith([
+      { displayName: "test.wav", sourceToken: "token" },
+    ]);
+  });
+
   it("keeps the selected history session when a live segment arrives", async () => {
     const user = userEvent.setup();
 
@@ -363,9 +417,18 @@ describe("RecoGUI", () => {
 
     expect(screen.getByText(/この操作は取り消せません/)).toBeInTheDocument();
     expect(bridgeMocks.deleteSessions).not.toHaveBeenCalled();
-    await user.click(
-      within(screen.getByRole("dialog")).getByRole("button", { name: "完全に削除" }),
-    );
+    const dialog = within(screen.getByRole("dialog"));
+    const closeButton = dialog.getByRole("button", { name: "閉じる" });
+    const cancelButton = dialog.getByRole("button", { name: "キャンセル" });
+    const deleteButton = dialog.getByRole("button", { name: "完全に削除" });
+
+    expect(cancelButton).toHaveFocus();
+    closeButton.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(cancelButton).toHaveFocus();
+    await user.keyboard("{ArrowRight}");
+    expect(deleteButton).toHaveFocus();
+    await user.keyboard("{Enter}");
     await waitFor(() => expect(bridgeMocks.deleteSessions).toHaveBeenCalledWith(["session-1"]));
   });
 
