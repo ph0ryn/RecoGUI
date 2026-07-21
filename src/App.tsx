@@ -1139,19 +1139,6 @@ function App() {
           />
         ) : selectedSession ? (
           <>
-            {activeSession && selectedSession.id !== activeSession.id && (
-              <button
-                className="active-session-banner"
-                onClick={() => selectSession(activeSession, false, false)}
-                type="button"
-              >
-                <span className="live-dot" />
-                <span>
-                  <strong>{activeSession.title}</strong> を処理しています
-                </span>
-                <span>処理中へ戻る →</span>
-              </button>
-            )}
             <SessionHeader
               detailQuery={detailQuery}
               disabled={isWorking}

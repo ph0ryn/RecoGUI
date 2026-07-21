@@ -659,36 +659,6 @@ button:disabled {
   background: var(--panel);
 }
 
-.active-session-banner {
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 34px;
-  padding: 0 22px;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  background: #f7f7f4;
-  color: var(--muted);
-  font:
-    9px "SFMono-Regular",
-    Consolas,
-    monospace;
-  text-align: left;
-}
-
-.active-session-banner span:nth-child(2) {
-  flex: 1;
-}
-
-.live-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  flex: none;
-  background: var(--signal);
-}
-
 .session-header {
   z-index: 3;
   display: grid;

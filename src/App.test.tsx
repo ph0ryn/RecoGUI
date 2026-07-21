@@ -180,7 +180,7 @@ describe("RecoGUI", () => {
     });
 
     expect(screen.getByRole("heading", { name: "プロジェクト定例" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /処理中へ戻る/ })).toBeInTheDocument();
+    expect(screen.queryByText(/処理中へ戻る/)).not.toBeInTheDocument();
   });
 
   it("renders a duplicated persisted segment exactly once", async () => {
