@@ -820,16 +820,6 @@ function App() {
     }
   }
 
-  async function addFilesToQueue(): Promise<void> {
-    const files = await recoBridge.pickAudioFiles();
-
-    if (!files?.length) return;
-    await updateQueue(
-      () => recoBridge.enqueueFiles(files),
-      "音声ファイルをキューに追加できませんでした。",
-    );
-  }
-
   function reorderQueueItem(itemId: string, offset: -1 | 1): void {
     const index = queue.items.findIndex(({ id }) => id === itemId);
     const nextIndex = index + offset;
@@ -1015,7 +1005,6 @@ function App() {
             disabled={isQueueWorking}
             hasActiveSession={activeSessionId !== undefined}
             queue={queue}
-            onAdd={() => void addFilesToQueue()}
             onClear={() =>
               void updateQueue(() => recoBridge.clearQueue(), "キューをクリアできませんでした。")
             }
@@ -1401,7 +1390,6 @@ interface QueuePanelProps {
   disabled: boolean;
   hasActiveSession: boolean;
   queue: QueueSnapshot;
-  onAdd: () => void;
   onClear: () => void;
   onMove: (itemId: string, offset: -1 | 1) => void;
   onPause: () => void;
@@ -1412,7 +1400,6 @@ interface QueuePanelProps {
 function QueuePanel({
   disabled,
   hasActiveSession,
-  onAdd,
   onClear,
   onMove,
   onPause,
@@ -1429,16 +1416,45 @@ function QueuePanel({
           <h2 id="queue-heading">処理キュー</h2>
           <span>{queue.items.length}件</span>
         </div>
-        <button
-          aria-label="音声ファイルをキューに追加"
-          className="queue-add-button"
-          disabled={disabled}
-          onClick={onAdd}
-          title="音声ファイルを追加"
-          type="button"
-        >
-          ＋
-        </button>
+        <div className="queue-actions">
+          {queue.autoAdvanceEnabled ? (
+            <button
+              aria-label="自動進行を停止"
+              className="queue-icon-button"
+              disabled={disabled}
+              onClick={onPause}
+              title="自動進行を停止"
+              type="button"
+            >
+              <svg aria-hidden="true" className="queue-pause-icon" viewBox="0 0 16 16">
+                <path d="M5.5 4v8M10.5 4v8" />
+              </svg>
+            </button>
+          ) : (
+            <button
+              aria-label="キューを開始"
+              className="queue-icon-button queue-start-button"
+              disabled={disabled || hasActiveSession || pendingCount === 0}
+              onClick={onStart}
+              title="キューを開始"
+              type="button"
+            >
+              ▶
+            </button>
+          )}
+          <button
+            aria-label="キューを全クリア"
+            className="queue-icon-button delete-icon-button"
+            disabled={disabled || queue.items.length === 0}
+            onClick={onClear}
+            title="キューを全クリア"
+            type="button"
+          >
+            <svg aria-hidden="true" viewBox="0 0 16 16">
+              <path d="M3.5 4.5h9M6 4.5v-2h4v2m1.5 0-.5 9H5l-.5-9M7 7v4m2-4v4" />
+            </svg>
+          </button>
+        </div>
       </div>
       {queue.items.length > 0 && (
         <div className="queue-items" role="list">
@@ -1455,24 +1471,6 @@ function QueuePanel({
           ))}
         </div>
       )}
-      <div className="queue-actions">
-        {queue.autoAdvanceEnabled ? (
-          <button disabled={disabled} onClick={onPause} type="button">
-            自動進行を停止
-          </button>
-        ) : (
-          <button
-            disabled={disabled || hasActiveSession || pendingCount === 0}
-            onClick={onStart}
-            type="button"
-          >
-            キューを開始
-          </button>
-        )}
-        <button disabled={disabled || queue.items.length === 0} onClick={onClear} type="button">
-          全クリア
-        </button>
-      </div>
     </section>
   );
 }
