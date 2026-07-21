@@ -43,7 +43,7 @@ export interface SessionDetail extends SessionSummary {
   segmentsLoaded: true;
 }
 
-export type ExportFormat = "txt" | "markdown" | "json" | "srt" | "vtt" | "csv";
+export type ExportFormat = "txt" | "timestampedTxt" | "markdown" | "json" | "srt" | "vtt";
 
 export interface ModelReference {
   repoId: string;

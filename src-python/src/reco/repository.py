@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import csv
-import io
 import json
 import os
 import sqlite3
@@ -761,7 +759,7 @@ class RecordingRepository:
     normalized = export_format.casefold()
     if normalized == "markdown":
       normalized = "md"
-    if normalized not in {"txt", "md", "json", "srt", "vtt", "csv", "zip"}:
+    if normalized not in {"txt", "timestampedtxt", "md", "json", "srt", "vtt", "zip"}:
       raise ValueError(f"Unsupported export format: {export_format}")
     snapshots: list[dict[str, Any]] = []
     failures: list[ExportFailure] = []
@@ -831,7 +829,7 @@ class RecordingRepository:
     if not ids:
       raise ValueError("At least one session is required for rendering")
     normalized = "md" if export_format.casefold() == "markdown" else export_format.casefold()
-    if normalized not in {"txt", "md", "json", "srt", "vtt", "csv"}:
+    if normalized not in {"txt", "timestampedtxt", "md", "json", "srt", "vtt"}:
       raise ValueError(f"Unsupported render format: {export_format}")
     snapshots: list[dict[str, Any]] = []
     with self._connect(readonly=True) as connection:
@@ -948,28 +946,19 @@ class RecordingRepository:
 def _render_export(snapshots: list[dict[str, Any]], export_format: str) -> bytes:
   if export_format == "json":
     return json.dumps(snapshots, ensure_ascii=False, indent=2).encode()
-  if export_format == "csv":
-    output = io.StringIO(newline="")
-    writer = csv.writer(output)
-    writer.writerow(("session_id", "segment_index", "start_ms", "end_ms", "text"))
-    for snapshot in snapshots:
-      rate = int(snapshot["sample_rate"])
-      for segment in snapshot["segments"]:
-        writer.writerow(
-          (
-            snapshot["session_id"],
-            segment["segment_index"],
-            round(segment["start_sample"] * 1000 / rate),
-            round(segment["end_sample"] * 1000 / rate),
-            segment["text"],
-          )
-        )
-    return output.getvalue().encode()
   blocks: list[str] = []
   for snapshot in snapshots:
     segments = snapshot["segments"]
     if export_format == "txt":
       blocks.append("\n".join(segment["text"] for segment in segments if segment["text"]))
+    elif export_format == "timestampedtxt":
+      blocks.append(
+        "\n".join(
+          f"[{_timestamp(round(segment['start_sample'] * 1000 / snapshot['sample_rate']), vtt=True)}] {segment['text']}"
+          for segment in segments
+          if segment["text"]
+        )
+      )
     elif export_format == "md":
       blocks.append(
         f"# {snapshot['title']}\n\n" + "\n\n".join(segment["text"] for segment in segments if segment["text"])

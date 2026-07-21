@@ -239,6 +239,8 @@ export const recoBridge = {
 
     if (format === "markdown") {
       extension = "md";
+    } else if (format === "timestampedTxt") {
+      extension = "txt";
     }
 
     if (sessionIds.length > 1) {

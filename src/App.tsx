@@ -53,10 +53,10 @@ const statusLabels: Record<SessionStatus, string> = {
 };
 
 const exportLabels: Record<ExportFormat, string> = {
-  csv: "CSV（セグメント一覧）",
   json: "JSON（構造化データ）",
   markdown: "Markdown",
   srt: "SRT字幕",
+  timestampedTxt: "タイムスタンプ付きテキスト",
   txt: "テキスト",
   vtt: "WebVTT字幕",
 };

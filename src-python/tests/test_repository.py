@@ -103,6 +103,19 @@ def test_render_sessions_returns_selected_format_without_private_source_metadata
   assert "private-device" not in rendered_json
 
 
+def test_render_timestamped_text_uses_segment_start_time(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(new_session())
+  repository.set_state(session_id, SessionState.RUNNING)
+  start_sample = ((12 * 60 * 60) + (30 * 60) + 12) * 16_000 + 7_248
+  repository.append_segment(
+    session_id,
+    replace(segment(text="text"), start_sample=start_sample, end_sample=start_sample + 16_000),
+  )
+
+  assert repository.render_sessions([session_id], "timestampedTxt") == "[12:30:12.453] text"
+
+
 def test_append_segment_returns_monotonic_committed_session_values(tmp_path: Path) -> None:
   repository = RecordingRepository(tmp_path / "reco.sqlite3")
   session_id = repository.create_session(new_session())
@@ -268,7 +281,7 @@ def test_selected_model_round_trips_through_metadata(tmp_path: Path) -> None:
   assert RecordingRepository(database).get_selected_model() == ("owner/model", "commit-two")
 
 
-@pytest.mark.parametrize("export_format", ["txt", "md", "markdown", "json", "srt", "vtt", "csv"])
+@pytest.mark.parametrize("export_format", ["txt", "timestampedTxt", "md", "markdown", "json", "srt", "vtt"])
 def test_export_formats_replace_destination_atomically(tmp_path: Path, export_format: str) -> None:
   repository = RecordingRepository(tmp_path / "reco.sqlite3")
   session_id = repository.create_session(new_session())

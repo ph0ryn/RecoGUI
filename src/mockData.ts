@@ -88,7 +88,7 @@ export const mockSnapshot: EngineSnapshot = {
           id: "s1-4",
           sequence: 4,
           startMs: 80_200,
-          text: "書き出し形式はテキスト、Markdown、JSON、字幕、CSVに対応します。",
+          text: "書き出し形式はテキスト、タイムスタンプ付きテキスト、Markdown、JSON、字幕に対応します。",
         },
       ],
       segmentsLoaded: true,
