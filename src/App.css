@@ -206,10 +206,123 @@ button:disabled {
   position: relative;
   display: grid;
   grid-area: history;
-  grid-template-rows: auto minmax(0, 1fr) 40px;
+  grid-template-rows: auto auto minmax(0, 1fr) 40px;
   min-width: 0;
   min-height: 0;
   background: var(--panel-alt);
+}
+
+.queue-panel {
+  min-width: 0;
+  max-height: min(34vh, 320px);
+  padding: 7px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line-dark);
+  background: var(--panel);
+}
+
+.queue-heading-row,
+.queue-heading-row > div,
+.queue-actions,
+.queue-row,
+.queue-row-actions {
+  display: flex;
+  align-items: center;
+}
+
+.queue-heading-row {
+  justify-content: space-between;
+  min-height: 26px;
+}
+
+.queue-heading-row > div {
+  gap: 7px;
+  min-width: 0;
+}
+
+.queue-heading-row h2 {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.queue-heading-row span,
+.queue-row-copy span,
+.queue-row-copy small {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
+}
+
+.queue-add-button,
+.queue-row-actions button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--line);
+  background: transparent;
+}
+
+.queue-items {
+  max-height: min(20vh, 190px);
+  margin: 5px -2px;
+  overflow: auto;
+  border: 1px solid var(--line);
+}
+
+.queue-row {
+  min-width: 0;
+  min-height: 39px;
+  gap: 4px;
+  padding: 5px;
+  border-bottom: 1px solid var(--line);
+}
+
+.queue-row:last-child {
+  border-bottom: 0;
+}
+
+.queue-row-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.queue-row-copy strong {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-invalid {
+  border-left: 3px solid var(--danger);
+  background: #f8e9e7;
+}
+
+.queue-invalid .queue-row-copy span {
+  color: var(--danger);
+}
+
+.queue-row-actions {
+  gap: 2px;
+  flex: none;
+}
+
+.queue-actions {
+  gap: 5px;
+}
+
+.queue-actions button {
+  min-height: 25px;
+  padding: 3px 7px;
+  border: 1px solid var(--line-dark);
+  background: var(--panel-alt);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 9px;
 }
 
 .history-toolbar {

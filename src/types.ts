@@ -76,6 +76,29 @@ export interface EngineSnapshot {
   nextCursor?: string;
 }
 
+export type QueueItemStatus = "pending" | "invalid";
+
+export interface QueueItem {
+  id: string;
+  displayName: string;
+  status: QueueItemStatus;
+  addedAt: string;
+  updatedAt: string;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+export interface QueueSnapshot {
+  revision: number;
+  autoAdvanceEnabled: boolean;
+  items: QueueItem[];
+}
+
+export interface SelectedAudioFile {
+  displayName: string;
+  sourceToken: string;
+}
+
 export interface EngineEvent {
   event: string;
   payload: unknown;

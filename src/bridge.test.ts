@@ -55,6 +55,58 @@ beforeEach(() => {
 });
 
 describe("recoBridge", () => {
+  it("enqueues selected file tokens and maps the canonical queue snapshot", async () => {
+    tauriMocks.invoke.mockResolvedValue({
+      autoAdvanceEnabled: false,
+      items: [
+        {
+          addedAt: "2026-07-21T00:00:00Z",
+          displayName: "audio.wav",
+          errorCode: null,
+          errorMessage: null,
+          itemId: "queue-1",
+          state: "pending",
+          updatedAt: "2026-07-21T00:00:00Z",
+        },
+      ],
+      revision: 4,
+    });
+
+    const snapshot = await recoBridge.enqueueFiles([
+      { displayName: "audio.wav", sourceToken: "token-1" },
+    ]);
+
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("engine_request", {
+      command: "queue.enqueueFiles",
+      payload: {
+        files: [{ displayName: "audio.wav", sourceToken: "token-1" }],
+      },
+    });
+
+    expect(snapshot).toEqual({
+      autoAdvanceEnabled: false,
+      items: [
+        expect.objectContaining({ displayName: "audio.wav", id: "queue-1", status: "pending" }),
+      ],
+      revision: 4,
+    });
+  });
+
+  it("sends a revision with the complete queue order", async () => {
+    tauriMocks.invoke.mockResolvedValue({
+      autoAdvanceEnabled: false,
+      items: [],
+      revision: 8,
+    });
+
+    await recoBridge.reorderQueue(7, ["queue-2", "queue-1"]);
+
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("engine_request", {
+      command: "queue.reorder",
+      payload: { itemIds: ["queue-2", "queue-1"], revision: 7 },
+    });
+  });
+
   it("restarts paginated detail loading when the database revision changes", async () => {
     tauriMocks.invoke
       .mockResolvedValueOnce(rawSession(1, 0, 500))

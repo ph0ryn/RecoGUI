@@ -22,7 +22,9 @@ import type {
   InputKind,
   ModelState,
   PersistedSegmentReceipt,
+  QueueSnapshot,
   SessionStatus,
+  QueueItem,
 } from "./types";
 
 interface ExportOperation {
@@ -57,6 +59,7 @@ const exportLabels: Record<ExportFormat, string> = {
 
 const exportFormats = Object.keys(exportLabels) as ExportFormat[];
 const terminalStatuses: SessionStatus[] = ["completed", "stopped", "failed", "abandoned"];
+const emptyQueue: QueueSnapshot = { autoAdvanceEnabled: false, items: [], revision: 0 };
 
 function formatDuration(milliseconds: number): string {
   const totalSeconds = Math.max(0, Math.round(milliseconds / 1_000));
@@ -147,6 +150,8 @@ function App() {
   );
   const [exportOperation, setExportOperation] = useState<ExportOperation>();
   const [sessionProgress, setSessionProgress] = useState<Record<string, number>>({});
+  const [queue, setQueue] = useState<QueueSnapshot>(emptyQueue);
+  const [isQueueWorking, setIsQueueWorking] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     session: SessionEntity;
     x: number;
@@ -201,10 +206,10 @@ function App() {
   useEffect(() => {
     let alive = true;
 
-    void recoBridge
-      .getSnapshot()
-      .then((snapshot) => {
+    void Promise.all([recoBridge.getSnapshot(), recoBridge.getQueueState()])
+      .then(([snapshot, queueSnapshot]) => {
         if (!alive) return;
+        setQueue(queueSnapshot);
         dispatchSessions({
           activeSessionId: snapshot.activeSessionId,
           sessions: snapshot.sessions,
@@ -368,6 +373,9 @@ function App() {
   }, [contextMenu]);
 
   function handleEngineEvent(message: EngineEvent): void {
+    if (message.event === "queue.changed") {
+      setQueue(message.payload as QueueSnapshot);
+    }
     if (message.event === "engine.snapshot") {
       const snapshot = message.payload as {
         activeSessionId?: string;
@@ -674,22 +682,25 @@ function App() {
   async function startSession(inputKind: InputKind): Promise<void> {
     setIsWorking(true);
     try {
-      let input: {
+      if (inputKind === "file") {
+        const files = await recoBridge.pickAudioFiles();
+
+        if (!files?.length) return;
+        setQueue(await recoBridge.enqueueFiles(files));
+        setDialog(null);
+        setToast(`${files.length}件を処理キューに追加しました。`);
+        return;
+      }
+      const input: {
         deviceId?: string;
         inputKind: InputKind;
         inputName?: string;
         inputToken?: string;
       } = {
-        deviceId: inputKind === "microphone" ? selectedDeviceId || undefined : undefined,
+        deviceId: selectedDeviceId || undefined,
         inputKind,
       };
 
-      if (inputKind === "file") {
-        const file = await recoBridge.pickAudioFile();
-
-        if (!file) return;
-        input = { inputKind, ...file };
-      }
       const { rowVersion, sessionId } = await recoBridge.startSession(input);
       const startedAt = new Date().toISOString();
       const optimisticSession: SessionEntity = {
@@ -714,9 +725,7 @@ function App() {
       setDialog(null);
       dispatchSessions({ session: optimisticSession, type: "sessionStarted" });
       setSelectedIds(new Set([sessionId]));
-      setToast(
-        inputKind === "microphone" ? "録音を開始しました。" : "音声ファイルを受け付けました。",
-      );
+      setToast("録音を開始しました。");
     } catch {
       setToast("文字起こしを開始できませんでした。");
     } finally {
@@ -728,6 +737,9 @@ function App() {
     if (!activeSessionId) return;
     setIsWorking(true);
     try {
+      if (activeSession?.inputKind === "file") {
+        setQueue(await recoBridge.pauseQueue());
+      }
       await recoBridge.pauseSession(activeSessionId);
       setToast("処理待ちを完了して一時停止します。");
     } catch {
@@ -747,6 +759,49 @@ function App() {
     } finally {
       setIsWorking(false);
     }
+  }
+
+  async function updateQueue(
+    action: () => Promise<QueueSnapshot>,
+    failureMessage: string,
+  ): Promise<void> {
+    setIsQueueWorking(true);
+    try {
+      setQueue(await action());
+    } catch {
+      try {
+        setQueue(await recoBridge.getQueueState());
+      } catch {
+        // The event stream may still reconcile the canonical queue state.
+      }
+      setToast(failureMessage);
+    } finally {
+      setIsQueueWorking(false);
+    }
+  }
+
+  async function addFilesToQueue(): Promise<void> {
+    const files = await recoBridge.pickAudioFiles();
+
+    if (!files?.length) return;
+    await updateQueue(
+      () => recoBridge.enqueueFiles(files),
+      "音声ファイルをキューに追加できませんでした。",
+    );
+  }
+
+  function reorderQueueItem(itemId: string, offset: -1 | 1): void {
+    const index = queue.items.findIndex(({ id }) => id === itemId);
+    const nextIndex = index + offset;
+
+    if (index < 0 || nextIndex < 0 || nextIndex >= queue.items.length) return;
+    const itemIds = queue.items.map(({ id }) => id);
+
+    [itemIds[index], itemIds[nextIndex]] = [itemIds[nextIndex], itemIds[index]];
+    void updateQueue(
+      () => recoBridge.reorderQueue(queue.revision, itemIds),
+      "キューの順序を変更できませんでした。",
+    );
   }
 
   async function deleteSelected(): Promise<void> {
@@ -881,6 +936,28 @@ function App() {
         </div>
       </header>
       <aside aria-label="文字起こし履歴" className="history-pane">
+        <QueuePanel
+          disabled={isQueueWorking}
+          hasActiveSession={activeSessionId !== undefined}
+          queue={queue}
+          onAdd={() => void addFilesToQueue()}
+          onClear={() =>
+            void updateQueue(() => recoBridge.clearQueue(), "キューをクリアできませんでした。")
+          }
+          onMove={(itemId, offset) => reorderQueueItem(itemId, offset)}
+          onPause={() =>
+            void updateQueue(() => recoBridge.pauseQueue(), "キューを停止できませんでした。")
+          }
+          onRemove={(itemId) =>
+            void updateQueue(
+              () => recoBridge.removeQueueItem(itemId),
+              "キューから削除できませんでした。",
+            )
+          }
+          onStart={() =>
+            void updateQueue(() => recoBridge.startQueue(), "キューを開始できませんでした。")
+          }
+        />
         <div className="history-toolbar">
           <div className="history-search-row">
             <label className="history-search">
@@ -1013,7 +1090,7 @@ function App() {
         <button
           aria-label="新規文字起こし"
           className="record-button"
-          disabled={activeSessionId !== undefined}
+          disabled={activeSessionId !== undefined || queue.autoAdvanceEnabled}
           onClick={() => openDialog("new")}
           ref={newButtonRef}
           title="新規文字起こし"
@@ -1081,6 +1158,7 @@ function App() {
               onPause={() => void pauseActive()}
               onQueryChange={setDetailQuery}
               onResume={() => void resumePaused(selectedSession.id)}
+              queueIsRunning={queue.autoAdvanceEnabled}
               progress={sessionProgress[selectedSession.id]}
               session={selectedSession}
             />
@@ -1105,7 +1183,10 @@ function App() {
 
       {dialog === "new" && (
         <NewSessionDialog
-          disabled={isWorking || activeSessionId !== undefined}
+          fileDisabled={isWorking || isQueueWorking}
+          microphoneDisabled={
+            isWorking || activeSessionId !== undefined || queue.autoAdvanceEnabled
+          }
           model={model}
           onClose={closeDialog}
           onDownload={() => void recoBridge.downloadModel()}
@@ -1211,6 +1292,140 @@ function App() {
   );
 }
 
+interface QueuePanelProps {
+  disabled: boolean;
+  hasActiveSession: boolean;
+  queue: QueueSnapshot;
+  onAdd: () => void;
+  onClear: () => void;
+  onMove: (itemId: string, offset: -1 | 1) => void;
+  onPause: () => void;
+  onRemove: (itemId: string) => void;
+  onStart: () => void;
+}
+
+function QueuePanel({
+  disabled,
+  hasActiveSession,
+  onAdd,
+  onClear,
+  onMove,
+  onPause,
+  onRemove,
+  onStart,
+  queue,
+}: QueuePanelProps) {
+  const pendingCount = queue.items.filter(({ status }) => status === "pending").length;
+
+  return (
+    <section aria-labelledby="queue-heading" className="queue-panel">
+      <div className="queue-heading-row">
+        <div>
+          <h2 id="queue-heading">処理キュー</h2>
+          <span>{queue.items.length}件</span>
+        </div>
+        <button
+          aria-label="音声ファイルをキューに追加"
+          className="queue-add-button"
+          disabled={disabled}
+          onClick={onAdd}
+          title="音声ファイルを追加"
+          type="button"
+        >
+          ＋
+        </button>
+      </div>
+      {queue.items.length > 0 && (
+        <div className="queue-items" role="list">
+          {queue.items.map((item, index) => (
+            <QueueRow
+              disabled={disabled}
+              index={index}
+              item={item}
+              key={item.id}
+              length={queue.items.length}
+              onMove={onMove}
+              onRemove={onRemove}
+            />
+          ))}
+        </div>
+      )}
+      <div className="queue-actions">
+        {queue.autoAdvanceEnabled ? (
+          <button disabled={disabled} onClick={onPause} type="button">
+            自動進行を停止
+          </button>
+        ) : (
+          <button
+            disabled={disabled || hasActiveSession || pendingCount === 0}
+            onClick={onStart}
+            type="button"
+          >
+            キューを開始
+          </button>
+        )}
+        <button disabled={disabled || queue.items.length === 0} onClick={onClear} type="button">
+          全クリア
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function QueueRow({
+  disabled,
+  index,
+  item,
+  length,
+  onMove,
+  onRemove,
+}: {
+  disabled: boolean;
+  index: number;
+  item: QueueItem;
+  length: number;
+  onMove: (itemId: string, offset: -1 | 1) => void;
+  onRemove: (itemId: string) => void;
+}) {
+  return (
+    <div className={`queue-row queue-${item.status}`} role="listitem">
+      <div className="queue-row-copy">
+        <strong title={item.displayName}>{item.displayName}</strong>
+        <span>{item.status === "invalid" ? "無効" : "待機中"}</span>
+        {item.status === "invalid" && (
+          <small>{item.errorMessage ?? "ファイルを削除して、もう一度追加してください。"}</small>
+        )}
+      </div>
+      <div className="queue-row-actions">
+        <button
+          aria-label={`${item.displayName}を上へ移動`}
+          disabled={disabled || index === 0}
+          onClick={() => onMove(item.id, -1)}
+          type="button"
+        >
+          ↑
+        </button>
+        <button
+          aria-label={`${item.displayName}を下へ移動`}
+          disabled={disabled || index === length - 1}
+          onClick={() => onMove(item.id, 1)}
+          type="button"
+        >
+          ↓
+        </button>
+        <button
+          aria-label={`${item.displayName}をキューから削除`}
+          disabled={disabled}
+          onClick={() => onRemove(item.id)}
+          type="button"
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface HistoryRowProps {
   query: string;
   selected: boolean;
@@ -1275,6 +1490,7 @@ interface SessionHeaderProps {
   onQueryChange: (value: string) => void;
   onResume: () => void;
   progress?: number;
+  queueIsRunning: boolean;
 }
 
 function SessionHeader({
@@ -1288,6 +1504,7 @@ function SessionHeader({
   onQueryChange,
   onResume,
   progress,
+  queueIsRunning,
   session,
 }: SessionHeaderProps) {
   return (
@@ -1303,7 +1520,7 @@ function SessionHeader({
                 <button
                   aria-label="文字起こしを再開"
                   className="icon-button session-control-button"
-                  disabled={disabled || hasActiveSession}
+                  disabled={disabled || hasActiveSession || queueIsRunning}
                   onClick={onResume}
                   title="文字起こしを再開"
                   type="button"
@@ -1579,13 +1796,15 @@ function DialogFrame({
 }
 
 function NewSessionDialog({
-  disabled,
+  fileDisabled,
+  microphoneDisabled,
   model,
   onClose,
   onDownload,
   onStart,
 }: {
-  disabled: boolean;
+  fileDisabled: boolean;
+  microphoneDisabled: boolean;
   model: ModelState;
   onClose: () => void;
   onDownload: () => void;
@@ -1616,19 +1835,19 @@ function NewSessionDialog({
         </div>
       ) : (
         <div className="source-options">
-          <button disabled={disabled} onClick={() => onStart("microphone")} type="button">
+          <button disabled={microphoneDisabled} onClick={() => onStart("microphone")} type="button">
             <span aria-hidden="true" className="source-icon">
               ●
             </span>
             <strong>マイクで録音</strong>
             <small>選択した入力から文字起こしします</small>
           </button>
-          <button disabled={disabled} onClick={() => onStart("file")} type="button">
+          <button disabled={fileDisabled} onClick={() => onStart("file")} type="button">
             <span aria-hidden="true" className="source-icon">
               ♪
             </span>
             <strong>音声ファイルを選択</strong>
-            <small>WAV、MP3、M4Aなど</small>
+            <small>複数選択してキューに追加できます</small>
           </button>
         </div>
       )}

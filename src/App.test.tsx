@@ -12,6 +12,7 @@ import type { EngineEvent } from "./types";
 
 const bridgeMocks = vi.hoisted(() => ({
   cancelExport: vi.fn(),
+  clearQueue: vi.fn(),
   closeForceHandler: undefined as
     | ((payload: { error: string; sessionId: string | null }) => void)
     | undefined,
@@ -19,8 +20,10 @@ const bridgeMocks = vi.hoisted(() => ({
   deleteModel: vi.fn(),
   deleteSessions: vi.fn(),
   downloadModel: vi.fn(),
+  enqueueFiles: vi.fn(),
   eventHandler: undefined as ((event: EngineEvent) => void) | undefined,
   exportSessions: vi.fn().mockResolvedValue({ canceled: false, completed: true }),
+  getQueueState: vi.fn(),
   getSession: vi.fn(),
   getSnapshot: vi.fn(),
   listAudioInputs: vi.fn().mockResolvedValue([{ channels: 1, id: "7", name: "テストマイク" }]),
@@ -28,11 +31,15 @@ const bridgeMocks = vi.hoisted(() => ({
   onCloseForceRequired: vi.fn(),
   onCloseRequested: vi.fn(),
   onEngineEvent: vi.fn(),
+  pauseQueue: vi.fn(),
   pauseSession: vi.fn(),
-  pickAudioFile: vi.fn().mockResolvedValue({ inputName: "test.wav", inputToken: "token" }),
+  pickAudioFiles: vi.fn().mockResolvedValue([{ displayName: "test.wav", sourceToken: "token" }]),
+  removeQueueItem: vi.fn(),
+  reorderQueue: vi.fn(),
   resolveClose: vi.fn(),
   resumeSession: vi.fn(),
   searchHistory: vi.fn(),
+  startQueue: vi.fn(),
   startSession: vi.fn().mockResolvedValue({ sessionId: "new-session" }),
   verifyModel: vi.fn(),
 }));
@@ -79,6 +86,31 @@ beforeEach(() => {
     return Promise.resolve(structuredClone(session));
   });
   bridgeMocks.getSnapshot.mockResolvedValue(structuredClone(mockSnapshot));
+  const queue = { autoAdvanceEnabled: false, items: [], revision: 0 };
+
+  bridgeMocks.getQueueState.mockResolvedValue(structuredClone(queue));
+  bridgeMocks.enqueueFiles.mockResolvedValue({
+    autoAdvanceEnabled: false,
+    items: [
+      {
+        addedAt: "2026-07-21T00:00:00.000Z",
+        displayName: "test.wav",
+        id: "queue-1",
+        status: "pending",
+        updatedAt: "2026-07-21T00:00:00.000Z",
+      },
+    ],
+    revision: 1,
+  });
+  bridgeMocks.startQueue.mockResolvedValue({
+    autoAdvanceEnabled: true,
+    items: [],
+    revision: 2,
+  });
+  bridgeMocks.pauseQueue.mockResolvedValue(structuredClone(queue));
+  bridgeMocks.clearQueue.mockResolvedValue(structuredClone(queue));
+  bridgeMocks.removeQueueItem.mockResolvedValue(structuredClone(queue));
+  bridgeMocks.reorderQueue.mockResolvedValue(structuredClone(queue));
   bridgeMocks.listHistory.mockResolvedValue({ items: structuredClone(mockSnapshot.sessions) });
   bridgeMocks.searchHistory.mockResolvedValue({ items: structuredClone(mockSnapshot.sessions) });
   bridgeMocks.onEngineEvent.mockImplementation((handler: (event: EngineEvent) => void) => {
@@ -104,6 +136,7 @@ beforeEach(() => {
   bridgeMocks.exportSessions.mockClear();
   bridgeMocks.pauseSession.mockClear();
   bridgeMocks.resumeSession.mockClear();
+  bridgeMocks.enqueueFiles.mockClear();
 });
 
 afterEach(() => {
@@ -223,6 +256,51 @@ describe("RecoGUI", () => {
     await renderLoadedApp();
     await user.click(screen.getByRole("button", { name: "文字起こしを再開" }));
     await waitFor(() => expect(bridgeMocks.resumeSession).toHaveBeenCalledWith("session-live"));
+  });
+
+  it("adds selected files to the persistent queue without starting a session", async () => {
+    const user = userEvent.setup();
+
+    useInactiveSnapshot();
+    await renderLoadedApp();
+    await user.click(screen.getByRole("button", { name: /新規文字起こし/ }));
+    await user.click(screen.getByRole("button", { name: /音声ファイルを選択/ }));
+
+    await waitFor(() =>
+      expect(bridgeMocks.enqueueFiles).toHaveBeenCalledWith([
+        { displayName: "test.wav", sourceToken: "token" },
+      ]),
+    );
+    expect(bridgeMocks.startSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ inputKind: "file" }),
+    );
+    expect(screen.getByText("test.wav")).toBeInTheDocument();
+  });
+
+  it("reconciles the queue from queue.changed events", async () => {
+    await renderLoadedApp();
+
+    bridgeMocks.eventHandler?.({
+      event: "queue.changed",
+      payload: {
+        autoAdvanceEnabled: false,
+        items: [
+          {
+            addedAt: "2026-07-21T00:00:00.000Z",
+            displayName: "missing.wav",
+            errorMessage: "ファイルが見つかりません",
+            id: "queue-invalid",
+            status: "invalid",
+            updatedAt: "2026-07-21T00:00:00.000Z",
+          },
+        ],
+        revision: 3,
+      },
+      sequence: 30,
+    });
+
+    expect(await screen.findByText("missing.wav")).toBeInTheDocument();
+    expect(screen.getByText("ファイルが見つかりません")).toBeInTheDocument();
   });
 
   it("requires confirmation before permanently deleting a completed session", async () => {

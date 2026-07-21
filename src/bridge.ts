@@ -1,4 +1,4 @@
-/* oxlint-disable no-ternary, curly */
+/* oxlint-disable no-ternary, curly, @stylistic/padding-line-between-statements */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -13,6 +13,8 @@ import type {
   HistoryPage,
   InputKind,
   ModelState,
+  QueueSnapshot,
+  SelectedAudioFile,
   SessionDetail,
   SessionSummary,
   SessionStatus,
@@ -75,6 +77,22 @@ interface RawSegment {
   startSample: number;
   endSample: number;
   text: string;
+}
+
+interface RawQueueItem {
+  itemId: string;
+  displayName: string;
+  state: "pending" | "invalid";
+  addedAt: string;
+  updatedAt: string;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+}
+
+interface RawQueueSnapshot {
+  revision: number;
+  autoAdvanceEnabled: boolean;
+  items: RawQueueItem[];
 }
 
 class SessionSnapshotChangedError extends Error {
@@ -150,9 +168,40 @@ function mapSessionDetail(value: RawSession): SessionDetail {
   };
 }
 
+function mapQueueSnapshot(value: RawQueueSnapshot): QueueSnapshot {
+  return {
+    autoAdvanceEnabled: value.autoAdvanceEnabled,
+    items: value.items.map((item) => ({
+      addedAt: item.addedAt,
+      displayName: item.displayName,
+      errorCode: item.errorCode ?? undefined,
+      errorMessage: item.errorMessage ?? undefined,
+      id: item.itemId,
+      status: item.state,
+      updatedAt: item.updatedAt,
+    })),
+    revision: value.revision,
+  };
+}
+
+const mockQueueSnapshot: QueueSnapshot = {
+  autoAdvanceEnabled: false,
+  items: [],
+  revision: 0,
+};
+
 export const recoBridge = {
   async cancelExport(operationId: string): Promise<void> {
     if (hasTauriRuntime()) await request("history.cancelExport", { operationId });
+  },
+
+  async clearQueue(): Promise<QueueSnapshot> {
+    if (!hasTauriRuntime()) {
+      mockQueueSnapshot.items = [];
+      mockQueueSnapshot.revision += 1;
+      return structuredClone(mockQueueSnapshot);
+    }
+    return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.clear"));
   },
 
   async deleteModel(): Promise<void> {
@@ -170,6 +219,23 @@ export const recoBridge = {
 
   async downloadModel(): Promise<void> {
     if (hasTauriRuntime()) await request("model.download");
+  },
+
+  async enqueueFiles(files: SelectedAudioFile[]): Promise<QueueSnapshot> {
+    if (!hasTauriRuntime()) {
+      mockQueueSnapshot.items.push(
+        ...files.map((file) => ({
+          addedAt: new Date().toISOString(),
+          displayName: file.displayName,
+          id: crypto.randomUUID(),
+          status: "pending" as const,
+          updatedAt: new Date().toISOString(),
+        })),
+      );
+      mockQueueSnapshot.revision += 1;
+      return structuredClone(mockQueueSnapshot);
+    }
+    return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.enqueueFiles", { files }));
   },
 
   async exportSessions(sessionIds: string[], format: ExportFormat): Promise<ExportResult> {
@@ -210,6 +276,11 @@ export const recoBridge = {
     );
 
     return { ...result, canceled: false };
+  },
+
+  async getQueueState(): Promise<QueueSnapshot> {
+    if (!hasTauriRuntime()) return structuredClone(mockQueueSnapshot);
+    return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.getState"));
   },
 
   async getSession(sessionId: string): Promise<SessionDetail> {
@@ -346,6 +417,14 @@ export const recoBridge = {
     if (!hasTauriRuntime()) return () => undefined;
 
     return listen<EngineEvent>("engine://event", ({ payload }) => {
+      if (payload.event === "queue.changed") {
+        handler({
+          ...payload,
+          payload: mapQueueSnapshot(payload.payload as RawQueueSnapshot),
+        });
+
+        return;
+      }
       if (payload.event !== "segment.persisted") {
         handler(payload);
 
@@ -370,18 +449,55 @@ export const recoBridge = {
     });
   },
 
+  async pauseQueue(): Promise<QueueSnapshot> {
+    if (!hasTauriRuntime()) {
+      mockQueueSnapshot.autoAdvanceEnabled = false;
+      return structuredClone(mockQueueSnapshot);
+    }
+    return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.pause"));
+  },
+
   async pauseSession(sessionId: string): Promise<void> {
     if (hasTauriRuntime()) await request("session.pause", { sessionId });
   },
 
-  async pickAudioFile(): Promise<{ inputName: string; inputToken: string } | null> {
-    if (!hasTauriRuntime()) return { inputName: "選択した音声.wav", inputToken: "mock-file-token" };
+  async pickAudioFiles(): Promise<SelectedAudioFile[] | null> {
+    if (!hasTauriRuntime()) {
+      return [{ displayName: "選択した音声.wav", sourceToken: "mock-file-token" }];
+    }
 
-    const selected = await invoke<{ displayName: string; token: string } | null>(
-      "select_audio_file",
+    const selected = await invoke<{ displayName: string; token: string }[] | null>(
+      "select_audio_files",
     );
 
-    return selected ? { inputName: selected.displayName, inputToken: selected.token } : null;
+    return selected?.map(({ displayName, token }) => ({ displayName, sourceToken: token })) ?? null;
+  },
+
+  async removeQueueItem(itemId: string): Promise<QueueSnapshot> {
+    if (!hasTauriRuntime()) {
+      mockQueueSnapshot.items = mockQueueSnapshot.items.filter(({ id }) => id !== itemId);
+      mockQueueSnapshot.revision += 1;
+      return structuredClone(mockQueueSnapshot);
+    }
+    return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.remove", { itemId }));
+  },
+
+  async reorderQueue(revision: number, itemIds: string[]): Promise<QueueSnapshot> {
+    if (!hasTauriRuntime()) {
+      if (revision !== mockQueueSnapshot.revision) throw new Error("Stale queue revision");
+      const itemsById = new Map(mockQueueSnapshot.items.map((item) => [item.id, item]));
+
+      mockQueueSnapshot.items = itemIds.flatMap((id) => {
+        const item = itemsById.get(id);
+
+        return item ? [item] : [];
+      });
+      mockQueueSnapshot.revision += 1;
+      return structuredClone(mockQueueSnapshot);
+    }
+    return mapQueueSnapshot(
+      await request<RawQueueSnapshot>("queue.reorder", { itemIds, revision }),
+    );
   },
 
   async resolveClose(resolution: "cancel" | "stopAndQuit" | "forceQuit"): Promise<void> {
@@ -427,6 +543,14 @@ export const recoBridge = {
       items: result.items.map(mapSessionSummary),
       nextCursor: result.nextCursor ?? undefined,
     };
+  },
+
+  async startQueue(): Promise<QueueSnapshot> {
+    if (!hasTauriRuntime()) {
+      mockQueueSnapshot.autoAdvanceEnabled = mockQueueSnapshot.items.length > 0;
+      return structuredClone(mockQueueSnapshot);
+    }
+    return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.start"));
   },
 
   async startSession(input: StartSessionInput): Promise<{ rowVersion: number; sessionId: string }> {
