@@ -41,6 +41,14 @@ pnpm dev
 - application windowが開き、sidecarが一つだけ起動する。
 - modelのdownload、cancel、verify、load、deleteが動作する。
 - マイクと音声ファイルからsessionを開始できる。
+- 複数ファイルを選択順でキューへ追加でき、追加直後と再起動後には自動開始しない。
+- 明示的な開始後は一件だけがactiveになり、実行中の追加項目も末尾から後続処理される。
+- queueの並べ替え、単一削除、全クリアが永続化され、stale revisionが拒否される。
+- 完了、失敗、入力ファイル検証失敗後は次へ進み、invalid項目は原因付きで残る。
+- Pause、Stop、sleep、quit後は次項目が開始されない。
+- paused file sessionのResume完了後にqueueの自動進行が再開する。
+- queue実行中はマイク開始とpaused sessionのResumeが拒否される。
+- queue itemが履歴、検索、Export、履歴削除へ混入しない。
 - Pauseが処理待ちを完了して`paused`になり、Resumeが同じsessionへ追記する。
 - `pausing`中は新規開始とresumeが拒否され、`paused`後は別sessionを開始できる。
 - 別sessionの処理中は新規開始と全paused sessionのresumeが拒否される。
