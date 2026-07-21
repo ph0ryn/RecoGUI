@@ -39,12 +39,12 @@ pnpm dev
 次を確認する。
 
 - application windowが開き、sidecarが一つだけ起動する。
-- `hf` CLIのキャッシュからすべてのmodel revisionが表示され、互換性によるフィルタが行われない。
+- Hugging Face共通キャッシュからすべてのmodel revisionが表示され、互換性によるフィルタが行われない。
 - model選択ではASR modelを読み込まず、再起動後も同じrepository IDとrevisionが復元される。
 - 起動、履歴閲覧、model一覧更新、idle、paused中にASR modelとworkerが生成されない。
 - 開始時は`preparing`中にmodelを一度だけ読み込み、成功後に`running`へ移る。
 - active sessionまたはqueue自動処理中はmodel切替が拒否され、paused sessionがある場合は切替できる。
-- `hf` CLI不在、model未選択、snapshot欠損、非互換modelの読込失敗が個別に表示される。
+- model未選択、snapshot欠損、非互換modelの読込失敗が個別に表示される。
 - modelを利用できない場合も履歴、検索、Exportは動作し、文字起こしだけが無効になる。
 - マイクと音声ファイルからsessionを開始できる。
 - idleかつ待機なしで複数ファイルを追加すると先頭だけを即時開始し、残りを選択順で待機表示する。

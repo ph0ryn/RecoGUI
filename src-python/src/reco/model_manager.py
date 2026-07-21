@@ -1,23 +1,21 @@
-"""Read-only discovery of models managed by the Hugging Face CLI."""
+"""Read-only discovery of models in the shared Hugging Face cache."""
 
 from __future__ import annotations
 
-import json
-import os
-import shutil
-import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from huggingface_hub import scan_cache_dir
+
 from reco.vad import SILERO_VAD_VERSION
 
 
 class ModelState(StrEnum):
-  CLI_MISSING = "cliMissing"
   UNSELECTED = "unselected"
   UNAVAILABLE = "unavailable"
   READY = "ready"
@@ -65,7 +63,7 @@ class ModelSnapshot:
     return result
 
 
-CliRunner = Callable[[list[str]], subprocess.CompletedProcess[str]]
+CacheScanner = Callable[[], Any]
 
 
 class ModelManager:
@@ -76,8 +74,7 @@ class ModelManager:
     assets_directory: Path,
     *,
     selected: ModelReference | None = None,
-    cli_runner: CliRunner | None = None,
-    executable_resolver: Callable[[], Path | None] | None = None,
+    cache_scanner: CacheScanner | None = None,
   ) -> None:
     self.assets_directory = assets_directory
     self.vad_asset_path = assets_directory / f"silero-vad-{SILERO_VAD_VERSION}.onnx"
@@ -85,8 +82,7 @@ class ModelManager:
     self._models: dict[tuple[str, str], CachedModel] = {}
     self._state = ModelState.UNSELECTED if selected is None else ModelState.UNAVAILABLE
     self._error: str | None = None
-    self._cli_runner = cli_runner or _run_cli
-    self._executable_resolver = executable_resolver or _resolve_hf_executable
+    self._cache_scanner = cache_scanner or scan_cache_dir
     self._lock = Lock()
     assets_directory.mkdir(parents=True, exist_ok=True)
 
@@ -95,20 +91,9 @@ class ModelManager:
       return ModelSnapshot(self._state, self.selected, self._error)
 
   def list_models(self) -> list[dict[str, object]]:
-    executable = self._executable_resolver()
-    if executable is None:
-      with self._lock:
-        self._models.clear()
-        self._state = ModelState.CLI_MISSING
-        self._error = "The Hugging Face CLI was not found"
-      return []
     try:
-      result = self._cli_runner([str(executable), "cache", "ls", "--revisions", "--format", "json"])
-      if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "hf cache ls failed")
-      raw = json.loads(result.stdout)
-      models = _parse_models(raw)
-    except (OSError, RuntimeError, json.JSONDecodeError, ValueError, TypeError) as exc:
+      models = _parse_models(self._cache_scanner())
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
       with self._lock:
         self._models.clear()
         self._state = ModelState.ERROR
@@ -155,40 +140,32 @@ class ModelManager:
       self._error = snapshot.error
 
 
-def _resolve_hf_executable() -> Path | None:
-  discovered = shutil.which("hf")
-  candidates = [Path(discovered)] if discovered else []
-  candidates.append(Path.home() / ".local" / "bin" / "hf")
-  return next((path for path in candidates if path.is_file() and os.access(path, os.X_OK)), None)
-
-
-def _run_cli(argv: list[str]) -> subprocess.CompletedProcess[str]:
-  return subprocess.run(argv, check=False, capture_output=True, text=True)
-
-
 def _parse_models(value: Any) -> list[CachedModel]:
-  if not isinstance(value, list):
-    raise ValueError("hf cache ls returned a non-array JSON value")
+  repos = getattr(value, "repos", None)
+  if repos is None:
+    raise ValueError("Hugging Face cache scan returned invalid metadata")
   models: list[CachedModel] = []
-  for entry in value:
-    if not isinstance(entry, Mapping) or entry.get("repo_type") != "model":
+  for repo in repos:
+    if getattr(repo, "repo_type", None) != "model":
       continue
-    repo_id = entry.get("repo_id")
-    revision = entry.get("revision")
-    snapshot_path = entry.get("snapshot_path")
-    if not all(isinstance(item, str) and item for item in (repo_id, revision, snapshot_path)):
-      raise ValueError("hf cache ls returned invalid model metadata")
-    refs_value = entry.get("refs", [])
-    if not isinstance(refs_value, list) or not all(isinstance(item, str) for item in refs_value):
-      raise ValueError("hf cache ls returned invalid model refs")
-    models.append(
-      CachedModel(
-        repo_id=repo_id,
-        revision=revision,
-        snapshot_path=Path(snapshot_path),
-        size=str(entry.get("size", "")),
-        last_modified=str(entry.get("last_modified", "")),
-        refs=tuple(refs_value),
+    for revision in repo.revisions:
+      models.append(
+        CachedModel(
+          repo_id=repo.repo_id,
+          revision=revision.commit_hash,
+          snapshot_path=revision.snapshot_path,
+          size=_format_size(revision.size_on_disk),
+          last_modified=datetime.fromtimestamp(revision.last_modified, UTC).isoformat(),
+          refs=tuple(sorted(revision.refs)),
+        )
       )
-    )
-  return models
+  return sorted(models, key=lambda model: (model.repo_id, model.revision))
+
+
+def _format_size(size: int) -> str:
+  value = float(size)
+  for unit in ("B", "KB", "MB", "GB", "TB"):
+    if value < 1000 or unit == "TB":
+      return f"{value:.1f}{unit}" if unit != "B" else f"{size}B"
+    value /= 1000
+  raise AssertionError("unreachable")

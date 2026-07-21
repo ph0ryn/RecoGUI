@@ -14,7 +14,6 @@ flowchart LR
   Sidecar["Python sidecar"]
   Engine["RecoEngine"]
   Runtime["MLX model runtime"]
-  HFCLI["hf CLI"]
   HFCache["Hugging Face cache"]
   Repository["RecordingRepository"]
   Database["reco.sqlite3"]
@@ -23,8 +22,7 @@ flowchart LR
   Host <-->|"versioned NDJSON"| Sidecar
   Sidecar --> Engine
   Engine --> Runtime
-  Engine --> HFCLI
-  HFCLI --> HFCache
+  Engine --> HFCache
   Runtime --> HFCache
   Engine --> Repository
   Repository --> Database
@@ -185,7 +183,7 @@ engine.exited
 `host://close-requested`と`host://close-force-required`はengine protocolではなく、
 application終了を調停するhost eventである。
 
-`ModelState.status`は`cliMissing`、`unselected`、`unavailable`、`ready`、`error`だけを返す。
+`ModelState.status`は`unselected`、`unavailable`、`ready`、`error`だけを返す。
 `ready`は選択revisionがcacheに存在して処理開始を試行できることを表し、model読込済みや
 MLX互換性確認済みを意味しない。runtimeの読込中はsessionの`preparing`で表す。
 
@@ -226,9 +224,9 @@ databaseへ保存しない。
 
 - マイクの元音声は保存しない。
 - 入力ファイルの絶対pathはresume専用にSQLiteへ保存し、ReactやExportへ含めない。
-- ASR modelは外部の`hf` CLIでHugging Face共通キャッシュへ保存する。
-- Python engineは`hf cache ls --revisions --format json`だけを固定引数で実行し、
-  `repo_type` が`model`のすべてのrevisionを候補とする。任意shellは公開しない。
+- ASR modelはアプリ外でHugging Face共通キャッシュへ保存する。
+- Python engineはHugging Face Hubのcache APIを読み取り専用で使用し、`repo_type` が`model`の
+  すべてのrevisionを候補とする。
 - 選択のrepository IDとrevisionはSQLiteに保存し、snapshot pathは毎回一覧から解決する。
   snapshot pathはReactやdatabaseへ公開しない。
 - `ModelManager`はcache列挙、snapshot pathの解決、既定model選択だけを担当し、model読込と

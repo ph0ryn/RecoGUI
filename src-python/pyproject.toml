@@ -14,7 +14,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "huggingface-hub>=0.34.0",
+  "huggingface-hub>=1.0",
   "mlx-audio[stt]>=0.4.3",
   "numpy>=2.4.5",
   "onnxruntime>=1.23.2",

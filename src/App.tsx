@@ -145,7 +145,6 @@ function getSnippet(session: SessionEntity, query: string): string | undefined {
 
 function modelStatusText(model: ModelState): string {
   const labels: Record<ModelState["status"], string> = {
-    cliMissing: "hf CLIが見つかりません。",
     error: "モデルを確認できませんでした。",
     ready: "利用可能",
     unavailable: "選択したモデルがHFキャッシュにありません。",
@@ -2358,7 +2357,7 @@ function SettingsDialog({
             <label>
               <span>使用するモデル</span>
               <select
-                disabled={disabled || isModelWorking || model.status === "cliMissing"}
+                disabled={disabled || isModelWorking}
                 onChange={(event) => void selectModel(event.target.value)}
                 value={model.selected ? `${model.selected.repoId}\n${model.selected.revision}` : ""}
               >

@@ -812,7 +812,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "huggingface-hub", specifier = ">=0.34.0" },
+    { name = "huggingface-hub", specifier = ">=1.0" },
     { name = "mlx-audio", extras = ["stt"], specifier = ">=0.4.3" },
     { name = "numpy", specifier = ">=2.4.5" },
     { name = "onnxruntime", specifier = ">=1.23.2" },
