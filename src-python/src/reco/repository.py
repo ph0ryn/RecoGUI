@@ -510,8 +510,45 @@ class RecordingRepository:
         ended_at=None,
       )
 
+  def fail_session(self, session_id: str, code: str, message: str) -> SessionMutationReceipt:
+    """Persist a failed state with a checkpoint after the last committed segment."""
+
+    now = _now()
+    with self._connect() as connection:
+      row = connection.execute(
+        """
+        UPDATE app_sessions
+        SET state = 'failed', end_reason = ?, error_code = ?, error_message = ?,
+            resume_sample = MAX(
+              resume_sample,
+              COALESCE(
+                (SELECT MAX(end_sample) FROM app_segments
+                 WHERE app_segments.session_id = app_sessions.session_id),
+                0
+              )
+            ),
+            ended_at = ?, updated_at = ?, row_version = row_version + 1
+        WHERE session_id = ? AND state IN ('preparing', 'running', 'pausing', 'stopping')
+        RETURNING state, row_version, total_segments, recognized_segments,
+          characters, media_duration_ms, ended_at
+        """,
+        (code, code, message, now, now, session_id),
+      ).fetchone()
+      if row is None:
+        raise RepositoryError(f"Session cannot fail: {session_id}")
+      self._update_search(connection, session_id)
+      return SessionMutationReceipt(
+        state=SessionState.FAILED,
+        row_version=int(row["row_version"]),
+        total_segments=int(row["total_segments"]),
+        recognized_segments=int(row["recognized_segments"]),
+        characters=int(row["characters"]),
+        media_duration_ms=int(row["media_duration_ms"]),
+        ended_at=str(row["ended_at"]),
+      )
+
   def get_resume_context(self, session_id: str) -> dict[str, Any]:
-    """Return private source and checkpoint data for one paused session."""
+    """Return private source and checkpoint data for one resumable session."""
 
     with self._connect(readonly=True) as connection:
       row = connection.execute(
@@ -525,8 +562,8 @@ class RecordingRepository:
       ).fetchone()
     if row is None:
       raise RepositoryError(f"Unknown session: {session_id}")
-    if row["state"] != "paused" or row["end_reason"] != "userPause":
-      raise RepositoryError(f"Session is not paused: {session_id}")
+    if row["state"] not in {"paused", "failed"}:
+      raise RepositoryError(f"Session is not resumable: {session_id}")
     return dict(row)
 
   def append_segment(self, session_id: str, segment: TranscriptSegment | RecordingSegment) -> SegmentMutationReceipt:

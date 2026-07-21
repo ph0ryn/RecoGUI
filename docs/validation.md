@@ -61,6 +61,7 @@ pnpm dev
 - queue実行中はマイク開始とpaused sessionのResumeが拒否される。
 - queue itemが履歴、検索、Export、履歴削除へ混入しない。
 - Pauseが処理待ちを完了して`paused`になり、Resumeが同じsessionへ追記する。
+- 失敗時は最後に保存したsegment終端がcheckpointになり、Retryが同じsessionへ重複なく追記する。
 - Pauseのdrain中はruntimeを保持し、`paused`保存後に解放する。
 - Pause後に既定modelを変更しても、Resumeでは元sessionに保存したrepository IDとrevisionを使用する。
 - 保存revisionのsnapshot欠損または読込失敗時は別modelへ切り替えず、resume位置と`paused`を維持する。

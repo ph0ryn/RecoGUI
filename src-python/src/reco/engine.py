@@ -448,7 +448,7 @@ class RecoEngine:
     return {"sessionId": session_id, **self._state_receipt(receipt)}
 
   def resume_session(self, session_id: str) -> dict[str, object]:
-    """Resume one durable paused session when the ASR slot is idle."""
+    """Resume one durable paused or failed session when the ASR slot is idle."""
 
     with self._lock:
       if self._shutting_down:
@@ -466,12 +466,16 @@ class RecoEngine:
       fingerprint = None
       if source_kind == "file":
         if source_path is None:
-          raise EngineCommandError("resume_source_missing", "The paused audio file path is unavailable")
-        fingerprint = fingerprint_file_snapshot(source_path)
+          raise EngineCommandError("resume_source_missing", "The session audio file path is unavailable")
+        try:
+          fingerprint = fingerprint_file_snapshot(source_path)
+        except RecoError as exc:
+          raise EngineCommandError("resume_source_unavailable", str(exc)) from exc
         if fingerprint.value != context.get("source_fingerprint"):
-          raise EngineCommandError("resume_source_changed", "The paused audio file has changed")
+          raise EngineCommandError("resume_source_changed", "The session audio file has changed")
       resume_sample = int(context["resume_sample"])
       segment_offset = int(context["total_segments"])
+      resumable_state = SessionState(str(context["state"]))
       model = context.get("model")
       model_revision = context.get("model_revision")
       if not isinstance(model, str) or not model or not isinstance(model_revision, str) or not model_revision:
@@ -490,7 +494,7 @@ class RecoEngine:
           resume_sample,
           segment_offset,
           model_reference,
-          True,
+          resumable_state,
         ),
         daemon=True,
         name=f"reco-session-{session_id}",
@@ -696,7 +700,7 @@ class RecoEngine:
     initial_sample: int = 0,
     segment_offset: int = 0,
     model_reference: ModelReference | None = None,
-    resuming: bool = False,
+    resuming_from: SessionState | None = None,
   ) -> None:
     runtime: ModelRuntime | None = None
     service: LocalAsrTranscriptionService | None = None
@@ -770,42 +774,51 @@ class RecoEngine:
     except BaseException as exc:
       code = exc.code if isinstance(exc, EngineCommandError) else "transcription_failed"
       runtime_failed = True
-      if resuming and not entered_running:
+      if resuming_from is not None and not entered_running:
         queue_changed = False
         with self._lock:
           if self._active_queue_origin:
             queue_changed = self._queue_auto_advance
             self._queue_auto_advance = False
-        paused_receipt = None
-        with _ignore_repository_error():
-          paused_receipt = self.repository.set_state(
+        if resuming_from is SessionState.PAUSED:
+          paused_receipt = None
+          with _ignore_repository_error():
+            paused_receipt = self.repository.set_state(
+              session_id,
+              SessionState.PAUSED,
+              end_reason="userPause",
+              error_code=code,
+              error_message=str(exc),
+            )
+          self._emit(
+            "session.stateChanged",
             session_id,
-            SessionState.PAUSED,
-            end_reason="userPause",
-            error_code=code,
-            error_message=str(exc),
+            {
+              **(self._state_receipt(paused_receipt) if paused_receipt is not None else {}),
+              "errorCode": code,
+              "errorMessage": str(exc),
+            },
           )
-        self._emit(
-          "session.stateChanged",
-          session_id,
-          {
-            **(self._state_receipt(paused_receipt) if paused_receipt is not None else {}),
-            "errorCode": code,
-            "errorMessage": str(exc),
-          },
-        )
+        else:
+          failed_receipt = None
+          with _ignore_repository_error():
+            failed_receipt = self.repository.fail_session(session_id, code, str(exc))
+          self._emit(
+            "session.failed",
+            session_id,
+            {
+              **(self._state_receipt(failed_receipt) if failed_receipt is not None else {}),
+              "code": code,
+              "message": str(exc),
+              "recoverable": True,
+            },
+          )
         if queue_changed:
           self._publish_queue_changed()
         return
       failed_receipt = None
       with _ignore_repository_error():
-        failed_receipt = self.repository.set_state(
-          session_id,
-          SessionState.FAILED,
-          end_reason=code,
-          error_code=code,
-          error_message=str(exc),
-        )
+        failed_receipt = self.repository.fail_session(session_id, code, str(exc))
       self._emit(
         "session.failed",
         session_id,

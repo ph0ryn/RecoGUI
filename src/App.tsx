@@ -65,6 +65,7 @@ const exportFormats: ExportFormat[] = ["timestampedTxt", "txt", "markdown", "jso
 const terminalStatuses: SessionStatus[] = ["completed", "stopped", "failed", "abandoned"];
 const deletableStatuses: SessionStatus[] = [...terminalStatuses, "paused"];
 const pausableStatuses: SessionStatus[] = ["preparing", "running", "pausing"];
+const resumableStatuses: SessionStatus[] = ["paused", "failed"];
 const emptyQueue: QueueSnapshot = { autoAdvanceEnabled: false, items: [], revision: 0 };
 
 function formatDuration(milliseconds: number): string {
@@ -891,13 +892,15 @@ function App() {
     }
   }
 
-  async function resumePaused(sessionId: string): Promise<void> {
+  async function resumeSession(sessionId: string): Promise<void> {
     setIsWorking(true);
     try {
       await recoBridge.resumeSession(sessionId);
       setToast("文字起こしを再開します。");
-    } catch {
-      setToast("再開できませんでした。別の文字起こしが処理中でないか確認してください。");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      setToast(`再開できませんでした: ${message}`);
     } finally {
       setIsWorking(false);
     }
@@ -1341,7 +1344,7 @@ function App() {
               onExport={() => openDialog("export")}
               onPause={() => void pauseActive(selectedSession.id)}
               onQueryChange={setDetailQuery}
-              onResume={() => void resumePaused(selectedSession.id)}
+              onResume={() => void resumeSession(selectedSession.id)}
               queueIsRunning={queue.autoAdvanceEnabled}
               progress={sessionProgress[selectedSession.id]}
               session={selectedSession}
@@ -1724,15 +1727,20 @@ function SessionHeader({
           <h1>{session.title}</h1>
         </div>
         <div className="header-actions">
-          {(pausableStatuses.includes(session.status) || session.status === "paused") && (
+          {(pausableStatuses.includes(session.status) ||
+            resumableStatuses.includes(session.status)) && (
             <>
-              {session.status === "paused" ? (
+              {resumableStatuses.includes(session.status) ? (
                 <button
-                  aria-label="文字起こしを再開"
+                  aria-label={
+                    session.status === "failed" ? "文字起こしを再試行" : "文字起こしを再開"
+                  }
                   className="icon-button session-control-button"
                   disabled={disabled || hasActiveSession || queueIsRunning}
                   onClick={onResume}
-                  title="文字起こしを再開"
+                  title={
+                    session.status === "failed" ? "保存済みの続きから再試行" : "文字起こしを再開"
+                  }
                   type="button"
                 >
                   <svg aria-hidden="true" viewBox="0 0 16 16">
@@ -1841,7 +1849,11 @@ function Transcript({
           <div className="error-banner" role="alert">
             <strong>{statusLabels[session.status]}</strong>
             <p>{session.errorMessage}</p>
-            <small>保存済みの内容は閲覧・Exportできます。</small>
+            <small>
+              {session.status === "failed"
+                ? "保存済みの続きから再試行できます。"
+                : "保存済みの内容は閲覧・Exportできます。"}
+            </small>
           </div>
         )}
         {detailQuery && <p className="search-summary">{segments.length}件の一致</p>}

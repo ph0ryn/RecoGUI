@@ -490,6 +490,83 @@ def test_restarting_engine_recognizes_paused_file_session_as_queue_origin(
   assert ordering[:2] == ["session.stateChanged", "start"]
 
 
+def test_failed_file_session_retries_from_its_committed_checkpoint(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  source = tmp_path / "audio.wav"
+  source.write_bytes(b"stable audio identity")
+  fingerprint = fingerprint_file_snapshot(source)
+  database = tmp_path / "reco.sqlite3"
+  repository = RecordingRepository(database)
+  session_id = repository.create_session(
+    NewSession(
+      "file",
+      source.name,
+      "model",
+      "revision",
+      "Japanese",
+      16_000,
+      "Audio",
+      source_fingerprint=fingerprint.value,
+      source_path=str(source),
+    )
+  )
+  repository.set_state(session_id, SessionState.RUNNING)
+  repository.append_segment(session_id, segment())
+  repository.fail_session(session_id, "transcription_failed", "Broken pipe")
+  captured: list[tuple[object, ...]] = []
+
+  class CapturingThread:
+    def __init__(self, *, target: object, args: tuple[object, ...], **options: object) -> None:
+      del target, options
+      captured.append(args)
+
+    def start(self) -> None:
+      return None
+
+  engine = RecoEngine(database, tmp_path / "models")
+  monkeypatch.setattr(engine_module, "Thread", CapturingThread)
+
+  engine.resume_session(session_id)
+
+  assert captured[0][5] == 16_000
+  assert captured[0][6] == 1
+  assert captured[0][8] is SessionState.FAILED
+  assert engine.repository.get_session(session_id)["state"] == "preparing"
+
+
+def test_failed_file_retry_reports_an_unavailable_source_without_losing_its_checkpoint(tmp_path: Path) -> None:
+  source = tmp_path / "missing.wav"
+  database = tmp_path / "reco.sqlite3"
+  repository = RecordingRepository(database)
+  session_id = repository.create_session(
+    NewSession(
+      "file",
+      source.name,
+      "model",
+      "revision",
+      "Japanese",
+      16_000,
+      "Audio",
+      source_fingerprint="sha256:missing",
+      source_path=str(source),
+    )
+  )
+  repository.set_state(session_id, SessionState.RUNNING)
+  repository.append_segment(session_id, segment())
+  repository.fail_session(session_id, "transcription_failed", "Broken pipe")
+  engine = RecoEngine(database, tmp_path / "models")
+
+  with pytest.raises(EngineCommandError) as failure:
+    engine.resume_session(session_id)
+
+  assert failure.value.code == "resume_source_unavailable"
+  session = engine.repository.get_session(session_id)
+  assert session["state"] == "failed"
+  assert session["resume_sample"] == 16_000
+  assert engine._active_session_id is None
+
+
 def test_scheduler_marks_missing_item_invalid_and_stops_without_creating_history(tmp_path: Path) -> None:
   engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
   engine.repository.enqueue_files(
@@ -889,13 +966,49 @@ def test_resume_model_initialization_failure_preserves_the_checkpoint(
     control,
     initial_sample=48_000,
     model_reference=reference,
-    resuming=True,
+    resuming_from=SessionState.PAUSED,
   )
 
   session = engine.repository.get_session(session_id)
   assert session["state"] == "paused"
   assert session["resume_sample"] == 48_000
   assert session["error_code"] == "model_load_failed"
+  assert engine._active_session_id is None
+
+
+def test_failed_retry_model_initialization_failure_preserves_the_checkpoint(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  reference = ModelReference("owner/model", "revision")
+  engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
+  session_id = engine.repository.create_session(
+    NewSession("microphone", "Microphone", reference.repo_id, reference.revision, "Japanese", 16_000, "Recording")
+  )
+  engine.repository.set_state(session_id, SessionState.RUNNING)
+  engine.repository.append_segment(session_id, segment())
+  engine.repository.fail_session(session_id, "transcription_failed", "Broken pipe")
+  engine.repository.set_state(session_id, SessionState.PREPARING)
+  control = SessionControl()
+  monkeypatch.setattr(engine.model_manager, "resolve", lambda requested: None)
+  engine._active_session_id = session_id
+  engine._active_control = control
+
+  engine._run_session(
+    session_id,
+    None,
+    None,
+    None,
+    control,
+    initial_sample=16_000,
+    segment_offset=1,
+    model_reference=reference,
+    resuming_from=SessionState.FAILED,
+  )
+
+  session = engine.repository.get_session(session_id)
+  assert session["state"] == "failed"
+  assert session["resume_sample"] == 16_000
+  assert session["error_code"] == "model_unavailable"
   assert engine._active_session_id is None
 
 

@@ -381,6 +381,31 @@ describe("RecoGUI", () => {
     await waitFor(() => expect(bridgeMocks.resumeSession).toHaveBeenCalledWith("session-live"));
   });
 
+  it("retries a failed session from its saved checkpoint", async () => {
+    const user = userEvent.setup();
+
+    bridgeMocks.getSnapshot.mockResolvedValue({
+      ...structuredClone(mockSnapshot),
+      activeSessionId: undefined,
+      sessions: structuredClone(mockSnapshot.sessions).map((session) =>
+        session.id === "session-live"
+          ? {
+              ...session,
+              errorCode: "transcription_failed",
+              errorMessage: "Broken pipe",
+              status: "failed" as const,
+            }
+          : session,
+      ),
+    });
+    await renderLoadedApp();
+
+    expect(screen.getByText("保存済みの続きから再試行できます。")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "文字起こしを再試行" }));
+
+    await waitFor(() => expect(bridgeMocks.resumeSession).toHaveBeenCalledWith("session-live"));
+  });
+
   it("keeps a failed resume paused and shows the model error", async () => {
     useInactiveSnapshot();
     await renderLoadedApp();

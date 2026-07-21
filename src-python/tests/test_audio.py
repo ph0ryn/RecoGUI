@@ -161,6 +161,19 @@ def test_local_audio_file_input_resumes_at_a_frame_checkpoint(tmp_path: Path) ->
   np.testing.assert_allclose(chunks[0].samples, signal[VAD_FRAME_SAMPLES : VAD_FRAME_SAMPLES * 2])
 
 
+def test_local_audio_file_input_resumes_at_an_unaligned_checkpoint_without_losing_samples(tmp_path: Path) -> None:
+  path = tmp_path / "tone.wav"
+  signal = np.arange(VAD_FRAME_SAMPLES * 3, dtype=np.float32) / 10_000
+  sf.write(path, signal, SAMPLE_RATE, format="WAV", subtype="FLOAT")
+  checkpoint = VAD_FRAME_SAMPLES + 123
+
+  chunks = list(LocalAudioFileInput(path, start_sample=checkpoint).open().chunks)
+
+  assert [chunk.start_sample for chunk in chunks] == [checkpoint, checkpoint + VAD_FRAME_SAMPLES]
+  assert [chunk.samples.size for chunk in chunks] == [VAD_FRAME_SAMPLES, VAD_FRAME_SAMPLES - 123]
+  np.testing.assert_allclose(np.concatenate([chunk.samples for chunk in chunks]), signal[checkpoint:])
+
+
 def test_microphone_input_source_uses_input_device_name(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setattr("reco.audio.resolve_microphone_device_name", lambda device=None: "Studio Mic")
 

@@ -273,7 +273,8 @@ def iter_audio_file_frames(
         source_rate = source.samplerate
         resampler = soxr.ResampleStream(source_rate, SAMPLE_RATE, 1, dtype="float32")
         pending = np.array([], dtype=np.float32)
-        cursor_sample = 0
+        cursor_sample = start_sample
+        remaining_to_skip = start_sample
         blocks = source.blocks(
           blocksize=max(frame_samples * 16, frame_samples),
           dtype="float32",
@@ -282,8 +283,14 @@ def iter_audio_file_frames(
         for block in blocks:
           mono = normalize_channels(block)
           resampled = _resample_stream_chunk(resampler, mono, last=False, source_rate=source_rate)
+          if remaining_to_skip >= resampled.size:
+            remaining_to_skip -= resampled.size
+            continue
+          if remaining_to_skip:
+            resampled = ensure_float32(resampled[remaining_to_skip:])
+            remaining_to_skip = 0
           frames, pending, cursor_sample = split_complete_frames(pending, resampled, cursor_sample, frame_samples)
-          yield from (frame for frame in frames if frame.start_sample >= start_sample)
+          yield from frames
 
         flushed = _resample_stream_chunk(
           resampler,
@@ -291,12 +298,16 @@ def iter_audio_file_frames(
           last=True,
           source_rate=source_rate,
         )
+        if remaining_to_skip >= flushed.size:
+          remaining_to_skip -= flushed.size
+          flushed = np.array([], dtype=np.float32)
+        elif remaining_to_skip:
+          flushed = ensure_float32(flushed[remaining_to_skip:])
+          remaining_to_skip = 0
         frames, pending, cursor_sample = split_complete_frames(pending, flushed, cursor_sample, frame_samples)
-        yield from (frame for frame in frames if frame.start_sample >= start_sample)
+        yield from frames
         if pending.size:
-          chunk = AudioChunk(samples=ensure_float32(pending), sample_rate=SAMPLE_RATE, start_sample=cursor_sample)
-          if chunk.start_sample >= start_sample:
-            yield chunk
+          yield AudioChunk(samples=ensure_float32(pending), sample_rate=SAMPLE_RATE, start_sample=cursor_sample)
       completed_identity = AudioFileIdentity.from_stat(fstat(raw_source.fileno()))
       if expected_identity is not None and completed_identity != expected_identity:
         raise RecoError(f"Audio file changed while it was being transcribed: {path}")

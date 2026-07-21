@@ -409,6 +409,52 @@ def test_paused_session_and_resume_context_survive_repository_restart(tmp_path: 
   }
 
 
+def test_failed_session_uses_the_last_committed_segment_as_its_resume_checkpoint(tmp_path: Path) -> None:
+  database = tmp_path / "reco.sqlite3"
+  repository = RecordingRepository(database)
+  session_id = repository.create_session(
+    replace(
+      new_session(),
+      source_path="/private/tmp/lecture.wav",
+    )
+  )
+  repository.set_state(session_id, SessionState.RUNNING)
+  repository.append_segment(session_id, segment())
+  repository.append_segment(session_id, segment(index=1))
+
+  receipt = repository.fail_session(session_id, "transcription_failed", "Broken pipe")
+  reopened = RecordingRepository(database)
+  failed = reopened.get_session(session_id)
+
+  assert receipt.state is SessionState.FAILED
+  assert failed["resume_sample"] == 32_000
+  assert reopened.get_resume_context(session_id) == {
+    "session_id": session_id,
+    "state": "failed",
+    "end_reason": "transcription_failed",
+    "source_kind": "file",
+    "source_path": "/private/tmp/lecture.wav",
+    "source_device_id": None,
+    "source_fingerprint": "sha256:test",
+    "model": "model",
+    "model_revision": "revision",
+    "resume_sample": 32_000,
+    "total_segments": 2,
+  }
+
+
+def test_failed_session_checkpoint_never_moves_backwards(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(new_session())
+  repository.set_state(session_id, SessionState.PAUSING)
+  repository.pause_session(session_id, 48_000)
+  repository.set_state(session_id, SessionState.PREPARING)
+
+  repository.fail_session(session_id, "model_load_failed", "Model could not be loaded")
+
+  assert repository.get_session(session_id)["resume_sample"] == 48_000
+
+
 def test_queue_is_durable_reorderable_and_private(tmp_path: Path) -> None:
   database = tmp_path / "reco.sqlite3"
   repository = RecordingRepository(database)
