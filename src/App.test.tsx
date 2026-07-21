@@ -245,10 +245,12 @@ describe("RecoGUI", () => {
   });
 
   it("starts microphone transcription with Cmd+N", async () => {
+    const user = userEvent.setup();
+
     useInactiveSnapshot();
     await renderLoadedApp();
 
-    fireEvent.keyDown(window, { key: "n", metaKey: true });
+    await user.keyboard("{Meta>}n{/Meta}");
     await waitFor(() =>
       expect(bridgeMocks.startSession).toHaveBeenCalledWith({
         deviceId: undefined,
@@ -259,9 +261,11 @@ describe("RecoGUI", () => {
   });
 
   it("opens file selection with Cmd+Shift+N while another session is active", async () => {
+    const user = userEvent.setup();
+
     await renderLoadedApp();
 
-    fireEvent.keyDown(window, { key: "n", metaKey: true, shiftKey: true });
+    await user.keyboard("{Meta>}{Shift>}n{/Shift}{/Meta}");
     await waitFor(() => expect(bridgeMocks.pickAudioFiles).toHaveBeenCalled());
     expect(bridgeMocks.enqueueFiles).toHaveBeenCalledWith(
       [{ displayName: "test.wav", sourceToken: "token" }],
