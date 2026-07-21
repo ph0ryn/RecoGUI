@@ -90,16 +90,8 @@ beforeEach(() => {
 
   bridgeMocks.getQueueState.mockResolvedValue(structuredClone(queue));
   bridgeMocks.enqueueFiles.mockResolvedValue({
-    autoAdvanceEnabled: false,
-    items: [
-      {
-        addedAt: "2026-07-21T00:00:00.000Z",
-        displayName: "test.wav",
-        id: "queue-1",
-        status: "pending",
-        updatedAt: "2026-07-21T00:00:00.000Z",
-      },
-    ],
+    autoAdvanceEnabled: true,
+    items: [],
     revision: 1,
   });
   bridgeMocks.startQueue.mockResolvedValue({
@@ -258,7 +250,7 @@ describe("RecoGUI", () => {
     await waitFor(() => expect(bridgeMocks.resumeSession).toHaveBeenCalledWith("session-live"));
   });
 
-  it("adds selected files to the persistent queue without starting a session", async () => {
+  it("submits a single idle file without showing an empty queue", async () => {
     const user = userEvent.setup();
 
     useInactiveSnapshot();
@@ -274,7 +266,17 @@ describe("RecoGUI", () => {
     expect(bridgeMocks.startSession).not.toHaveBeenCalledWith(
       expect.objectContaining({ inputKind: "file" }),
     );
-    expect(screen.getByText("test.wav")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "処理キュー" })).not.toBeInTheDocument();
+  });
+
+  it("keeps file selection available while a session is active", async () => {
+    const user = userEvent.setup();
+
+    await renderLoadedApp();
+    await user.click(screen.getByRole("button", { name: /新規文字起こし/ }));
+
+    expect(screen.getByRole("button", { name: /マイクで録音/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /音声ファイルを選択/ })).toBeEnabled();
   });
 
   it("reconciles the queue from queue.changed events", async () => {

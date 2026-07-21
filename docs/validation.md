@@ -41,7 +41,10 @@ pnpm dev
 - application windowが開き、sidecarが一つだけ起動する。
 - modelのdownload、cancel、verify、load、deleteが動作する。
 - マイクと音声ファイルからsessionを開始できる。
-- 複数ファイルを選択順でキューへ追加でき、追加直後と再起動後には自動開始しない。
+- idleかつ待機なしで複数ファイルを追加すると先頭だけを即時開始し、残りを選択順で待機表示する。
+- active session中または既存の待機がある場合は開始せず、選択順で末尾へ追加する。
+- 再起動後は待機項目を復元するだけで自動開始しない。
+- キューUIには未開始のpendingまたはinvalid項目だけが表示され、active Sessionは含まれない。
 - 明示的な開始後は一件だけがactiveになり、実行中の追加項目も末尾から後続処理される。
 - queueの並べ替え、単一削除、全クリアが永続化され、stale revisionが拒否される。
 - 完了、失敗、入力ファイル検証失敗後は次へ進み、invalid項目は原因付きで残る。

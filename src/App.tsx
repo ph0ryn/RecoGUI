@@ -688,7 +688,7 @@ function App() {
         if (!files?.length) return;
         setQueue(await recoBridge.enqueueFiles(files));
         setDialog(null);
-        setToast(`${files.length}件を処理キューに追加しました。`);
+        setToast(`${files.length}件の音声ファイルを受け付けました。`);
         return;
       }
       const input: {
@@ -936,28 +936,30 @@ function App() {
         </div>
       </header>
       <aside aria-label="文字起こし履歴" className="history-pane">
-        <QueuePanel
-          disabled={isQueueWorking}
-          hasActiveSession={activeSessionId !== undefined}
-          queue={queue}
-          onAdd={() => void addFilesToQueue()}
-          onClear={() =>
-            void updateQueue(() => recoBridge.clearQueue(), "キューをクリアできませんでした。")
-          }
-          onMove={(itemId, offset) => reorderQueueItem(itemId, offset)}
-          onPause={() =>
-            void updateQueue(() => recoBridge.pauseQueue(), "キューを停止できませんでした。")
-          }
-          onRemove={(itemId) =>
-            void updateQueue(
-              () => recoBridge.removeQueueItem(itemId),
-              "キューから削除できませんでした。",
-            )
-          }
-          onStart={() =>
-            void updateQueue(() => recoBridge.startQueue(), "キューを開始できませんでした。")
-          }
-        />
+        {queue.items.length > 0 && (
+          <QueuePanel
+            disabled={isQueueWorking}
+            hasActiveSession={activeSessionId !== undefined}
+            queue={queue}
+            onAdd={() => void addFilesToQueue()}
+            onClear={() =>
+              void updateQueue(() => recoBridge.clearQueue(), "キューをクリアできませんでした。")
+            }
+            onMove={(itemId, offset) => reorderQueueItem(itemId, offset)}
+            onPause={() =>
+              void updateQueue(() => recoBridge.pauseQueue(), "キューを停止できませんでした。")
+            }
+            onRemove={(itemId) =>
+              void updateQueue(
+                () => recoBridge.removeQueueItem(itemId),
+                "キューから削除できませんでした。",
+              )
+            }
+            onStart={() =>
+              void updateQueue(() => recoBridge.startQueue(), "キューを開始できませんでした。")
+            }
+          />
+        )}
         <div className="history-toolbar">
           <div className="history-search-row">
             <label className="history-search">
@@ -1090,7 +1092,7 @@ function App() {
         <button
           aria-label="新規文字起こし"
           className="record-button"
-          disabled={activeSessionId !== undefined || queue.autoAdvanceEnabled}
+          disabled={isWorking || isQueueWorking}
           onClick={() => openDialog("new")}
           ref={newButtonRef}
           title="新規文字起こし"
