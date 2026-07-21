@@ -1,6 +1,7 @@
 /* oxlint-disable no-ternary, curly, @stylistic/padding-line-between-statements */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
 import { mockSnapshot } from "./mockData";
 
@@ -202,6 +203,16 @@ export const recoBridge = {
       return structuredClone(mockQueueSnapshot);
     }
     return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.clear"));
+  },
+
+  async copySessions(sessionIds: string[], format: ExportFormat): Promise<void> {
+    const content = await this.renderSessions(sessionIds, format);
+
+    if (hasTauriRuntime()) {
+      await writeText(content);
+      return;
+    }
+    await navigator.clipboard.writeText(content);
   },
 
   async deleteModel(): Promise<void> {
@@ -491,6 +502,24 @@ export const recoBridge = {
     }
 
     return request("history.rename", { sessionId, title });
+  },
+
+  async renderSessions(sessionIds: string[], format: ExportFormat): Promise<string> {
+    if (!hasTauriRuntime()) {
+      return mockSnapshot.sessions
+        .filter(({ id }) => sessionIds.includes(id))
+        .flatMap((session) =>
+          "segments" in session ? session.segments.map(({ text }) => text) : [],
+        )
+        .join("\n");
+    }
+
+    const result = await request<{ content: string }>("history.render", {
+      format,
+      sessionIds,
+    });
+
+    return result.content;
   },
 
   async reorderQueue(revision: number, itemIds: string[]): Promise<QueueSnapshot> {

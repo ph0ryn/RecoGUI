@@ -22,6 +22,7 @@ class StubRepository:
     self.states: list[tuple[str, SessionState]] = []
     self.search_options: dict[str, object] | None = None
     self.rename_call: tuple[str, str] | None = None
+    self.render_call: tuple[list[str], str] | None = None
 
   def export_sessions(
     self,
@@ -49,6 +50,10 @@ class StubRepository:
   def rename_session(self, session_id: str, title: str) -> dict[str, object]:
     self.rename_call = (session_id, title)
     return {"session_id": session_id, "title": title.strip(), "row_version": 4}
+
+  def render_sessions(self, session_ids: list[str], export_format: str) -> str:
+    self.render_call = (session_ids, export_format)
+    return "rendered transcript"
 
 
 class StubEngine:
@@ -266,6 +271,16 @@ def test_history_rename_updates_the_repository_and_emits_history_changed() -> No
   assert result == {"sessionId": session_id, "title": "Renamed", "rowVersion": 4}
   assert engine.repository.rename_call == (session_id, "Renamed")
   assert cast(StubWriter, server.writer).events == [("history.changed", {"sessionId": session_id})]
+
+
+def test_history_render_returns_clipboard_content() -> None:
+  server, engine = server_with_stub()
+  session_id = str(uuid4())
+
+  result = server.dispatch(request("history.render", {"sessionIds": [session_id], "format": "markdown"}))
+
+  assert result == {"content": "rendered transcript"}
+  assert engine.repository.render_call == ([session_id], "markdown")
 
 
 def test_engine_state_does_not_expose_managed_model_path(tmp_path: Path) -> None:

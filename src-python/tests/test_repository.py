@@ -88,6 +88,22 @@ def test_rename_session_rejects_blank_and_oversized_titles(tmp_path: Path) -> No
     repository.rename_session(session_id, "x" * 201)
 
 
+def test_render_sessions_returns_selected_format_without_private_source_metadata(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(
+    replace(new_session(), source_path="/private/audio.wav", source_device_id="private-device")
+  )
+  repository.set_state(session_id, SessionState.RUNNING)
+  repository.append_segment(session_id, segment(text="clipboard text"))
+
+  assert repository.render_sessions([session_id], "txt") == "clipboard text"
+  rendered_json = repository.render_sessions([session_id], "json")
+
+  assert "clipboard text" in rendered_json
+  assert "/private/audio.wav" not in rendered_json
+  assert "private-device" not in rendered_json
+
+
 def test_append_segment_returns_monotonic_committed_session_values(tmp_path: Path) -> None:
   repository = RecordingRepository(tmp_path / "reco.sqlite3")
   session_id = repository.create_session(new_session())

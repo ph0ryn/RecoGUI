@@ -796,6 +796,44 @@ class RecordingRepository:
       raise
     return ExportResult(tuple(str(snapshot["session_id"]) for snapshot in snapshots), tuple(failures))
 
+  def render_sessions(self, session_ids: Iterable[str], export_format: str) -> str:
+    """Render selected sessions for clipboard transfer without exposing private source metadata."""
+
+    ids = tuple(dict.fromkeys(session_ids))
+    if not ids:
+      raise ValueError("At least one session is required for rendering")
+    normalized = "md" if export_format.casefold() == "markdown" else export_format.casefold()
+    if normalized not in {"txt", "md", "json", "srt", "vtt", "csv"}:
+      raise ValueError(f"Unsupported render format: {export_format}")
+    snapshots: list[dict[str, Any]] = []
+    with self._connect(readonly=True) as connection:
+      connection.execute("BEGIN")
+      try:
+        for session_id in ids:
+          row = connection.execute("SELECT * FROM app_sessions WHERE session_id = ?", (session_id,)).fetchone()
+          if row is None:
+            raise RepositoryError(f"Unknown session: {session_id}")
+          snapshot = dict(row)
+          for private_key in ("source_path", "source_device_id", "resume_sample"):
+            snapshot.pop(private_key, None)
+          snapshot["segments"] = [
+            dict(segment)
+            for segment in connection.execute(
+              """
+              SELECT segment_index, start_sample, end_sample, split_reason, text, raw_text, diagnostics_json
+              FROM app_segments WHERE session_id = ? ORDER BY segment_index
+              """,
+              (session_id,),
+            )
+          ]
+          snapshots.append(snapshot)
+        connection.execute("COMMIT")
+      except BaseException:
+        with suppress(sqlite3.Error):
+          connection.execute("ROLLBACK")
+        raise
+    return _render_export(snapshots, normalized).decode("utf-8")
+
   def integrity_check(self) -> None:
     """Validate foreign keys and database structure."""
 

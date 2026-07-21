@@ -190,6 +190,13 @@ class SidecarServer:
       )
       self._event("history.changed", str(result["session_id"]), {"sessionId": result["session_id"]})
       return _mapping(_camel(result))
+    if command == "history.render":
+      return {
+        "content": self.engine.repository.render_sessions(
+          _string_list(payload.get("sessionIds")),
+          str(payload.get("format", "txt")),
+        )
+      }
     if command in {"history.delete", "history.deleteMany"}:
       ids = [_session_id(request, payload)] if command == "history.delete" else _string_list(payload.get("sessionIds"))
       return {"deleted": self.engine.repository.delete_sessions(ids)}

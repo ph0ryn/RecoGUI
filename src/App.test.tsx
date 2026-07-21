@@ -18,6 +18,7 @@ const bridgeMocks = vi.hoisted(() => ({
     | ((payload: { error: string; sessionId: string | null }) => void)
     | undefined,
   closeHandler: undefined as ((payload: { sessionId: string }) => void) | undefined,
+  copySessions: vi.fn(),
   deleteModel: vi.fn(),
   deleteSessions: vi.fn(),
   downloadModel: vi.fn(),
@@ -127,6 +128,7 @@ beforeEach(() => {
     },
   );
   bridgeMocks.deleteSessions.mockClear();
+  bridgeMocks.copySessions.mockClear();
   bridgeMocks.exportSessions.mockClear();
   bridgeMocks.pauseSession.mockClear();
   bridgeMocks.pauseQueue.mockClear();
@@ -379,6 +381,21 @@ describe("RecoGUI", () => {
     await waitFor(() =>
       expect(bridgeMocks.exportSessions).toHaveBeenCalledWith(["session-1"], "json"),
     );
+  });
+
+  it("copies a selected session in the chosen format", async () => {
+    const user = userEvent.setup();
+
+    await renderLoadedApp();
+    await user.click(screen.getByRole("option", { name: /プロジェクト定例/ }));
+    await user.click(screen.getByRole("button", { name: /Export/ }));
+    await user.click(screen.getByRole("radio", { name: /Markdown/ }));
+    await user.click(screen.getByRole("button", { name: "コピー" }));
+
+    await waitFor(() =>
+      expect(bridgeMocks.copySessions).toHaveBeenCalledWith(["session-1"], "markdown"),
+    );
+    expect(await screen.findByText("コピーしました。")).toBeInTheDocument();
   });
 
   it("supports arrow-key selection and restores focus after a dialog", async () => {

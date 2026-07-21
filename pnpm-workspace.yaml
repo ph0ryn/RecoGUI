@@ -5,6 +5,7 @@ catalog:
   '@stylistic/eslint-plugin': ^5.10.0
   '@tauri-apps/api': ^2.11.1
   '@tauri-apps/cli': ^2.11.4
+  '@tauri-apps/plugin-clipboard-manager': ^2.3.2
   '@tauri-apps/plugin-opener': ^2.5.4
   '@testing-library/jest-dom': ^6.9.1
   '@testing-library/react': ^16.3.2

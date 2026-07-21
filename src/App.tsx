@@ -871,6 +871,22 @@ function App() {
     );
   }
 
+  async function copySelected(): Promise<void> {
+    setIsWorking(true);
+    try {
+      await recoBridge.copySessions(
+        selectedSessions.map(({ id }) => id),
+        exportFormat,
+      );
+      setDialog(null);
+      setToast("コピーしました。");
+    } catch {
+      setToast("コピーできませんでした。");
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
   async function renameSession(title: string): Promise<void> {
     if (!renameTarget) return;
     setIsWorking(true);
@@ -1223,6 +1239,7 @@ function App() {
           disabled={isWorking}
           format={exportFormat}
           onClose={closeDialog}
+          onCopy={() => void copySelected()}
           onConfirm={() => void exportSelected()}
           onFormatChange={setExportFormat}
           sessions={selectedSessions}
@@ -1988,6 +2005,7 @@ function ExportDialog({
   disabled,
   format,
   onClose,
+  onCopy,
   onConfirm,
   onFormatChange,
   sessions,
@@ -1996,6 +2014,7 @@ function ExportDialog({
   format: ExportFormat;
   sessions: SessionEntity[];
   onClose: () => void;
+  onCopy: () => void;
   onConfirm: () => void;
   onFormatChange: (format: ExportFormat) => void;
 }) {
@@ -2032,8 +2051,8 @@ function ExportDialog({
         <p className="info-note">各セッションのファイルとmanifestをZIPにまとめます。</p>
       )}
       <div className="dialog-actions">
-        <button className="secondary-button" onClick={onClose} type="button">
-          キャンセル
+        <button className="primary-button" disabled={disabled} onClick={onCopy} type="button">
+          コピー
         </button>
         <button className="primary-button" disabled={disabled} onClick={onConfirm} type="button">
           保存先を選択…
