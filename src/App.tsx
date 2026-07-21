@@ -180,6 +180,9 @@ function App() {
   const [paneWidth, setPaneWidth] = useState(320);
   const [autoFollow, setAutoFollow] = useState(true);
   const [selectedDeviceId, setSelectedDeviceId] = useState(initialPreferences.defaultInputDeviceId);
+  const [selectedLanguage, setSelectedLanguage] = useState(
+    initialPreferences.transcriptionLanguage,
+  );
   const [audioInputs, setAudioInputs] = useState<AudioInput[]>([]);
   const [exportOperation, setExportOperation] = useState<ExportOperation>();
   const [sessionProgress, setSessionProgress] = useState<Record<string, number>>({});
@@ -205,8 +208,9 @@ function App() {
   useEffect(() => {
     saveAppPreferences({
       defaultInputDeviceId: selectedDeviceId,
+      transcriptionLanguage: selectedLanguage,
     });
-  }, [selectedDeviceId]);
+  }, [selectedDeviceId, selectedLanguage]);
 
   useEffect(() => {
     void recoBridge.listAudioInputs().then((availableInputs) => {
@@ -828,7 +832,7 @@ function App() {
         const files = await recoBridge.pickAudioFiles();
 
         if (!files?.length) return;
-        setQueue(await recoBridge.enqueueFiles(files));
+        setQueue(await recoBridge.enqueueFiles(files, selectedLanguage));
         setDialog(null);
         setToast(`${files.length}件の音声ファイルを受け付けました。`);
         return;
@@ -838,9 +842,11 @@ function App() {
         inputKind: InputKind;
         inputName?: string;
         inputToken?: string;
+        language: string | null;
       } = {
         deviceId: selectedDeviceId || undefined,
         inputKind,
+        language: selectedLanguage,
       };
 
       const { rowVersion, sessionId } = await recoBridge.startSession(input);
@@ -851,7 +857,7 @@ function App() {
         id: sessionId,
         inputKind,
         inputName: input.inputName ?? "システムの既定マイク",
-        language: "日本語",
+        language: selectedLanguage ?? "自動",
         model: "Qwen3-ASR 1.7B JA",
         rowVersion,
         segmentCount: 0,
@@ -1126,7 +1132,10 @@ function App() {
               )
             }
             onStart={() =>
-              void updateQueue(() => recoBridge.startQueue(), "キューを開始できませんでした。")
+              void updateQueue(
+                () => recoBridge.startQueue(selectedLanguage),
+                "キューを開始できませんでした。",
+              )
             }
           />
         )}
@@ -1412,11 +1421,13 @@ function App() {
           audioInputs={audioInputs}
           deviceId={selectedDeviceId}
           disabled={activeSessionId !== undefined || queue.autoAdvanceEnabled}
+          language={selectedLanguage}
           model={model}
           onClose={closeDialog}
           onDeviceChange={(deviceId) => {
             setSelectedDeviceId(deviceId);
           }}
+          onLanguageChange={setSelectedLanguage}
           onModelChange={setModel}
         />
       )}
@@ -2287,17 +2298,21 @@ function SettingsDialog({
   audioInputs,
   deviceId,
   disabled,
+  language,
   model,
   onClose,
   onDeviceChange,
+  onLanguageChange,
   onModelChange,
 }: {
   audioInputs: AudioInput[];
   deviceId: string;
   disabled: boolean;
+  language: string | null;
   model: ModelState;
   onClose: () => void;
   onDeviceChange: (deviceId: string) => void;
+  onLanguageChange: (language: string | null) => void;
   onModelChange: (model: ModelState) => void;
 }) {
   const [models, setModels] = useState<CachedModelRevision[]>([]);
@@ -2345,6 +2360,13 @@ function SettingsDialog({
     ({ repoId, revision }) =>
       repoId === model.selected?.repoId && revision === model.selected.revision,
   );
+  const supportedLanguages = selectedModel?.supportedLanguages ?? [];
+
+  useEffect(() => {
+    if (language !== null && selectedModel && !supportedLanguages.includes(language)) {
+      onLanguageChange(null);
+    }
+  }, [language, onLanguageChange, selectedModel, supportedLanguages]);
 
   return (
     <DialogFrame onClose={onClose} title="設定" titleId="settings-title">
@@ -2408,6 +2430,21 @@ function SettingsDialog({
             </span>
           </div>
         </div>
+        <label>
+          入力音声の言語
+          <select
+            disabled={disabled || !selectedModel}
+            onChange={(event) => onLanguageChange(event.target.value || null)}
+            value={language ?? ""}
+          >
+            <option value="">自動</option>
+            {supportedLanguages.map((supportedLanguage) => (
+              <option key={supportedLanguage} value={supportedLanguage}>
+                {supportedLanguage}
+              </option>
+            ))}
+          </select>
+        </label>
         {disabled && <p>処理中はモデルを変更できません。</p>}
         {(model.errorMessage || modelListError) && (
           <p role="alert">{model.errorMessage ?? modelListError}</p>

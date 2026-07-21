@@ -20,7 +20,7 @@ from uuid import uuid4
 from reco.models import TranscriptSegment
 from reco.recording import RecordingSegment
 
-APPLICATION_SCHEMA_VERSION = 4
+APPLICATION_SCHEMA_VERSION = 5
 
 
 class SessionState(StrEnum):
@@ -74,7 +74,7 @@ class NewSession:
   source_display_name: str
   model: str
   model_revision: str | None
-  language: str
+  language: str | None
   sample_rate: int
   title: str
   source_fingerprint: str | None = None
@@ -165,7 +165,7 @@ class RecordingRepository:
           value.source_device_id,
           value.model,
           value.model_revision,
-          value.language,
+          _stored_language(value.language),
           value.sample_rate,
           json.dumps(value.config or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
           now,
@@ -380,7 +380,7 @@ class RecordingRepository:
             item["source_path"],
             session.model,
             session.model_revision,
-            session.language,
+            _stored_language(session.language),
             session.sample_rate,
             json.dumps(session.config or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
             now,
@@ -555,7 +555,7 @@ class RecordingRepository:
         """
         SELECT session_id, state, end_reason, source_kind, source_path,
           source_device_id, source_fingerprint, model, model_revision,
-          resume_sample, total_segments
+          language, resume_sample, total_segments
         FROM app_sessions WHERE session_id = ?
         """,
         (session_id,),
@@ -577,8 +577,8 @@ class RecordingRepository:
           """
           INSERT INTO app_segments (
             session_id, segment_index, start_sample, end_sample, split_reason,
-            text, raw_text, diagnostics_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            text, raw_text, language, diagnostics_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           """,
           (
             session_id,
@@ -588,9 +588,17 @@ class RecordingRepository:
             record.split_reason.value,
             record.text,
             record.raw_text if record.raw_text != record.text else None,
+            record.language,
             json.dumps(asdict(record), ensure_ascii=False, default=str, separators=(",", ":")),
           ),
         )
+        detected_row = connection.execute(
+          "SELECT detected_languages_json FROM app_sessions WHERE session_id = ?",
+          (session_id,),
+        ).fetchone()
+        if detected_row is None:
+          raise RepositoryError(f"Unknown session: {session_id}")
+        detected_languages = _merge_detected_languages(detected_row[0], record.language)
         row = connection.execute(
           """
           UPDATE app_sessions
@@ -598,11 +606,12 @@ class RecordingRepository:
               recognized_segments = recognized_segments + CASE WHEN ? != '' THEN 1 ELSE 0 END,
               characters = characters + length(?),
               media_duration_ms = MAX(media_duration_ms, CAST(? * 1000 / sample_rate AS INTEGER)),
+              detected_languages_json = ?,
               updated_at = ?, row_version = row_version + 1
           WHERE session_id = ? AND state IN ('preparing', 'running', 'pausing', 'stopping')
           RETURNING row_version, total_segments, recognized_segments, characters, media_duration_ms
           """,
-          (record.text, record.text, record.end_sample, _now(), session_id),
+          (record.text, record.text, record.end_sample, detected_languages, _now(), session_id),
         ).fetchone()
         if row is None:
           raise RepositoryError(f"Session is not writable: {session_id}")
@@ -633,7 +642,7 @@ class RecordingRepository:
           raise RepositoryError(f"Unknown session: {session_id}")
         segments = connection.execute(
           """
-          SELECT segment_index, start_sample, end_sample, split_reason, text, raw_text, diagnostics_json
+          SELECT segment_index, start_sample, end_sample, split_reason, text, raw_text, language, diagnostics_json
           FROM app_segments WHERE session_id = ? ORDER BY segment_index LIMIT ? OFFSET ?
           """,
           (session_id, segment_limit, segment_offset),
@@ -815,7 +824,7 @@ class RecordingRepository:
             dict(segment)
             for segment in connection.execute(
               """
-              SELECT segment_index, start_sample, end_sample, split_reason, text, raw_text, diagnostics_json
+              SELECT segment_index, start_sample, end_sample, split_reason, text, raw_text, language, diagnostics_json
               FROM app_segments WHERE session_id = ? ORDER BY segment_index
               """,
               (session_id,),
@@ -883,7 +892,7 @@ class RecordingRepository:
             dict(segment)
             for segment in connection.execute(
               """
-              SELECT segment_index, start_sample, end_sample, split_reason, text, raw_text, diagnostics_json
+              SELECT segment_index, start_sample, end_sample, split_reason, text, raw_text, language, diagnostics_json
               FROM app_segments WHERE session_id = ? ORDER BY segment_index
               """,
               (session_id,),
@@ -1049,6 +1058,21 @@ def _now() -> str:
   return datetime.now(UTC).isoformat()
 
 
+def _stored_language(language: str | None) -> str:
+  return language if language is not None else "Auto"
+
+
+def _merge_detected_languages(serialized: object, language: str) -> str:
+  try:
+    value = json.loads(str(serialized))
+  except json.JSONDecodeError:
+    value = []
+  languages = [item for item in value if isinstance(item, str) and item] if isinstance(value, list) else []
+  if language not in languages:
+    languages.append(language)
+  return json.dumps(languages, ensure_ascii=False, separators=(",", ":"))
+
+
 def _validate_datetime_filter(value: str, name: str) -> str:
   try:
     datetime.fromisoformat(value)
@@ -1096,6 +1120,7 @@ CREATE TABLE app_sessions (
   model TEXT NOT NULL,
   model_revision TEXT,
   language TEXT NOT NULL,
+  detected_languages_json TEXT NOT NULL DEFAULT '[]',
   sample_rate INTEGER NOT NULL CHECK (sample_rate > 0),
   config_json TEXT NOT NULL DEFAULT '{}',
   started_at TEXT NOT NULL,
@@ -1121,6 +1146,7 @@ CREATE TABLE app_segments (
   split_reason TEXT NOT NULL,
   text TEXT NOT NULL,
   raw_text TEXT,
+  language TEXT NOT NULL,
   diagnostics_json TEXT NOT NULL DEFAULT '{}',
   PRIMARY KEY (session_id, segment_index)
 )
@@ -1143,6 +1169,7 @@ CREATE TABLE IF NOT EXISTS app_sessions (
   model TEXT NOT NULL,
   model_revision TEXT,
   language TEXT NOT NULL,
+  detected_languages_json TEXT NOT NULL DEFAULT '[]',
   sample_rate INTEGER NOT NULL CHECK (sample_rate > 0),
   config_json TEXT NOT NULL DEFAULT '{}',
   started_at TEXT NOT NULL,
@@ -1166,6 +1193,7 @@ CREATE TABLE IF NOT EXISTS app_segments (
   split_reason TEXT NOT NULL,
   text TEXT NOT NULL,
   raw_text TEXT,
+  language TEXT NOT NULL,
   diagnostics_json TEXT NOT NULL DEFAULT '{}',
   PRIMARY KEY (session_id, segment_index)
 );

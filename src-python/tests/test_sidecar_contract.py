@@ -98,8 +98,8 @@ class StubEngine:
     self.queue_call = ("state", None)
     return {"revision": 0, "autoAdvanceEnabled": False, "items": []}
 
-  def enqueue_files(self, files: object) -> dict[str, object]:
-    self.queue_call = ("enqueue", files)
+  def enqueue_files(self, files: object, language: object) -> dict[str, object]:
+    self.queue_call = ("enqueue", (files, language))
     return self.queue_state()
 
   def reorder_queue(self, item_ids: object, revision: object) -> dict[str, object]:
@@ -114,8 +114,8 @@ class StubEngine:
     self.queue_call = ("clear", None)
     return {"revision": 2, "autoAdvanceEnabled": False, "items": []}
 
-  def start_queue(self) -> dict[str, object]:
-    self.queue_call = ("start", None)
+  def start_queue(self, language: object) -> dict[str, object]:
+    self.queue_call = ("start", language)
     return {"revision": 2, "autoAdvanceEnabled": True, "items": []}
 
   def pause_queue(self) -> dict[str, object]:

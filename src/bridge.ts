@@ -29,6 +29,7 @@ interface StartSessionInput {
   inputKind: InputKind;
   inputToken?: string;
   inputName?: string;
+  language: string | null;
 }
 
 interface HistoryQuery {
@@ -61,6 +62,7 @@ interface RawSession {
   sourceDisplayName: string;
   model: string;
   language: string;
+  detectedLanguages: string[];
   rowVersion: number;
   startedAt: string;
   endedAt?: string | null;
@@ -78,6 +80,7 @@ interface RawSegment {
   segmentIndex: number;
   startSample: number;
   endSample: number;
+  language: string;
   text: string;
 }
 
@@ -123,10 +126,17 @@ function mapSegment(sessionId: string, segment: RawSegment): TranscriptSegment {
   return {
     endMs: Math.round(segment.endSample / 16),
     id: `${sessionId}:${sequence}`,
+    language: segment.language,
     sequence,
     startMs: Math.round(segment.startSample / 16),
     text: segment.text,
   };
+}
+
+function mapSessionLanguage(value: RawSession): string {
+  if (value.language !== "Auto") return value.language;
+  if (value.detectedLanguages.length === 0) return "自動";
+  return `自動 (${value.detectedLanguages.join(", ")})`;
 }
 
 function mapSessionSummary(value: RawSession): SessionSummary {
@@ -139,7 +149,7 @@ function mapSessionSummary(value: RawSession): SessionSummary {
     id: value.sessionId,
     inputKind: value.sourceKind === "file" ? "file" : "microphone",
     inputName: value.sourceDisplayName,
-    language: value.language,
+    language: mapSessionLanguage(value),
     model: value.model,
     rowVersion: value.rowVersion,
     segmentCount: value.totalSegments ?? 0,
@@ -213,7 +223,7 @@ export const recoBridge = {
     }
   },
 
-  async enqueueFiles(files: SelectedAudioFile[]): Promise<QueueSnapshot> {
+  async enqueueFiles(files: SelectedAudioFile[], language: string | null): Promise<QueueSnapshot> {
     if (!hasTauriRuntime()) {
       mockQueueSnapshot.items.push(
         ...files.map((file) => ({
@@ -227,7 +237,9 @@ export const recoBridge = {
       mockQueueSnapshot.revision += 1;
       return structuredClone(mockQueueSnapshot);
     }
-    return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.enqueueFiles", { files }));
+    return mapQueueSnapshot(
+      await request<RawQueueSnapshot>("queue.enqueueFiles", { files, language }),
+    );
   },
 
   async exportSessions(
@@ -406,6 +418,7 @@ export const recoBridge = {
                 lastModified: "2 months ago",
                 refs: ["main"],
                 size: "2.5G",
+                supportedLanguages: ["Japanese", "English"],
               },
             ]
           : [],
@@ -600,12 +613,12 @@ export const recoBridge = {
     return request<ModelState, ModelReference>("model.select", model);
   },
 
-  async startQueue(): Promise<QueueSnapshot> {
+  async startQueue(language: string | null): Promise<QueueSnapshot> {
     if (!hasTauriRuntime()) {
       mockQueueSnapshot.autoAdvanceEnabled = mockQueueSnapshot.items.length > 0;
       return structuredClone(mockQueueSnapshot);
     }
-    return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.start"));
+    return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.start", { language }));
   },
 
   async startSession(input: StartSessionInput): Promise<{ rowVersion: number; sessionId: string }> {
@@ -616,7 +629,7 @@ export const recoBridge = {
         ? { deviceId: input.deviceId, type: "microphone" }
         : { sourceToken: input.inputToken, type: "file" };
 
-    return request("session.start", { source, title: input.inputName });
+    return request("session.start", { language: input.language, source, title: input.inputName });
   },
 
   async stopSession(sessionId: string): Promise<void> {

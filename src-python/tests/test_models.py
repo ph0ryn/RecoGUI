@@ -42,6 +42,7 @@ def transcript_segment(index: int, start_sample: int, end_sample: int, text: str
     split_reason=SplitReason.SILENCE,
     text=text,
     raw_text=text,
+    language="Japanese",
     vad=VadDiagnostics(),
     transcription=TranscriptionDiagnostics(max_tokens=64),
   )
@@ -151,6 +152,7 @@ def test_document_rejects_mixed_segment_sample_rates() -> None:
     split_reason=SplitReason.SILENCE,
     text="second",
     raw_text="second",
+    language="Japanese",
     vad=VadDiagnostics(),
     transcription=TranscriptionDiagnostics(max_tokens=64),
   )

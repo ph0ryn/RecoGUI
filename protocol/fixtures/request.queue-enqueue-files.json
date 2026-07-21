@@ -6,6 +6,7 @@
   "sequence": 1,
   "command": "queue.enqueueFiles",
   "payload": {
+    "language": null,
     "files": [
       {
         "path": "/private/tmp/interview.wav",

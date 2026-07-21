@@ -45,6 +45,7 @@ def segment(index: int = 0, text: str = "hello") -> TranscriptSegment:
     split_reason=SplitReason.SILENCE,
     text=text,
     raw_text=text,
+    language="Japanese",
     vad=VadDiagnostics(0.8, 0.9, 0.75),
     transcription=TranscriptionDiagnostics(max_tokens=64, generation_tokens=4),
   )
@@ -404,6 +405,7 @@ def test_paused_session_and_resume_context_survive_repository_restart(tmp_path: 
     "source_fingerprint": "sha256:test",
     "model": "model",
     "model_revision": "revision",
+    "language": "Japanese",
     "resume_sample": 16_384,
     "total_segments": 1,
   }
@@ -438,6 +440,7 @@ def test_failed_session_uses_the_last_committed_segment_as_its_resume_checkpoint
     "source_fingerprint": "sha256:test",
     "model": "model",
     "model_revision": "revision",
+    "language": "Japanese",
     "resume_sample": 32_000,
     "total_segments": 2,
   }
@@ -515,4 +518,18 @@ def test_outdated_database_schema_is_rejected(tmp_path: Path) -> None:
     )
 
   with pytest.raises(RepositoryError, match="schema version 3 is not supported"):
+    RecordingRepository(database)
+
+
+def test_previous_database_schema_is_rejected_without_compatibility_migration(tmp_path: Path) -> None:
+  database = tmp_path / "version-4.sqlite3"
+  with sqlite3.connect(database) as connection:
+    connection.executescript(
+      """
+      PRAGMA user_version = 4;
+      CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      """
+    )
+
+  with pytest.raises(RepositoryError, match="schema version 4 is not supported"):
     RecordingRepository(database)

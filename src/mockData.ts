@@ -26,6 +26,7 @@ export const mockSnapshot: EngineSnapshot = {
         {
           endMs: 21_200,
           id: "live-1",
+          language: "Japanese",
           sequence: 1,
           startMs: 2_100,
           text: "本日の打ち合わせでは、文字起こしアプリの完成条件を確認します。",
@@ -33,6 +34,7 @@ export const mockSnapshot: EngineSnapshot = {
         {
           endMs: 57_900,
           id: "live-2",
+          language: "Japanese",
           sequence: 2,
           startMs: 24_400,
           text: "履歴の検索と書き出しまで、一つの画面から操作できるようにします。",
@@ -40,6 +42,7 @@ export const mockSnapshot: EngineSnapshot = {
         {
           endMs: 87_500,
           id: "live-3",
+          language: "Japanese",
           sequence: 3,
           startMs: 61_000,
           text: "録音中に過去の記録を開いても、処理はそのまま続きます。",
@@ -65,6 +68,7 @@ export const mockSnapshot: EngineSnapshot = {
         {
           endMs: 13_200,
           id: "s1-1",
+          language: "Japanese",
           sequence: 1,
           startMs: 1_100,
           text: "それでは、今週のプロジェクト定例を始めます。",
@@ -72,6 +76,7 @@ export const mockSnapshot: EngineSnapshot = {
         {
           endMs: 42_000,
           id: "s1-2",
+          language: "Japanese",
           sequence: 2,
           startMs: 15_000,
           text: "先週からの進捗として、音声処理パイプラインの見直しが完了しました。",
@@ -79,6 +84,7 @@ export const mockSnapshot: EngineSnapshot = {
         {
           endMs: 76_400,
           id: "s1-3",
+          language: "Japanese",
           sequence: 3,
           startMs: 44_000,
           text: "次に、履歴画面の検索性とアクセシビリティを確認します。",
@@ -86,6 +92,7 @@ export const mockSnapshot: EngineSnapshot = {
         {
           endMs: 111_900,
           id: "s1-4",
+          language: "Japanese",
           sequence: 4,
           startMs: 80_200,
           text: "書き出し形式はテキスト、テキスト (タイムスタンプなし)、Markdown、JSON、字幕に対応します。",
@@ -111,6 +118,7 @@ export const mockSnapshot: EngineSnapshot = {
         {
           endMs: 26_000,
           id: "s2-1",
+          language: "Japanese",
           sequence: 1,
           startMs: 2_000,
           text: "ユーザーインタビューの記録です。最初に利用状況を伺いました。",
@@ -118,6 +126,7 @@ export const mockSnapshot: EngineSnapshot = {
         {
           endMs: 63_000,
           id: "s2-2",
+          language: "Japanese",
           sequence: 2,
           startMs: 29_000,
           text: "検索結果から目的の発言へすぐ移動できることが重要だそうです。",
@@ -145,6 +154,7 @@ export const mockSnapshot: EngineSnapshot = {
         {
           endMs: 29_000,
           id: "s3-1",
+          language: "Japanese",
           sequence: 1,
           startMs: 900,
           text: "保存が完了した部分までを表示しています。",

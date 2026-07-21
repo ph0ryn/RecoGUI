@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from collections.abc import Mapping
@@ -129,7 +130,7 @@ class SidecarServer:
     if command == "queue.getState":
       return self.engine.queue_state()
     if command == "queue.enqueueFiles":
-      return self.engine.enqueue_files(payload.get("files"))
+      return self.engine.enqueue_files(payload.get("files"), payload.get("language"))
     if command == "queue.reorder":
       return self.engine.reorder_queue(payload.get("itemIds"), payload.get("revision"))
     if command == "queue.remove":
@@ -140,7 +141,7 @@ class SidecarServer:
     if command == "queue.clear":
       return self.engine.clear_queue()
     if command == "queue.start":
-      return self.engine.start_queue()
+      return self.engine.start_queue(payload.get("language"))
     if command == "queue.pause":
       return self.engine.pause_queue()
     if command == "history.list":
@@ -402,7 +403,18 @@ def _mapping(value: object) -> dict[str, object]:
 
 def _public_session(value: Mapping[str, object]) -> dict[str, object]:
   private_fields = {"source_path", "source_device_id", "resume_sample"}
-  return {key: item for key, item in value.items() if key not in private_fields}
+  result = {key: item for key, item in value.items() if key not in private_fields}
+  serialized_languages = result.pop("detected_languages_json", "[]")
+  try:
+    detected_languages = json.loads(str(serialized_languages))
+  except json.JSONDecodeError:
+    detected_languages = []
+  result["detected_languages"] = (
+    detected_languages
+    if isinstance(detected_languages, list) and all(isinstance(item, str) for item in detected_languages)
+    else []
+  )
+  return result
 
 
 if __name__ == "__main__":

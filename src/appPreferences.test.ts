@@ -21,9 +21,12 @@ describe("app preferences", () => {
   it("round-trips the default input device", () => {
     const storage = createStorage();
 
-    saveAppPreferences({ defaultInputDeviceId: "7" }, storage);
+    saveAppPreferences({ defaultInputDeviceId: "7", transcriptionLanguage: "English" }, storage);
 
-    expect(loadAppPreferences(storage)).toEqual({ defaultInputDeviceId: "7" });
+    expect(loadAppPreferences(storage)).toEqual({
+      defaultInputDeviceId: "7",
+      transcriptionLanguage: "English",
+    });
   });
 
   it("migrates the legacy input device preference", () => {
@@ -31,7 +34,10 @@ describe("app preferences", () => {
 
     storage.setItem("reco.defaultInputDeviceId", "legacy-device");
 
-    expect(loadAppPreferences(storage)).toEqual({ defaultInputDeviceId: "legacy-device" });
+    expect(loadAppPreferences(storage)).toEqual({
+      defaultInputDeviceId: "legacy-device",
+      transcriptionLanguage: null,
+    });
   });
 
   it("uses safe defaults for invalid persisted values", () => {

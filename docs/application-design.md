@@ -36,7 +36,7 @@ flowchart LR
 | Rust                | OS連携、path token、sidecar監督、lifecycle、許可commandの制限 |
 | Python sidecar      | NDJSONの検証、command dispatch、event送信、非同期処理の管理   |
 | RecoEngine          | GUI向け文字起こし、model lifecycle、active sessionの管理      |
-| RecordingRepository | GUI用SQLite、履歴、検索、削除、Export、migration              |
+| RecordingRepository | GUI用SQLite、履歴、検索、削除、Export、schema version検証     |
 
 ## リポジトリ構成
 
@@ -216,7 +216,7 @@ RustとReactはこのdatabaseを直接開かない。
 - `app_session_search`のFTS5 indexで履歴を検索する。
 - foreign keysと`ON DELETE CASCADE`でsessionとsegmentの整合性を保つ。
 - WAL、busy timeout、durabilityを優先するsynchronous設定を使用する。
-- migrationはtransaction内で適用し、事前backupと適用後の検査を行う。
+- 現行schema versionだけを受理し、旧versionは起動時に拒否する。
 - Exportは一貫した読み取り結果から作り、一時pathから最終pathへ置き換える。
 
 ## UI
@@ -249,13 +249,18 @@ databaseへ保存しない。
   snapshot pathはReactやdatabaseへ公開しない。
 - `ModelManager`はcache列挙、snapshot pathの解決、既定model選択だけを担当し、model読込と
   worker生成を行わない。
+- `ModelManager`は各snapshotの`config.json`から`support_languages`を読み、UIとengine validationへ
+  同じcanonical language listを渡す。
+- 言語設定は`null`を自動、canonical language nameを明示指定として扱う。自動ではmodel APIへ
+  languageを渡さず、返された検出言語を`app_segments.language`へ保存する。
 - model選択はactive sessionとqueue自動処理がないときに許可する。paused sessionがあっても
   切替可能だが、そのResumeではsession自身に保存したmodelとrevisionを使用する。
 - `RecoEngine`はmodel revision単位のruntime leaseを専用lockで取得、再利用、解放する。
   loadとunloadの間はengine全体のstate lockを保持しない。
 - 解放はworker停止、serviceとmodelの参照破棄、`gc.collect()`、`mlx.core.clear_cache()`まで行う。
   cache再一覧はactive leaseを途中で閉じない。
-- 既存の`app_sessions.model`と`model_revision`を使用するためdatabase migrationは不要とする。
+- `app_sessions.language`は明示言語または`Auto`を保持し、`detected_languages_json`はsession内で
+  検出された言語を保持する。任意文字列は選択modelの対応言語と照合して拒否する。
 - Silero VADは`.app`内の独立した同梱assetとしてhashを検証し、Hugging FaceのASR model管理と
   Application Supportへの保存から分離する。
 - logはapplication data directoryの`logs/`へ保存する。

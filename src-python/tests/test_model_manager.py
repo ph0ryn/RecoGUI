@@ -37,6 +37,7 @@ def test_lists_every_cached_model_revision_without_exposing_paths(tmp_path: Path
       "size": "2.5GB",
       "lastModified": "2023-11-14T22:13:20+00:00",
       "refs": ["main"],
+      "supportedLanguages": [],
     }
   ]
 
@@ -55,6 +56,18 @@ def test_selected_snapshot_is_resolved_privately(tmp_path: Path) -> None:
   assert manager.resolve(reference) == snapshot
   assert manager.snapshot().state is ModelState.READY
   assert "snapshot" not in str(manager.snapshot().public())
+
+
+def test_lists_languages_declared_by_the_cached_model(tmp_path: Path) -> None:
+  snapshot = tmp_path / "snapshot"
+  snapshot.mkdir()
+  (snapshot / "config.json").write_text('{"support_languages":["Japanese","English","Japanese"]}')
+  manager = ModelManager(cache_scanner=lambda: cache_info(("owner/model", "commit", snapshot)))
+
+  models = manager.list_models()
+
+  assert models[0]["supportedLanguages"] == ["Japanese", "English"]
+  assert manager.supported_languages(ModelReference("owner/model", "commit")) == ("Japanese", "English")
 
 
 def test_select_updates_availability_without_loading_a_runtime(tmp_path: Path) -> None:

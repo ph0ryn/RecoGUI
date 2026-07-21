@@ -52,6 +52,7 @@ pub struct SessionCommand {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStartCommand {
+    pub language: Option<String>,
     pub title: Option<String>,
     pub source: SessionSource,
 }
@@ -66,6 +67,13 @@ pub enum SessionSource {
 #[serde(rename_all = "camelCase")]
 pub struct QueueEnqueueFilesCommand {
     pub files: Vec<QueueFileToken>,
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageCommand {
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -346,8 +354,15 @@ async fn resolve_queue_files(
 
 empty_engine_command!(queue_get_state, "queue.getState");
 empty_engine_command!(queue_clear, "queue.clear");
-empty_engine_command!(queue_start, "queue.start");
 empty_engine_command!(queue_pause, "queue.pause");
+
+#[tauri::command]
+pub async fn queue_start(
+    input: LanguageCommand,
+    supervisor: State<'_, EngineSupervisor>,
+) -> CommandResult<Value> {
+    request(&supervisor, "queue.start", None, json!(input)).await
+}
 
 #[tauri::command]
 pub async fn queue_enqueue_files(
@@ -360,7 +375,7 @@ pub async fn queue_enqueue_files(
         &supervisor,
         "queue.enqueueFiles",
         None,
-        json!({ "files": files }),
+        json!({ "files": files, "language": input.language }),
     )
     .await;
     if result.is_ok() {
@@ -425,7 +440,7 @@ pub async fn session_start(
         &supervisor,
         "session.start",
         None,
-        json!({ "title": input.title, "source": source }),
+        json!({ "language": input.language, "title": input.title, "source": source }),
     )
     .await
 }

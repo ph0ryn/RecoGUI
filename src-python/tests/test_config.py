@@ -4,11 +4,7 @@ from typing import cast
 
 import pytest
 
-from reco.config import DEFAULT_CONFIG, EngineConfig, TranscriptionConfig, VadConfig
-
-
-def test_default_engine_language_is_japanese() -> None:
-  assert DEFAULT_CONFIG.engine.default_language == "Japanese"
+from reco.config import DEFAULT_CONFIG, TranscriptionConfig, VadConfig
 
 
 def test_default_vad_profile_uses_hysteresis_padding_and_adaptive_split() -> None:
@@ -29,11 +25,6 @@ def test_default_transcription_profile_has_bounded_memory_and_generation() -> No
   assert transcription.failed_worker_shutdown_timeout_seconds == 2
   assert transcription.min_generation_tokens < transcription.max_generation_tokens
   assert transcription.repetition_penalty is None
-
-
-def test_invalid_engine_config_is_rejected() -> None:
-  with pytest.raises(ValueError, match="language"):
-    EngineConfig(default_language=" ")
 
 
 def test_invalid_vad_config_is_rejected() -> None:

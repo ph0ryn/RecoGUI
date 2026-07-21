@@ -1327,6 +1327,10 @@ button:disabled {
   gap: 7px;
 }
 
+.model-picker + label {
+  margin-top: 13px;
+}
+
 .model-picker-control,
 .model-picker-meta,
 .model-status,

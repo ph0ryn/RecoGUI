@@ -1,9 +1,11 @@
 export interface AppPreferences {
   defaultInputDeviceId: string;
+  transcriptionLanguage: string | null;
 }
 
 export const defaultAppPreferences: AppPreferences = {
   defaultInputDeviceId: "",
+  transcriptionLanguage: null,
 };
 
 const storageKey = "reco.appPreferences";
@@ -16,14 +18,26 @@ export function loadAppPreferences(storage: Storage = localStorage): AppPreferen
     if (serialized) {
       const value: unknown = JSON.parse(serialized);
 
-      if (
-        typeof value === "object" &&
-        value !== null &&
-        typeof (value as Record<string, unknown>).defaultInputDeviceId === "string"
-      ) {
-        return {
-          defaultInputDeviceId: (value as Record<string, string>).defaultInputDeviceId,
-        };
+      if (typeof value === "object" && value !== null) {
+        const stored = value as Record<string, unknown>;
+
+        if (
+          typeof stored.defaultInputDeviceId === "string" &&
+          (stored.transcriptionLanguage === undefined ||
+            stored.transcriptionLanguage === null ||
+            typeof stored.transcriptionLanguage === "string")
+        ) {
+          let transcriptionLanguage: string | null = null;
+
+          if (typeof stored.transcriptionLanguage === "string") {
+            transcriptionLanguage = stored.transcriptionLanguage;
+          }
+
+          return {
+            defaultInputDeviceId: stored.defaultInputDeviceId,
+            transcriptionLanguage,
+          };
+        }
       }
     }
   } catch {
@@ -32,6 +46,7 @@ export function loadAppPreferences(storage: Storage = localStorage): AppPreferen
 
   return {
     defaultInputDeviceId: storage.getItem(legacyInputDeviceKey) ?? "",
+    transcriptionLanguage: null,
   };
 }
 

@@ -24,6 +24,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 function rawSession(rowVersion: number, segmentIndex: number, nextSegmentOffset: number | null) {
   return {
     characters: segmentIndex + 1,
+    detectedLanguages: ["Japanese"],
     language: "Japanese",
     mediaDurationMs: (segmentIndex + 1) * 1_000,
     model: "model",
@@ -32,6 +33,7 @@ function rawSession(rowVersion: number, segmentIndex: number, nextSegmentOffset:
     segments: [
       {
         endSample: (segmentIndex + 1) * 16_000,
+        language: "Japanese",
         segmentIndex,
         startSample: segmentIndex * 16_000,
         text: `segment-${segmentIndex}`,
@@ -110,14 +112,16 @@ describe("recoBridge", () => {
       revision: 4,
     });
 
-    const snapshot = await recoBridge.enqueueFiles([
-      { displayName: "audio.wav", sourceToken: "token-1" },
-    ]);
+    const snapshot = await recoBridge.enqueueFiles(
+      [{ displayName: "audio.wav", sourceToken: "token-1" }],
+      null,
+    );
 
     expect(tauriMocks.invoke).toHaveBeenCalledWith("engine_request", {
       command: "queue.enqueueFiles",
       payload: {
         files: [{ displayName: "audio.wav", sourceToken: "token-1" }],
+        language: null,
       },
     });
 

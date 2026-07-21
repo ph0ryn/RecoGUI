@@ -26,9 +26,21 @@ def segment() -> TranscriptSegment:
     split_reason=SplitReason.SILENCE,
     text="hello",
     raw_text="hello",
+    language="Japanese",
     vad=VadDiagnostics(0.8, 0.9, 0.75),
     transcription=TranscriptionDiagnostics(max_tokens=64, generation_tokens=4),
   )
+
+
+def test_language_validation_rejects_arbitrary_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
+  reference = ModelReference("owner/model", "revision")
+  monkeypatch.setattr(engine.model_manager, "supported_languages", lambda selected: ("Japanese", "English"))
+
+  assert engine._validate_language(reference, None) is None
+  assert engine._validate_language(reference, "English") == "English"
+  with pytest.raises(EngineCommandError, match="does not support"):
+    engine._validate_language(reference, "arbitrary")
 
 
 def engine_with_repository(
@@ -100,7 +112,13 @@ def test_persisted_segment_event_contains_committed_receipt(tmp_path: Path) -> N
   assert event == "segment.persisted"
   assert emitted_session_id == session_id
   assert payload == {
-    "segment": {"segmentIndex": 0, "startSample": 0, "endSample": 16_000, "text": "hello"},
+    "segment": {
+      "segmentIndex": 0,
+      "startSample": 0,
+      "endSample": 16_000,
+      "language": "Japanese",
+      "text": "hello",
+    },
     "rowVersion": 3,
     "totalSegments": 1,
     "recognizedSegments": 1,
@@ -531,7 +549,8 @@ def test_failed_file_session_retries_from_its_committed_checkpoint(
 
   assert captured[0][5] == 16_000
   assert captured[0][6] == 1
-  assert captured[0][8] is SessionState.FAILED
+  assert captured[0][8] == "Japanese"
+  assert captured[0][9] is SessionState.FAILED
   assert engine.repository.get_session(session_id)["state"] == "preparing"
 
 
@@ -601,7 +620,7 @@ def test_drained_pause_persists_the_resume_sample(tmp_path: Path, monkeypatch: p
   runtime = FakeRuntime()
   engine.runtime = cast(ModelRuntime, runtime)
   engine._runtime_reference = ModelReference("model", "revision")
-  monkeypatch.setattr(engine, "_acquire_runtime", lambda reference: (runtime, object(), object()))
+  monkeypatch.setattr(engine, "_acquire_runtime", lambda reference, language: (runtime, object(), object()))
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
 
@@ -645,7 +664,8 @@ def test_session_loads_runtime_on_demand_and_releases_it_after_completion(
       self.model_path = model_path
       created.append(model_path)
 
-    def acquire(self) -> tuple[object, object]:
+    def acquire(self, language: str | None) -> tuple[object, object]:
+      del language
       return object(), object()
 
     def close(self) -> None:
@@ -697,7 +717,8 @@ def test_session_drops_local_model_references_before_runtime_release(
 
   runtime = FakeRuntime()
 
-  def acquire(reference: ModelReference) -> tuple[FakeRuntime, Resource, Resource]:
+  def acquire(reference: ModelReference, language: str | None) -> tuple[FakeRuntime, Resource, Resource]:
+    del language
     service = Resource()
     worker = Resource()
     references.extend((weakref.ref(service), weakref.ref(worker)))
@@ -739,7 +760,7 @@ def test_runtime_release_failure_does_not_keep_the_active_slot(tmp_path: Path, m
   runtime = FailingRuntime()
   engine.runtime = cast(ModelRuntime, runtime)
   engine._runtime_reference = reference
-  monkeypatch.setattr(engine, "_acquire_runtime", lambda requested: (runtime, object(), object()))
+  monkeypatch.setattr(engine, "_acquire_runtime", lambda requested, language: (runtime, object(), object()))
   monkeypatch.setattr(engine_module, "MicrophoneInput", lambda **options: object())
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
@@ -783,7 +804,7 @@ def test_terminal_outcomes_release_runtime_once(
   runtime = FakeRuntime()
   engine.runtime = cast(ModelRuntime, runtime)
   engine._runtime_reference = reference
-  monkeypatch.setattr(engine, "_acquire_runtime", lambda requested: (runtime, object(), object()))
+  monkeypatch.setattr(engine, "_acquire_runtime", lambda requested, language: (runtime, object(), object()))
   monkeypatch.setattr(engine_module, "MicrophoneInput", lambda **options: object())
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
@@ -942,7 +963,8 @@ def test_resume_model_initialization_failure_preserves_the_checkpoint(
     def __init__(self, model_path: Path) -> None:
       assert model_path == snapshot
 
-    def acquire(self) -> tuple[object, object]:
+    def acquire(self, language: str | None) -> tuple[object, object]:
+      del language
       raise RuntimeError("incompatible model")
 
     def close(self) -> None:
@@ -1034,7 +1056,8 @@ def test_continuous_queue_reuses_runtime_until_the_last_file_finishes(
       self.model_path = model_path
       created.append(model_path)
 
-    def acquire(self) -> tuple[object, object]:
+    def acquire(self, language: str | None) -> tuple[object, object]:
+      del language
       return object(), object()
 
     def close(self) -> None:

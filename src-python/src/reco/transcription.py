@@ -32,7 +32,7 @@ class LocalAsrTranscriptionService:
     self,
     model_path: str | Path,
     *,
-    language: str,
+    language: str | None,
     revision: str | None = None,
     model: Any | None = None,
     load_func: Callable[[str, str | None], Any] | None = None,
@@ -43,9 +43,9 @@ class LocalAsrTranscriptionService:
       raise ValueError("Model path must not be empty")
     if self.model_path.startswith("~"):
       self.model_path = str(Path(self.model_path).expanduser())
-    self.language = language.strip()
-    if not self.language:
-      raise ValueError("Transcription language must not be empty")
+    self.language = language.strip() if language is not None else None
+    if language is not None and not self.language:
+      raise ValueError("Transcription language must not be empty when provided")
     self.revision = revision.strip() if revision is not None else None
     if revision is not None and not self.revision:
       raise ValueError("Model revision must not be empty when provided")
@@ -108,16 +108,22 @@ class LocalAsrTranscriptionService:
       warning=warning,
     )
 
-    return TranscriptionResult(text=text, raw_text=raw_text, diagnostics=diagnostics)
+    return TranscriptionResult(
+      text=text,
+      raw_text=raw_text,
+      language=_result_language(result, self.language),
+      diagnostics=diagnostics,
+    )
 
   def _generate(self, model: Any, segment: SpeechSegment, max_tokens: int) -> Any:
     options: dict[str, object] = {
       "audio": segment.audio,
-      "language": self.language,
       "max_tokens": max_tokens,
       "temperature": self.config.temperature,
       "verbose": False,
     }
+    if self.language is not None:
+      options["language"] = self.language
     if self.config.repetition_penalty is not None:
       options["repetition_penalty"] = self.config.repetition_penalty
     try:
@@ -142,6 +148,19 @@ class LocalAsrTranscriptionService:
         raise RecoError(f"Could not load ASR model from {identity}: {exc}") from exc
       self.model_load_ms = round((monotonic() - started) * 1000)
       return self._model
+
+
+def _result_language(result: object, configured_language: str | None) -> str:
+  value = getattr(result, "language", None)
+  if isinstance(value, str) and value.strip():
+    return value.strip()
+  if isinstance(value, list):
+    languages = tuple(dict.fromkeys(item.strip() for item in value if isinstance(item, str) and item.strip()))
+    if languages:
+      return ", ".join(languages)
+  if configured_language is not None:
+    return configured_language
+  raise RecoError("The ASR model did not return a detected language")
 
 
 def calculate_max_tokens(duration_ms: int, config: TranscriptionConfig = DEFAULT_TRANSCRIPTION_CONFIG) -> int:

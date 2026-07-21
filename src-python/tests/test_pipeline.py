@@ -183,6 +183,7 @@ class FakeTranscriptionService:
     return TranscriptionResult(
       text=f"text {segment.audio.size}",
       raw_text=f"text {segment.audio.size}",
+      language="Japanese",
       diagnostics=TranscriptionDiagnostics(max_tokens=64, generation_tokens=4),
     )
 

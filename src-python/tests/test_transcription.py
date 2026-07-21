@@ -75,6 +75,24 @@ def test_transcription_uses_fixed_model_audio_and_greedy_defaults(tmp_path: Path
   ]
 
 
+def test_transcription_omits_language_and_returns_model_detection_in_auto_mode(tmp_path: Path) -> None:
+  model = FakeMlxModel([SimpleNamespace(**vars(output("hello")), language=["English"])])
+  service = LocalAsrTranscriptionService(model_path=str(tmp_path), language=None, model=model)
+  speech = segment()
+
+  result = service.transcribe(speech)
+
+  assert result.language == "English"
+  assert model.calls == [
+    {
+      "audio": speech.audio,
+      "max_tokens": 64,
+      "temperature": 0.0,
+      "verbose": False,
+    }
+  ]
+
+
 def test_token_saturation_retries_once_with_a_larger_budget(tmp_path: Path) -> None:
   model = FakeMlxModel(
     [

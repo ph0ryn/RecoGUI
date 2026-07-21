@@ -7,17 +7,6 @@ from math import isfinite
 
 
 @dataclass(frozen=True)
-class EngineConfig:
-  """Engine-wide defaults."""
-
-  default_language: str = "Japanese"
-
-  def __post_init__(self) -> None:
-    if not self.default_language.strip():
-      raise ValueError("Default language must not be empty")
-
-
-@dataclass(frozen=True)
 class VadConfig:
   """Voice activity detection settings."""
 
@@ -102,12 +91,10 @@ class TranscriptionConfig:
 class RecoConfig:
   """Top-level configuration grouped by usage area."""
 
-  engine: EngineConfig = field(default_factory=EngineConfig)
   vad: VadConfig = field(default_factory=VadConfig)
   transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
 
 
 DEFAULT_CONFIG = RecoConfig()
-DEFAULT_ENGINE_CONFIG = DEFAULT_CONFIG.engine
 DEFAULT_VAD_CONFIG = DEFAULT_CONFIG.vad
 DEFAULT_TRANSCRIPTION_CONFIG = DEFAULT_CONFIG.transcription

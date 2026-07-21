@@ -433,6 +433,7 @@ def _run_asr_worker(
             split_reason=queued.segment.split_reason,
             text=result.text,
             raw_text=result.raw_text,
+            language=result.language,
             vad=queued.segment.vad,
             transcription=result.diagnostics,
             queue_wait_ms=queue_wait_ms,

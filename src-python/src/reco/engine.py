@@ -95,14 +95,15 @@ class ModelRuntime:
   def loaded(self) -> bool:
     return self._worker is not None and self._worker.thread.is_alive() and not self._worker.worker_error
 
-  def acquire(self) -> tuple[LocalAsrTranscriptionService, AsrWorker]:
+  def acquire(self, language: str | None) -> tuple[LocalAsrTranscriptionService, AsrWorker]:
     """Start the fixed model worker once and return its resident resources."""
 
     with self._lock:
       if self.loaded:
         assert self._service is not None and self._worker is not None
+        self._service.language = language
         return self._service, self._worker
-      self._service = LocalAsrTranscriptionService(self.model_path, language=DEFAULT_CONFIG.engine.default_language)
+      self._service = LocalAsrTranscriptionService(self.model_path, language=language)
       self._worker = start_asr_worker(self._service)
       self._worker.wait_until_ready()
       return self._service, self._worker
@@ -144,6 +145,7 @@ class RecoEngine:
     self._lock = Lock()
     self._shutting_down = False
     self._queue_auto_advance = False
+    self._queue_language: str | None = None
     self._queue_scheduler_active = False
     self._active_queue_origin = False
     self._paused_queue_sessions: set[str] = set()
@@ -189,12 +191,29 @@ class RecoEngine:
         raise
     return self.model_manager.snapshot().public()
 
-  def _acquire_runtime(self, reference: ModelReference) -> tuple[ModelRuntime, LocalAsrTranscriptionService, AsrWorker]:
+  def _validate_language(self, reference: ModelReference, value: object) -> str | None:
+    if value is None:
+      return None
+    if not isinstance(value, str) or not value.strip():
+      raise EngineCommandError("invalid_language", "language must be a supported language name or null")
+    language = value.strip()
+    supported = self.model_manager.supported_languages(reference)
+    if language not in supported:
+      raise EngineCommandError(
+        "unsupported_language",
+        f"The selected model does not support language: {language}",
+        details={"supportedLanguages": list(supported)},
+      )
+    return language
+
+  def _acquire_runtime(
+    self, reference: ModelReference, language: str | None
+  ) -> tuple[ModelRuntime, LocalAsrTranscriptionService, AsrWorker]:
     """Load or reuse the runtime lease for one processing model revision."""
 
     with self._model_lock:
       if self.runtime is not None and self._runtime_reference == reference:
-        service, worker = self.runtime.acquire()
+        service, worker = self.runtime.acquire(language)
         return self.runtime, service, worker
       previous = self.runtime
       self.runtime = None
@@ -206,7 +225,7 @@ class RecoEngine:
         raise EngineCommandError("model_unavailable", "The session model revision is unavailable")
       runtime = ModelRuntime(path)
       try:
-        service, worker = runtime.acquire()
+        service, worker = runtime.acquire(language)
       except BaseException as exc:
         runtime.close()
         raise EngineCommandError("model_load_failed", str(exc)) from exc
@@ -240,7 +259,7 @@ class RecoEngine:
       snapshot["autoAdvanceEnabled"] = self._queue_auto_advance
     return snapshot
 
-  def enqueue_files(self, files: object) -> dict[str, object]:
+  def enqueue_files(self, files: object, language_value: object = None) -> dict[str, object]:
     """Append resolved files and immediately start when no work is already pending."""
 
     if not isinstance(files, list) or not files:
@@ -264,6 +283,8 @@ class RecoEngine:
     # Model verification may touch the filesystem, so keep it outside the engine lock.
     # This preliminary check is repeated while committing the queue entries to make
     # concurrent enqueue/session/shutdown transitions deterministic.
+    selected = self.model_manager.snapshot().selected
+    language = self._validate_language(selected, language_value) if selected is not None else None
     with self._lock:
       may_start_immediately = (
         not self._shutting_down and self._active_session_id is None and not self.repository.queue_snapshot()["items"]
@@ -280,6 +301,7 @@ class RecoEngine:
       self.repository.enqueue_files(values)
       if start_immediately:
         self._queue_auto_advance = True
+        self._queue_language = language
 
     if start_immediately:
       self._schedule_next_queue_item()
@@ -309,7 +331,7 @@ class RecoEngine:
     self.repository.clear_queue()
     return self._publish_queue_changed()
 
-  def start_queue(self) -> dict[str, object]:
+  def start_queue(self, language_value: object = None) -> dict[str, object]:
     """Enable explicit serial advancement and claim the first usable item."""
 
     with self._lock:
@@ -317,14 +339,17 @@ class RecoEngine:
         raise EngineCommandError("engine_shutting_down", "The engine is shutting down", recoverable=False)
       if self._active_session_id is not None:
         raise EngineCommandError("session_active", "Another transcription session is already active")
-    if self.model_manager.snapshot().state is not ModelState.READY:
+    selected = self.model_manager.snapshot().selected
+    if self.model_manager.snapshot().state is not ModelState.READY or selected is None:
       raise EngineCommandError("model_unavailable", "No ready transcription model is selected")
+    language = self._validate_language(selected, language_value)
     with self._lock:
       if self._shutting_down:
         raise EngineCommandError("engine_shutting_down", "The engine is shutting down", recoverable=False)
       if self._active_session_id is not None:
         raise EngineCommandError("session_active", "Another transcription session is already active")
       self._queue_auto_advance = True
+      self._queue_language = language
     snapshot = self._publish_queue_changed()
     self._schedule_next_queue_item()
     return snapshot
@@ -349,6 +374,7 @@ class RecoEngine:
     selected = self.model_manager.snapshot().selected
     if self.model_manager.snapshot().state is not ModelState.READY or selected is None:
       raise EngineCommandError("model_unavailable", "No ready transcription model is selected")
+    language = self._validate_language(selected, payload.get("language"))
     source_value = payload.get("source", {"type": "microphone"})
     if not isinstance(source_value, Mapping):
       raise EngineCommandError("invalid_source", "source must be an object")
@@ -391,7 +417,7 @@ class RecoEngine:
           source_device_id=str(device) if device is not None else None,
           model=selected.repo_id,
           model_revision=selected.revision,
-          language=DEFAULT_CONFIG.engine.default_language,
+          language=language,
           sample_rate=SAMPLE_RATE,
           title=title,
           config={"vad": asdict(DEFAULT_CONFIG.vad), "transcription": asdict(DEFAULT_CONFIG.transcription)},
@@ -399,7 +425,7 @@ class RecoEngine:
       )
       thread = Thread(
         target=self._run_session,
-        args=(session_id, source_path, device, fingerprint, control, 0, 0, selected, False),
+        args=(session_id, source_path, device, fingerprint, control, 0, 0, selected, language, False),
         daemon=True,
         name=f"reco-session-{session_id}",
       )
@@ -482,6 +508,8 @@ class RecoEngine:
       if not isinstance(model, str) or not model or not isinstance(model_revision, str) or not model_revision:
         raise EngineCommandError("model_unavailable", "The paused session has no restorable model revision")
       model_reference = ModelReference(model, model_revision)
+      language_value = context.get("language")
+      language = None if language_value == "Auto" else str(language_value)
       control = SessionControl()
       receipt = self.repository.set_state(session_id, SessionState.PREPARING)
       thread = Thread(
@@ -495,6 +523,7 @@ class RecoEngine:
           resume_sample,
           segment_offset,
           model_reference,
+          language,
           resumable_state,
         ),
         daemon=True,
@@ -506,6 +535,7 @@ class RecoEngine:
       self._active_queue_origin = queue_origin
       if queue_origin:
         self._queue_auto_advance = True
+        self._queue_language = language
       self._emit("session.stateChanged", session_id, self._state_receipt(receipt))
       thread.start()
     if queue_origin:
@@ -581,6 +611,7 @@ class RecoEngine:
           continue
         control = SessionControl()
         abort = False
+        language: str | None = None
         model_unavailable = False
         release_aborted_runtime = False
         with self._lock:
@@ -590,6 +621,7 @@ class RecoEngine:
             release_aborted_runtime = self._active_session_id is None
           else:
             selected = self.model_manager.snapshot().selected
+            language = self._queue_language
           if not abort and (self.model_manager.snapshot().state is not ModelState.READY or selected is None):
             self._queue_auto_advance = False
             model_unavailable = True
@@ -622,7 +654,7 @@ class RecoEngine:
                   source_path=str(source_path),
                   model=selected_reference.repo_id,
                   model_revision=selected_reference.revision,
-                  language=DEFAULT_CONFIG.engine.default_language,
+                  language=language,
                   sample_rate=SAMPLE_RATE,
                   title=source_path.stem,
                   config={"vad": asdict(DEFAULT_CONFIG.vad), "transcription": asdict(DEFAULT_CONFIG.transcription)},
@@ -632,7 +664,7 @@ class RecoEngine:
               continue
             thread = Thread(
               target=self._run_session,
-              args=(session_id, source_path, None, fingerprint, control, 0, 0, selected_reference, False),
+              args=(session_id, source_path, None, fingerprint, control, 0, 0, selected_reference, language, False),
               daemon=True,
               name=f"reco-session-{session_id}",
             )
@@ -701,6 +733,7 @@ class RecoEngine:
     initial_sample: int = 0,
     segment_offset: int = 0,
     model_reference: ModelReference | None = None,
+    language: str | None = None,
     resuming_from: SessionState | None = None,
   ) -> None:
     runtime: ModelRuntime | None = None
@@ -715,7 +748,7 @@ class RecoEngine:
       if control.stop_requested():
         self._finish_before_running(session_id, control, initial_sample)
         return
-      runtime, service, worker = self._acquire_runtime(reference)
+      runtime, service, worker = self._acquire_runtime(reference, language)
       if control.stop_requested():
         self._finish_before_running(session_id, control, initial_sample)
         return
@@ -740,7 +773,7 @@ class RecoEngine:
         audio_input,
         SileroVadEngine(model=OnnxSileroProbabilityModel(self.vad_model)),
         service,
-        TranscriptModelMetadata(path=str(runtime.model_path), language=DEFAULT_CONFIG.engine.default_language),
+        TranscriptModelMetadata(path=str(runtime.model_path), language=language),
         asr_worker=worker,
         progress_callback=lambda progress: self._publish_progress(session_id, progress, total_audio_ms),
         segment_callback=lambda segment: self._persist_segment(
@@ -865,6 +898,7 @@ class RecoEngine:
           "segmentIndex": receipt.segment.index,
           "startSample": receipt.segment.start_sample,
           "endSample": receipt.segment.end_sample,
+          "language": receipt.segment.language,
           "text": receipt.segment.text,
         },
         "rowVersion": receipt.row_version,

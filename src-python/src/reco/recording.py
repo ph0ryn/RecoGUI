@@ -36,6 +36,7 @@ class RecordingSegment:
   split_reason: SplitReason
   text: str
   raw_text: str | None = None
+  language: str = ""
   vad_mean_probability: float | None = None
   vad_peak_probability: float | None = None
   speech_ratio: float | None = None
@@ -57,6 +58,8 @@ class RecordingSegment:
       raise ValueError("Segment end sample must be greater than its start sample.")
     if not isinstance(self.split_reason, SplitReason):
       raise ValueError("Split reason must be a supported value.")
+    if not self.language.strip():
+      raise ValueError("Segment language must not be empty.")
     _validate_probability("VAD mean probability", self.vad_mean_probability)
     _validate_probability("VAD peak probability", self.vad_peak_probability)
     _validate_probability("Speech ratio", self.speech_ratio)
@@ -82,6 +85,7 @@ class RecordingSegment:
       split_reason=segment.split_reason,
       text=segment.text,
       raw_text=segment.raw_text,
+      language=segment.language,
       vad_mean_probability=vad.mean_probability,
       vad_peak_probability=vad.peak_probability,
       speech_ratio=vad.speech_ratio,

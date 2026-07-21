@@ -13,7 +13,8 @@
         "revision": "7c70d18cb650655d32eafb952a74a49c6a3caad0",
         "size": "2.5G",
         "lastModified": "2 months ago",
-        "refs": ["main"]
+        "refs": ["main"],
+        "supportedLanguages": ["Japanese", "English"]
       }
     ],
     "state": {

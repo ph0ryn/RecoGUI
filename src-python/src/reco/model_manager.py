@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -34,6 +35,7 @@ class CachedModel:
   size: str
   last_modified: str
   refs: tuple[str, ...]
+  supported_languages: tuple[str, ...]
 
   def public(self) -> dict[str, object]:
     return {
@@ -42,6 +44,7 @@ class CachedModel:
       "size": self.size,
       "lastModified": self.last_modified,
       "refs": list(self.refs),
+      "supportedLanguages": list(self.supported_languages),
     }
 
 
@@ -114,6 +117,15 @@ class ModelManager:
       return None
     return model.snapshot_path
 
+  def supported_languages(self, reference: ModelReference) -> tuple[str, ...]:
+    """Return canonical language names declared by one cached model revision."""
+
+    with self._lock:
+      model = self._models.get((reference.repo_id, reference.revision))
+    if model is None:
+      return ()
+    return model.supported_languages
+
   def select(self, reference: ModelReference) -> None:
     """Select one cached revision without loading its ASR runtime."""
 
@@ -151,9 +163,23 @@ def _parse_models(value: Any) -> list[CachedModel]:
           size=_format_size(revision.size_on_disk),
           last_modified=datetime.fromtimestamp(revision.last_modified, UTC).isoformat(),
           refs=tuple(sorted(revision.refs)),
+          supported_languages=_read_supported_languages(revision.snapshot_path),
         )
       )
   return sorted(models, key=lambda model: (model.repo_id, model.revision))
+
+
+def _read_supported_languages(snapshot_path: Path) -> tuple[str, ...]:
+  try:
+    value = json.loads((snapshot_path / "config.json").read_text())
+  except (OSError, json.JSONDecodeError, TypeError):
+    return ()
+  languages = value.get("support_languages") if isinstance(value, dict) else None
+  if not isinstance(languages, list):
+    return ()
+  return tuple(
+    dict.fromkeys(language.strip() for language in languages if isinstance(language, str) and language.strip())
+  )
 
 
 def _format_size(size: int) -> str:

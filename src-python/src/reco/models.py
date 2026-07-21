@@ -100,7 +100,12 @@ class TranscriptionResult:
 
   text: str
   raw_text: str
+  language: str
   diagnostics: TranscriptionDiagnostics
+
+  def __post_init__(self) -> None:
+    if not self.language.strip():
+      raise ValueError("Transcription result language must not be empty")
 
 
 @dataclass(frozen=True)
@@ -114,6 +119,7 @@ class TranscriptSegment:
   split_reason: SplitReason
   text: str
   raw_text: str
+  language: str
   vad: VadDiagnostics
   transcription: TranscriptionDiagnostics
   queue_wait_ms: int = 0
@@ -126,6 +132,8 @@ class TranscriptSegment:
       raise ValueError("Transcript segment must have a positive sample range")
     if self.sample_rate <= 0:
       raise ValueError("Transcript segment sample rate must be positive")
+    if not self.language.strip():
+      raise ValueError("Transcript segment language must not be empty")
     if self.queue_wait_ms < 0 or self.decode_ms < 0:
       raise ValueError("Transcript segment timings must not be negative")
 
@@ -147,14 +155,14 @@ class TranscriptModelMetadata:
   """Local ASR model metadata for a session."""
 
   path: str
-  language: str
+  language: str | None
   revision: str | None = None
 
   def __post_init__(self) -> None:
     if not self.path.strip():
       raise ValueError("Transcript model path must not be empty")
-    if not self.language.strip():
-      raise ValueError("Transcript model language must not be empty")
+    if self.language is not None and not self.language.strip():
+      raise ValueError("Transcript model language must not be empty when provided")
     if self.revision is not None and not self.revision.strip():
       raise ValueError("Transcript model revision must not be empty when provided")
 

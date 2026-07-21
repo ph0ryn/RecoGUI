@@ -16,6 +16,7 @@ export interface TranscriptSegment {
   sequence: number;
   startMs: number;
   endMs: number;
+  language: string;
   text: string;
 }
 
@@ -54,6 +55,7 @@ export interface CachedModelRevision extends ModelReference {
   lastModified: string;
   refs: string[];
   size: string;
+  supportedLanguages: string[];
 }
 
 export interface ModelState {

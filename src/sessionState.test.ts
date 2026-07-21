@@ -31,6 +31,7 @@ function segment(sequence: number, text = `segment-${sequence}`): TranscriptSegm
   return {
     endMs: sequence * 1_000,
     id: `session-1:${sequence}`,
+    language: "Japanese",
     sequence,
     startMs: (sequence - 1) * 1_000,
     text,

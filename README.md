@@ -6,7 +6,7 @@
 </p>
 <!-- rumdl-enable MD033 -->
 
-RecoGUI is a local Japanese speech transcription app for Apple Silicon Macs.
+RecoGUI is a local speech transcription app with a Japanese UI for Apple Silicon Macs.
 
 ## What You Can Do
 

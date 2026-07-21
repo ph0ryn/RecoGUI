@@ -100,6 +100,7 @@ beforeEach(() => {
         repoId: "ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit",
         revision: "7c70d18cb650655d32eafb952a74a49c6a3caad0",
         size: "2.5G",
+        supportedLanguages: ["Japanese", "English"],
       },
       {
         lastModified: "1 month ago",
@@ -107,6 +108,7 @@ beforeEach(() => {
         repoId: "owner/another-model",
         revision: "another-revision",
         size: "1.0G",
+        supportedLanguages: ["English"],
       },
     ],
     state: structuredClone(mockSnapshot.model),
@@ -249,6 +251,7 @@ describe("RecoGUI", () => {
       expect(bridgeMocks.startSession).toHaveBeenCalledWith({
         deviceId: undefined,
         inputKind: "microphone",
+        language: null,
       }),
     );
   });
@@ -258,9 +261,10 @@ describe("RecoGUI", () => {
 
     fireEvent.keyDown(window, { key: "n", metaKey: true, shiftKey: true });
     await waitFor(() => expect(bridgeMocks.pickAudioFiles).toHaveBeenCalled());
-    expect(bridgeMocks.enqueueFiles).toHaveBeenCalledWith([
-      { displayName: "test.wav", sourceToken: "token" },
-    ]);
+    expect(bridgeMocks.enqueueFiles).toHaveBeenCalledWith(
+      [{ displayName: "test.wav", sourceToken: "token" }],
+      null,
+    );
   });
 
   it("keeps the selected history session when a live segment arrives", async () => {
@@ -437,9 +441,10 @@ describe("RecoGUI", () => {
     await user.click(screen.getByRole("button", { name: /音声ファイルを選択/ }));
 
     await waitFor(() =>
-      expect(bridgeMocks.enqueueFiles).toHaveBeenCalledWith([
-        { displayName: "test.wav", sourceToken: "token" },
-      ]),
+      expect(bridgeMocks.enqueueFiles).toHaveBeenCalledWith(
+        [{ displayName: "test.wav", sourceToken: "token" }],
+        null,
+      ),
     );
     expect(bridgeMocks.startSession).not.toHaveBeenCalledWith(
       expect.objectContaining({ inputKind: "file" }),
@@ -702,24 +707,25 @@ describe("RecoGUI", () => {
     expect(screen.getByRole("combobox", { name: "状態で絞り込み" })).toHaveValue("completed");
   });
 
-  it("persists the default microphone device and passes its id when starting", async () => {
+  it("persists the microphone and language selections when starting", async () => {
     const user = userEvent.setup();
 
     useInactiveSnapshot();
     await renderLoadedApp();
     await user.click(screen.getByRole("button", { name: "設定を開く" }));
     await user.selectOptions(screen.getByRole("combobox", { name: "使用するマイク" }), "7");
+    await user.selectOptions(screen.getByRole("combobox", { name: "入力音声の言語" }), "English");
     await user.click(screen.getByRole("button", { name: "完了" }));
     await user.click(screen.getByRole("button", { name: /新規文字起こし/ }));
     await user.click(screen.getByRole("button", { name: /マイクで録音/ }));
 
     await waitFor(() =>
       expect(bridgeMocks.startSession).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: "7", inputKind: "microphone" }),
+        expect.objectContaining({ deviceId: "7", inputKind: "microphone", language: "English" }),
       ),
     );
     expect(JSON.parse(localStorage.getItem("reco.appPreferences") ?? "{}")).toEqual(
-      expect.objectContaining({ defaultInputDeviceId: "7" }),
+      expect.objectContaining({ defaultInputDeviceId: "7", transcriptionLanguage: "English" }),
     );
   });
 
@@ -757,9 +763,16 @@ describe("RecoGUI", () => {
     await renderLoadedApp();
     await user.click(screen.getByRole("button", { name: "設定を開く" }));
     const selector = await screen.findByRole("combobox", { name: "使用するモデル" });
+    const languageSelector = screen.getByRole("combobox", { name: "入力音声の言語" });
+    const settingsSelectors: Element[] = Array.from(
+      screen.getByRole("dialog", { name: "設定" }).querySelectorAll("select"),
+    );
 
     expect(within(selector).getAllByRole("option")).toHaveLength(3);
     expect(within(selector).getByRole("option", { name: "モデルを選択…" })).toBeDisabled();
+    expect(settingsSelectors.indexOf(selector)).toBeLessThan(
+      settingsSelectors.indexOf(languageSelector),
+    );
     await user.selectOptions(selector, "owner/another-model\nanother-revision");
     await waitFor(() =>
       expect(bridgeMocks.selectModel).toHaveBeenCalledWith({
