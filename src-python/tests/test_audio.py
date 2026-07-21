@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import numpy as np
@@ -16,13 +17,17 @@ from reco.audio import (
   AudioChunk,
   AudioFileIdentity,
   LocalAudioFileInput,
+  MicrophoneDevice,
   MicrophoneInput,
   SourceMetadata,
   audio_file_duration_ms,
+  list_microphone_devices,
   normalize_channels,
+  resolve_microphone_device,
   resolve_microphone_device_name,
   validate_audio_file,
 )
+from reco.core_audio import CoreAudioDevice
 from reco.errors import RecoError
 
 
@@ -195,6 +200,100 @@ def test_resolve_microphone_device_name_queries_default_input(monkeypatch: pytes
 
   assert resolve_microphone_device_name() == "MacBook Pro Microphone"
   assert calls == [(None, "input")]
+
+
+def test_microphone_devices_use_persistent_core_audio_uids(monkeypatch: pytest.MonkeyPatch) -> None:
+  port_audio_devices = [
+    {"name": "Display", "max_input_channels": 0},
+    {"name": "Studio Mic", "max_input_channels": 1},
+    {"name": "MacBook Microphone", "max_input_channels": 2},
+  ]
+  monkeypatch.setattr("reco.audio.sd.query_devices", lambda: port_audio_devices)
+  monkeypatch.setattr(
+    "reco.audio.sd.query_hostapis",
+    lambda: ({"name": "Core Audio", "devices": [0, 1, 2]},),
+  )
+  monkeypatch.setattr("reco.audio.sd.default", SimpleNamespace(device=(2, 0)))
+  monkeypatch.setattr(
+    "reco.audio.list_core_audio_devices",
+    lambda: (
+      CoreAudioDevice(10, "display-uid", "Display"),
+      CoreAudioDevice(11, "studio-uid", "Studio Mic"),
+      CoreAudioDevice(12, "builtin-uid", "MacBook Microphone"),
+    ),
+  )
+
+  devices = list_microphone_devices()
+
+  assert [(device.uid, device.index, device.is_default) for device in devices] == [
+    ("studio-uid", 1, False),
+    ("builtin-uid", 2, True),
+  ]
+  assert resolve_microphone_device("builtin-uid").index == 2
+
+
+def test_microphone_device_mapping_rejects_mismatched_enumerations(monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setattr(
+    "reco.audio.sd.query_devices",
+    lambda: [{"name": "PortAudio Mic", "max_input_channels": 1}],
+  )
+  monkeypatch.setattr(
+    "reco.audio.sd.query_hostapis",
+    lambda: ({"name": "Core Audio", "devices": [0]},),
+  )
+  monkeypatch.setattr("reco.audio.sd.default", SimpleNamespace(device=(0, 0)))
+  monkeypatch.setattr(
+    "reco.audio.list_core_audio_devices",
+    lambda: (CoreAudioDevice(10, "uid", "Different Core Audio Mic"),),
+  )
+
+  with pytest.raises(RecoError, match="identities do not match"):
+    list_microphone_devices()
+
+
+def test_microphone_uid_resolves_after_the_port_audio_index_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+  state = {
+    "core": (
+      CoreAudioDevice(10, "selected-uid", "Selected Mic"),
+      CoreAudioDevice(11, "other-uid", "Other Mic"),
+    ),
+    "port": [
+      {"name": "Selected Mic", "max_input_channels": 1},
+      {"name": "Other Mic", "max_input_channels": 1},
+    ],
+  }
+  monkeypatch.setattr("reco.audio.sd.query_devices", lambda: state["port"])
+  monkeypatch.setattr(
+    "reco.audio.sd.query_hostapis",
+    lambda: ({"name": "Core Audio", "devices": [0, 1]},),
+  )
+  monkeypatch.setattr("reco.audio.sd.default", SimpleNamespace(device=(0, 0)))
+  monkeypatch.setattr("reco.audio.list_core_audio_devices", lambda: state["core"])
+
+  assert resolve_microphone_device("selected-uid").index == 0
+
+  state["port"] = [
+    {"name": "Other Mic", "max_input_channels": 1},
+    {"name": "Selected Mic", "max_input_channels": 1},
+  ]
+  state["core"] = (
+    CoreAudioDevice(21, "other-uid", "Other Mic"),
+    CoreAudioDevice(20, "selected-uid", "Selected Mic"),
+  )
+
+  assert resolve_microphone_device("selected-uid").index == 1
+
+
+def test_microphone_uid_does_not_fall_back_when_the_device_is_disconnected(
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  monkeypatch.setattr(
+    "reco.audio.list_microphone_devices",
+    lambda: (MicrophoneDevice("other-uid", 0, "Other Mic", 1, True),),
+  )
+
+  with pytest.raises(RecoError, match="selected audio input device is unavailable"):
+    resolve_microphone_device("disconnected-uid")
 
 
 def test_microphone_callback_reports_bounded_buffer_overflow_without_blocking(

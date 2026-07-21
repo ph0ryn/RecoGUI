@@ -15,6 +15,7 @@ import soundfile as sf
 import soxr
 from numpy.typing import NDArray
 
+from reco.core_audio import CoreAudioDevice, list_core_audio_devices
 from reco.errors import RecoError
 
 SAMPLE_RATE = 16_000
@@ -100,6 +101,17 @@ class AudioInput:
 
   def open(self) -> AudioStream:
     raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class MicrophoneDevice:
+  """Persistent microphone UID resolved to the current PortAudio index."""
+
+  uid: str
+  index: int
+  name: str
+  channels: int
+  is_default: bool
 
 
 class LocalAudioFileInput(AudioInput):
@@ -223,6 +235,64 @@ def resolve_microphone_device_name(device: int | str | None = None) -> str | Non
   name = device_info.get("name")
   resolved_name = str(name).strip() if name else ""
   return resolved_name or None
+
+
+def list_microphone_devices() -> tuple[MicrophoneDevice, ...]:
+  """Map persistent Core Audio UIDs to the current PortAudio device indices."""
+
+  try:
+    port_audio_devices = sd.query_devices()
+    host_apis = sd.query_hostapis()
+    default_input_index = int(sd.default.device[0])
+  except (TypeError, ValueError, sd.PortAudioError) as exc:
+    raise RecoError(f"Could not list audio input devices: {exc}") from exc
+  core_audio_host = next(
+    (host_api for host_api in host_apis if str(host_api.get("name", "")) == "Core Audio"),
+    None,
+  )
+  if core_audio_host is None:
+    raise RecoError("The Core Audio PortAudio host is unavailable")
+  port_audio_indices = tuple(int(index) for index in core_audio_host.get("devices", ()))
+  mapping = _match_core_audio_devices(
+    port_audio_indices,
+    port_audio_devices,
+    list_core_audio_devices(),
+  )
+  return tuple(
+    MicrophoneDevice(
+      uid=core_audio_device.uid,
+      index=index,
+      name=str(port_audio_devices[index]["name"]),
+      channels=int(port_audio_devices[index]["max_input_channels"]),
+      is_default=index == default_input_index,
+    )
+    for index, core_audio_device in mapping
+    if int(port_audio_devices[index]["max_input_channels"]) > 0
+  )
+
+
+def resolve_microphone_device(uid: str) -> MicrophoneDevice:
+  """Resolve one persistent UID without falling back to a different device."""
+
+  device = next((candidate for candidate in list_microphone_devices() if candidate.uid == uid), None)
+  if device is None:
+    raise RecoError(f"The selected audio input device is unavailable: {uid}")
+  return device
+
+
+def _match_core_audio_devices(
+  port_audio_indices: tuple[int, ...],
+  port_audio_devices: Any,
+  core_audio_devices: tuple[CoreAudioDevice, ...],
+) -> tuple[tuple[int, CoreAudioDevice], ...]:
+  if len(port_audio_indices) != len(core_audio_devices):
+    raise RecoError("Core Audio and PortAudio returned different device counts")
+  mapping = tuple(zip(port_audio_indices, core_audio_devices, strict=True))
+  for index, core_audio_device in mapping:
+    port_audio_name = str(port_audio_devices[index]["name"]).strip()
+    if port_audio_name != core_audio_device.name:
+      raise RecoError("Core Audio and PortAudio device identities do not match")
+  return mapping
 
 
 def validate_audio_file(path: Path) -> None:

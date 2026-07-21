@@ -12,13 +12,13 @@ from threading import Event, Lock, Thread
 from time import monotonic
 from typing import cast
 
-import sounddevice as sd
-
 from reco.audio import (
   SAMPLE_RATE,
   LocalAudioFileInput,
   MicrophoneInput,
   audio_file_duration_ms,
+  list_microphone_devices,
+  resolve_microphone_device,
   resolve_microphone_device_name,
   validate_audio_file,
 )
@@ -385,14 +385,21 @@ class RecoEngine:
     source_path = Path(str(source_value["path"])) if source_kind == "file" and source_value.get("path") else None
     if source_kind == "file" and source_path is None:
       raise EngineCommandError("invalid_source", "A file source requires path")
-    device = source_value.get("deviceId")
+    device_uid = source_value.get("deviceId")
+    if device_uid is not None and (not isinstance(device_uid, str) or not device_uid.strip()):
+      raise EngineCommandError("invalid_source", "A microphone deviceId must be a Core Audio UID or null")
+    try:
+      microphone = resolve_microphone_device(device_uid) if isinstance(device_uid, str) else None
+    except RecoError as exc:
+      raise EngineCommandError("audio_input_unavailable", str(exc)) from exc
+    device_index = microphone.index if microphone is not None else None
     fingerprint = None
     if source_path is not None:
       validate_audio_file(source_path)
       fingerprint = fingerprint_file_snapshot(source_path)
       display_name = source_path.name
     else:
-      display_name = resolve_microphone_device_name(device if isinstance(device, int | str) else None) or "microphone"
+      display_name = microphone.name if microphone is not None else resolve_microphone_device_name() or "microphone"
     title = str(
       payload.get("title") or (source_path.stem if source_path else datetime.now().strftime("Recording %Y-%m-%d %H:%M"))
     )
@@ -414,7 +421,7 @@ class RecoEngine:
           source_display_name=display_name,
           source_fingerprint=fingerprint.value if fingerprint else None,
           source_path=str(source_path) if source_path is not None else None,
-          source_device_id=str(device) if device is not None else None,
+          source_device_id=microphone.uid if microphone is not None else None,
           model=selected.repo_id,
           model_revision=selected.revision,
           language=language,
@@ -425,7 +432,7 @@ class RecoEngine:
       )
       thread = Thread(
         target=self._run_session,
-        args=(session_id, source_path, device, fingerprint, control, 0, 0, selected, language, False),
+        args=(session_id, source_path, device_index, fingerprint, control, 0, 0, selected, language, False),
         daemon=True,
         name=f"reco-session-{session_id}",
       )
@@ -488,8 +495,12 @@ class RecoEngine:
       if self._queue_auto_advance and not queue_origin:
         raise EngineCommandError("queue_active", "The file queue is active")
       source_path = Path(str(context["source_path"])) if context.get("source_path") else None
-      device_value = context.get("source_device_id")
-      device = _restore_device_id(str(device_value)) if device_value is not None else None
+      device_uid = context.get("source_device_id")
+      try:
+        microphone = resolve_microphone_device(str(device_uid)) if device_uid is not None else None
+      except RecoError as exc:
+        raise EngineCommandError("audio_input_unavailable", str(exc)) from exc
+      device = microphone.index if microphone is not None else None
       fingerprint = None
       if source_kind == "file":
         if source_path is None:
@@ -693,19 +704,17 @@ class RecoEngine:
     """Return current input-capable PortAudio devices."""
 
     try:
-      devices = sd.query_devices()
-      default_input_id = int(sd.default.device[0])
-    except sd.PortAudioError as exc:
+      devices = list_microphone_devices()
+    except RecoError as exc:
       raise EngineCommandError("audio_unavailable", f"Could not list audio inputs: {exc}") from exc
     return [
       {
-        "id": index,
-        "name": str(device["name"]),
-        "channels": int(device["max_input_channels"]),
-        "isDefault": index == default_input_id,
+        "id": device.uid,
+        "name": device.name,
+        "channels": device.channels,
+        "isDefault": device.is_default,
       }
-      for index, device in enumerate(devices)
-      if int(device["max_input_channels"]) > 0
+      for device in devices
     ]
 
   def _finish_before_running(self, session_id: str, control: SessionControl, resume_sample: int) -> None:
@@ -953,10 +962,6 @@ class RecoEngine:
     snapshot = self.queue_state()
     self._emit("queue.changed", None, snapshot)
     return snapshot
-
-
-def _restore_device_id(value: str) -> int | str:
-  return int(value) if value.isdecimal() else value
 
 
 def _clear_mlx_cache() -> None:

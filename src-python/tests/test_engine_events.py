@@ -9,6 +9,7 @@ from typing import cast
 import pytest
 
 import reco.engine as engine_module
+from reco.audio import MicrophoneDevice
 from reco.engine import EngineCommandError, ModelRuntime, RecoEngine, SessionControl
 from reco.model_manager import ModelReference, ModelState
 from reco.models import SplitReason, TranscriptionDiagnostics, TranscriptSegment, VadDiagnostics
@@ -83,20 +84,96 @@ def test_model_runtime_close_invalidates_worker_and_clears_mlx_memory(
 
 
 def test_list_audio_inputs_marks_the_default_input(monkeypatch: pytest.MonkeyPatch) -> None:
-  devices = [
-    {"name": "Output only", "max_input_channels": 0},
-    {"name": "USB microphone", "max_input_channels": 1},
-    {"name": "MacBook microphone", "max_input_channels": 2},
-  ]
-  monkeypatch.setattr(engine_module.sd, "query_devices", lambda: devices)
-  monkeypatch.setattr(engine_module.sd, "default", SimpleNamespace(device=(2, 0)))
+  monkeypatch.setattr(
+    engine_module,
+    "list_microphone_devices",
+    lambda: (
+      MicrophoneDevice("usb-uid", 1, "USB microphone", 1, False),
+      MicrophoneDevice("builtin-uid", 2, "MacBook microphone", 2, True),
+    ),
+  )
 
   engine = RecoEngine.__new__(RecoEngine)
 
   assert engine.list_audio_inputs() == [
-    {"id": 1, "name": "USB microphone", "channels": 1, "isDefault": False},
-    {"id": 2, "name": "MacBook microphone", "channels": 2, "isDefault": True},
+    {"id": "usb-uid", "name": "USB microphone", "channels": 1, "isDefault": False},
+    {"id": "builtin-uid", "name": "MacBook microphone", "channels": 2, "isDefault": True},
   ]
+
+
+def test_new_microphone_session_resolves_and_persists_the_core_audio_uid(
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  captured: list[tuple[object, ...]] = []
+
+  class CapturingThread:
+    def __init__(self, *, target: object, args: tuple[object, ...], **options: object) -> None:
+      del target, options
+      captured.append(args)
+
+    def start(self) -> None:
+      return None
+
+  engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
+  engine.model_manager.selected = ModelReference("owner/model", "revision")
+  engine.model_manager._state = ModelState.READY
+  monkeypatch.setattr(
+    engine_module,
+    "resolve_microphone_device",
+    lambda uid: MicrophoneDevice(uid, 7, "Studio Mic", 1, False),
+  )
+  monkeypatch.setattr(engine_module, "Thread", CapturingThread)
+
+  result = engine.start_session({"language": None, "source": {"type": "microphone", "deviceId": "studio-uid"}})
+
+  session = engine.repository.get_session(str(result["sessionId"]))
+  assert session["source_device_id"] == "studio-uid"
+  assert session["source_display_name"] == "Studio Mic"
+  assert captured[0][2] == 7
+
+
+def test_microphone_resume_resolves_the_saved_uid_to_the_current_index(
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  database = tmp_path / "reco.sqlite3"
+  repository = RecordingRepository(database)
+  session_id = repository.create_session(
+    NewSession(
+      "microphone",
+      "Studio Mic",
+      "owner/model",
+      "revision",
+      "Japanese",
+      16_000,
+      "Recording",
+      source_device_id="studio-uid",
+    )
+  )
+  repository.set_state(session_id, SessionState.RUNNING)
+  repository.fail_session(session_id, "capture_failed", "Disconnected")
+  captured: list[tuple[object, ...]] = []
+
+  class CapturingThread:
+    def __init__(self, *, target: object, args: tuple[object, ...], **options: object) -> None:
+      del target, options
+      captured.append(args)
+
+    def start(self) -> None:
+      return None
+
+  engine = RecoEngine(database, tmp_path / "models")
+  monkeypatch.setattr(
+    engine_module,
+    "resolve_microphone_device",
+    lambda uid: MicrophoneDevice(uid, 9, "Studio Mic", 1, False),
+  )
+  monkeypatch.setattr(engine_module, "Thread", CapturingThread)
+
+  engine.resume_session(session_id)
+
+  assert captured[0][2] == 9
 
 
 def test_persisted_segment_event_contains_committed_receipt(tmp_path: Path) -> None:
