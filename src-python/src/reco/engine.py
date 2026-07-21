@@ -102,7 +102,7 @@ class ModelRuntime:
       if self.loaded:
         assert self._service is not None and self._worker is not None
         return self._service, self._worker
-      self._service = LocalAsrTranscriptionService(self.model_path, language=DEFAULT_CONFIG.cli.default_language)
+      self._service = LocalAsrTranscriptionService(self.model_path, language=DEFAULT_CONFIG.engine.default_language)
       self._worker = start_asr_worker(self._service)
       self._worker.wait_until_ready()
       return self._service, self._worker
@@ -390,7 +390,7 @@ class RecoEngine:
           source_device_id=str(device) if device is not None else None,
           model=selected.repo_id,
           model_revision=selected.revision,
-          language=DEFAULT_CONFIG.cli.default_language,
+          language=DEFAULT_CONFIG.engine.default_language,
           sample_rate=SAMPLE_RATE,
           title=title,
           config={"vad": asdict(DEFAULT_CONFIG.vad), "transcription": asdict(DEFAULT_CONFIG.transcription)},
@@ -617,7 +617,7 @@ class RecoEngine:
                   source_path=str(source_path),
                   model=selected_reference.repo_id,
                   model_revision=selected_reference.revision,
-                  language=DEFAULT_CONFIG.cli.default_language,
+                  language=DEFAULT_CONFIG.engine.default_language,
                   sample_rate=SAMPLE_RATE,
                   title=source_path.stem,
                   config={"vad": asdict(DEFAULT_CONFIG.vad), "transcription": asdict(DEFAULT_CONFIG.transcription)},
@@ -735,7 +735,7 @@ class RecoEngine:
         audio_input,
         SileroVadEngine(model=OnnxSileroProbabilityModel(ensure_silero_vad_asset(self.model_manager.vad_asset_path))),
         service,
-        TranscriptModelMetadata(path=str(runtime.model_path), language=DEFAULT_CONFIG.cli.default_language),
+        TranscriptModelMetadata(path=str(runtime.model_path), language=DEFAULT_CONFIG.engine.default_language),
         asr_worker=worker,
         progress_callback=lambda progress: self._publish_progress(session_id, progress, total_audio_ms),
         segment_callback=lambda segment: self._persist_segment(

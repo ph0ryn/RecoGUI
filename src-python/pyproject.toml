@@ -5,8 +5,7 @@ requires = [ "hatchling" ]
 [project]
 name = "reco"
 version = "0.2.0"
-description = "Realtime speech-to-text CLI using Silero VAD and local MLX ASR"
-readme = "README.md"
+description = "Python transcription engine for RecoGUI"
 requires-python = ">=3.12"
 classifiers = [
   "Programming Language :: Python :: 3 :: Only",
@@ -19,15 +18,11 @@ dependencies = [
   "mlx-audio[stt]>=0.4.3",
   "numpy>=2.4.5",
   "onnxruntime>=1.23.2",
-  "rapidfuzz>=3.14.5",
-  "rich>=15.0.0",
   "sounddevice>=0.5.5",
   "soundfile>=0.13.1",
   "soxr>=1.1.0",
 ]
 [project.scripts]
-reco = "reco.main:main"
-reco-evaluate = "reco.evaluation:main"
 reco-engine = "reco.sidecar:main"
 
 [dependency-groups]
@@ -43,8 +38,9 @@ dev = [
 [tool.hatch]
 [tool.hatch.build]
 artifacts = [ "src/reco/assets/*.onnx" ]
-targets.wheel.packages = [ "src/reco" ]
-
+[tool.hatch.build.targets]
+[tool.hatch.build.targets.wheel]
+packages = [ "src/reco" ]
 [tool.hatch.build.targets.wheel.force-include]
 "SOURCE.md" = "reco/SOURCE.md"
 "THIRD_PARTY_NOTICES.md" = "reco/THIRD_PARTY_NOTICES.md"

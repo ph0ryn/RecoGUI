@@ -4,13 +4,11 @@ from typing import cast
 
 import pytest
 
-from reco.config import DEFAULT_CONFIG, CliConfig, TranscriptionConfig, VadConfig
+from reco.config import DEFAULT_CONFIG, EngineConfig, TranscriptionConfig, VadConfig
 
 
-def test_default_model_is_the_fixed_japanese_mlx_model() -> None:
-  assert DEFAULT_CONFIG.cli.default_model == "ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit"
-  assert DEFAULT_CONFIG.cli.default_model_revision == "7c70d18cb650655d32eafb952a74a49c6a3caad0"
-  assert DEFAULT_CONFIG.cli.default_language == "Japanese"
+def test_default_engine_language_is_japanese() -> None:
+  assert DEFAULT_CONFIG.engine.default_language == "Japanese"
 
 
 def test_default_vad_profile_uses_hysteresis_padding_and_adaptive_split() -> None:
@@ -33,13 +31,9 @@ def test_default_transcription_profile_has_bounded_memory_and_generation() -> No
   assert transcription.repetition_penalty is None
 
 
-def test_invalid_cli_config_is_rejected() -> None:
-  with pytest.raises(ValueError, match="model"):
-    CliConfig(default_model="")
-  with pytest.raises(ValueError, match="revision"):
-    CliConfig(default_model_revision=" ")
+def test_invalid_engine_config_is_rejected() -> None:
   with pytest.raises(ValueError, match="language"):
-    CliConfig(default_language=" ")
+    EngineConfig(default_language=" ")
 
 
 def test_invalid_vad_config_is_rejected() -> None:

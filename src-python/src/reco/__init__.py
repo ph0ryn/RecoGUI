@@ -1,1 +1,1 @@
-"""Reco speech-to-text CLI package."""
+"""Python transcription engine for RecoGUI."""

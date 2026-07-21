@@ -874,31 +874,21 @@ class RecordingRepository:
 
   def _initialize(self) -> None:
     existed = self.database_path.exists() and self.database_path.stat().st_size > 0
-    backup_path = self.database_path.with_suffix(self.database_path.suffix + ".v1.backup")
-    old_version = 0
     if existed:
       with sqlite3.connect(self.database_path) as probe:
-        old_version = int(probe.execute("PRAGMA user_version").fetchone()[0])
+        schema_version = int(probe.execute("PRAGMA user_version").fetchone()[0])
         existing_tables = {
           str(row[0])
           for row in probe.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
         }
-      if old_version not in {0, 1, 2, 3, APPLICATION_SCHEMA_VERSION}:
-        raise RepositoryError(f"Database schema version {old_version} is not supported")
-      if old_version == 0 and existing_tables:
-        raise RepositoryError("Non-empty unversioned database cannot be initialized as a RecoGUI repository")
-      if old_version == APPLICATION_SCHEMA_VERSION and "app_metadata" not in existing_tables:
+      if schema_version != APPLICATION_SCHEMA_VERSION:
+        raise RepositoryError(f"Database schema version {schema_version} is not supported")
+      if "app_metadata" not in existing_tables:
         raise RepositoryError("RecoGUI schema metadata is missing")
-      if old_version == 1 and not backup_path.exists():
-        with sqlite3.connect(self.database_path) as source, sqlite3.connect(backup_path) as backup:
-          source.backup(backup)
     with self._connect() as connection:
       connection.executescript(_SCHEMA)
       connection.execute("BEGIN IMMEDIATE")
       try:
-        self._migrate_v2(connection, old_version)
-        self._repair_legacy_segment_foreign_key(connection)
-        self._migrate_v1(connection)
         connection.execute(f"PRAGMA user_version = {APPLICATION_SCHEMA_VERSION}")
         connection.execute(
           "INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('schema_version', ?)",
@@ -910,143 +900,6 @@ class RecordingRepository:
           connection.execute("ROLLBACK")
         raise
     self.integrity_check()
-
-  def _migrate_v2(self, connection: sqlite3.Connection, old_version: int) -> None:
-    if old_version == 2:
-      connection.execute("PRAGMA legacy_alter_table = ON")
-      connection.execute("ALTER TABLE app_segments RENAME TO app_segments_v2")
-      connection.execute("ALTER TABLE app_sessions RENAME TO app_sessions_v2")
-      connection.execute(_APP_SESSIONS_SCHEMA)
-      connection.execute(_APP_SEGMENTS_SCHEMA)
-      connection.execute(
-        """
-        INSERT INTO app_sessions (
-          session_id, state, end_reason, title, source_kind, source_display_name,
-          source_fingerprint, model, model_revision, language, sample_rate,
-          config_json, started_at, ended_at, updated_at, media_duration_ms,
-          total_segments, recognized_segments, characters, error_code,
-          error_message, row_version
-        )
-        SELECT session_id, state, end_reason, title, source_kind, source_display_name,
-          source_fingerprint, model, model_revision, language, sample_rate,
-          config_json, started_at, ended_at, updated_at, media_duration_ms,
-          total_segments, recognized_segments, characters, error_code,
-          error_message, row_version
-        FROM app_sessions_v2
-        """
-      )
-      connection.execute(
-        """
-        INSERT INTO app_segments (
-          session_id, segment_index, start_sample, end_sample, split_reason,
-          text, raw_text, diagnostics_json
-        )
-        SELECT session_id, segment_index, start_sample, end_sample, split_reason,
-          text, raw_text, diagnostics_json
-        FROM app_segments_v2
-        """
-      )
-      connection.execute("DROP TABLE app_segments_v2")
-      connection.execute("DROP TABLE app_sessions_v2")
-      connection.execute(
-        "CREATE INDEX IF NOT EXISTS app_sessions_started_at ON app_sessions(started_at DESC, session_id DESC)"
-      )
-      return
-    columns = {row[1] for row in connection.execute("PRAGMA table_info(app_sessions)")}
-    for name, definition in (
-      ("source_path", "TEXT"),
-      ("source_device_id", "TEXT"),
-      ("resume_sample", "INTEGER NOT NULL DEFAULT 0"),
-    ):
-      if name not in columns:
-        connection.execute(f"ALTER TABLE app_sessions ADD COLUMN {name} {definition}")
-
-  def _repair_legacy_segment_foreign_key(self, connection: sqlite3.Connection) -> None:
-    """Repair early v3 databases whose segment foreign key still targets the temporary v2 table."""
-
-    foreign_keys = connection.execute("PRAGMA foreign_key_list(app_segments)").fetchall()
-    if not any(str(row[2]) == "app_sessions_v2" for row in foreign_keys):
-      return
-    connection.execute("ALTER TABLE app_segments RENAME TO app_segments_legacy_fk")
-    connection.execute(_APP_SEGMENTS_SCHEMA)
-    connection.execute(
-      """
-      INSERT INTO app_segments (
-        session_id, segment_index, start_sample, end_sample, split_reason,
-        text, raw_text, diagnostics_json
-      )
-      SELECT session_id, segment_index, start_sample, end_sample, split_reason,
-        text, raw_text, diagnostics_json
-      FROM app_segments_legacy_fk
-      """
-    )
-    connection.execute("DROP TABLE app_segments_legacy_fk")
-
-  def _migrate_v1(self, connection: sqlite3.Connection) -> None:
-    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    if "runs" not in tables or connection.execute("SELECT 1 FROM app_metadata WHERE key='v1_migrated'").fetchone():
-      return
-    rows = connection.execute("SELECT * FROM runs ORDER BY started_at").fetchall()
-    for row in rows:
-      state = {"completed": "completed", "interrupted": "stopped", "failed": "failed"}.get(row["status"], "abandoned")
-      end_reason = {"completed": "naturalEnd", "interrupted": "legacyInterrupted", "failed": "legacyFailure"}.get(
-        row["status"], "migrationRecovery"
-      )
-      connection.execute(
-        """
-        INSERT OR IGNORE INTO app_sessions (
-          session_id, state, end_reason, title, source_kind, source_display_name,
-          source_fingerprint, model, model_revision, language, sample_rate, config_json,
-          started_at, ended_at, updated_at, media_duration_ms, total_segments,
-          recognized_segments, characters, error_code, error_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-          row["run_id"],
-          state,
-          end_reason,
-          row["source_display_name"],
-          row["source_kind"],
-          row["source_display_name"],
-          row["source_fingerprint"],
-          row["model"],
-          row["model_revision"],
-          row["language"],
-          row["sample_rate"],
-          row["config_json"],
-          row["started_at"],
-          row["ended_at"],
-          row["ended_at"] or row["started_at"],
-          row["media_duration_ms"] or 0,
-          row["total_segments"] or 0,
-          row["recognized_segments"] or 0,
-          row["characters"] or 0,
-          row["error_type"],
-          row["error_message"],
-        ),
-      )
-      for segment in connection.execute(
-        "SELECT * FROM segments WHERE run_id = ? ORDER BY segment_index", (row["run_id"],)
-      ):
-        connection.execute(
-          """
-          INSERT OR IGNORE INTO app_segments
-            (session_id, segment_index, start_sample, end_sample, split_reason, text, raw_text, diagnostics_json)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          """,
-          (
-            row["run_id"],
-            segment["segment_index"],
-            segment["start_sample"],
-            segment["end_sample"],
-            segment["split_reason"],
-            segment["text"],
-            segment["raw_text"],
-            "{}",
-          ),
-        )
-      self._update_search(connection, row["run_id"])
-    connection.execute("INSERT INTO app_metadata (key, value) VALUES ('v1_migrated', ?)", (_now(),))
 
   def _update_search(self, connection: sqlite3.Connection, session_id: str) -> None:
     row = connection.execute("SELECT title FROM app_sessions WHERE session_id = ?", (session_id,)).fetchone()

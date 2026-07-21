@@ -7,18 +7,12 @@ from math import isfinite
 
 
 @dataclass(frozen=True)
-class CliConfig:
-  """CLI defaults."""
+class EngineConfig:
+  """Engine-wide defaults."""
 
-  default_model: str = "ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit"
-  default_model_revision: str = "7c70d18cb650655d32eafb952a74a49c6a3caad0"
   default_language: str = "Japanese"
 
   def __post_init__(self) -> None:
-    if not self.default_model.strip():
-      raise ValueError("Default model must not be empty")
-    if not self.default_model_revision.strip():
-      raise ValueError("Default model revision must not be empty")
     if not self.default_language.strip():
       raise ValueError("Default language must not be empty")
 
@@ -108,12 +102,12 @@ class TranscriptionConfig:
 class RecoConfig:
   """Top-level configuration grouped by usage area."""
 
-  cli: CliConfig = field(default_factory=CliConfig)
+  engine: EngineConfig = field(default_factory=EngineConfig)
   vad: VadConfig = field(default_factory=VadConfig)
   transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
 
 
 DEFAULT_CONFIG = RecoConfig()
-DEFAULT_CLI_CONFIG = DEFAULT_CONFIG.cli
+DEFAULT_ENGINE_CONFIG = DEFAULT_CONFIG.engine
 DEFAULT_VAD_CONFIG = DEFAULT_CONFIG.vad
 DEFAULT_TRANSCRIPTION_CONFIG = DEFAULT_CONFIG.transcription

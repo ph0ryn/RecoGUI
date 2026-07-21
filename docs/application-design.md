@@ -18,9 +18,6 @@ flowchart LR
   HFCache["Hugging Face cache"]
   Repository["RecordingRepository"]
   Database["reco.sqlite3"]
-  CLI["reco CLI"]
-  CLIRecorder["SessionRecorder"]
-  CLIDatabase["reco-cli.sqlite3"]
 
   UI <-->|"Tauri commands / events"| Host
   Host <-->|"versioned NDJSON"| Sidecar
@@ -31,8 +28,6 @@ flowchart LR
   Runtime --> HFCache
   Engine --> Repository
   Repository --> Database
-  CLI --> CLIRecorder
-  CLIRecorder --> CLIDatabase
 ```
 
 ### 責務
@@ -44,10 +39,6 @@ flowchart LR
 | Python sidecar      | NDJSONの検証、command dispatch、event送信、非同期処理の管理   |
 | RecoEngine          | GUI向け文字起こし、model lifecycle、active sessionの管理      |
 | RecordingRepository | GUI用SQLite、履歴、検索、削除、Export、migration              |
-| reco CLI            | 従来のCLI操作とGUIから独立した文字起こし、保存                |
-
-GUIとCLIは音声処理の基礎コードを共有するが、同じengine instanceやdatabase schemaを使用しない。
-GUIの永続化契約を変更するときは、CLIの保存動作への影響を別途確認する。
 
 ## リポジトリ構成
 
@@ -56,7 +47,7 @@ RecoGUI/
 ├── protocol/       # NDJSON schemaと共通fixture
 ├── scripts/        # protocol検証などのリポジトリ用script
 ├── src/            # React / TypeScript
-├── src-python/     # Python engine、CLI、test、import元の記録
+├── src-python/     # Python engine、test、import元の記録
 ├── src-tauri/      # Rust host、Tauri設定、sidecar launcher
 ├── docs/
 └── package.json    # 開発と検証の共通入口
@@ -211,9 +202,6 @@ RustとReactはこのdatabaseを直接開かない。
 - WAL、busy timeout、durabilityを優先するsynchronous設定を使用する。
 - migrationはtransaction内で適用し、事前backupと適用後の検査を行う。
 - Exportは一貫した読み取り結果から作り、一時pathから最終pathへ置き換える。
-
-CLIは同じapplication support領域の`reco-cli.sqlite3`を使用する。GUI用databaseとの統合や相互表示は
-現在の契約に含めない。
 
 ## UI
 
