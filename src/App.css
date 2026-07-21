@@ -860,6 +860,17 @@ button:disabled {
   background: var(--ink);
 }
 
+.export-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.export-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
 .danger-button {
   background: var(--signal);
 }

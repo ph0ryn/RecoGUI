@@ -1749,8 +1749,11 @@ function SessionHeader({
               <span aria-hidden="true" className="header-action-spacer" />
             </>
           )}
-          <button className="secondary-button" onClick={onExport} type="button">
-            ⇧ Export
+          <button className="secondary-button export-button" onClick={onExport} type="button">
+            <span aria-hidden="true" className="export-icon">
+              ⇧
+            </span>
+            Export
           </button>
           <button
             aria-label="完全に削除"
@@ -1934,8 +1937,11 @@ function MultiSelection({
           ))}
         </div>
         <div className="multi-actions">
-          <button className="primary-button" onClick={onExport} type="button">
-            ⇧ まとめてExport
+          <button className="primary-button export-button" onClick={onExport} type="button">
+            <span aria-hidden="true" className="export-icon">
+              ⇧
+            </span>
+            まとめてExport
           </button>
           <button
             className="danger-secondary"
