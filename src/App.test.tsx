@@ -10,6 +10,7 @@ import { mockSnapshot } from "./mockData";
 
 import type { EngineEvent } from "./types";
 
+const scrollToMock = vi.fn();
 const bridgeMocks = vi.hoisted(() => ({
   cancelExport: vi.fn(),
   clearQueue: vi.fn(),
@@ -68,7 +69,7 @@ beforeAll(() => {
   HTMLDialogElement.prototype.close = vi.fn(function close(this: HTMLDialogElement) {
     this.open = false;
   });
-  Element.prototype.scrollTo = vi.fn();
+  Element.prototype.scrollTo = scrollToMock;
 });
 
 beforeEach(() => {
@@ -130,6 +131,7 @@ beforeEach(() => {
   bridgeMocks.pauseQueue.mockClear();
   bridgeMocks.resumeSession.mockClear();
   bridgeMocks.enqueueFiles.mockClear();
+  scrollToMock.mockClear();
 });
 
 afterEach(() => {
@@ -384,6 +386,70 @@ describe("RecoGUI", () => {
     fireEvent.scroll(transcript!);
 
     expect(await screen.findByRole("button", { name: "↓ 最新位置へ" })).toBeInTheDocument();
+  });
+
+  it("follows new segments only while the transcript is pinned to the bottom", async () => {
+    await renderLoadedApp();
+    const transcript = document.querySelector<HTMLDivElement>(".transcript-scroll");
+
+    expect(transcript).not.toBeNull();
+    Object.defineProperties(transcript, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 600, writable: true },
+    });
+    fireEvent.scroll(transcript!);
+    scrollToMock.mockClear();
+
+    bridgeMocks.eventHandler?.({
+      event: "segment.persisted",
+      payload: {
+        characters: 250,
+        mediaDurationMs: 100_000,
+        recognizedSegments: 4,
+        rowVersion: 6,
+        segment: {
+          endMs: 100_000,
+          id: "followed-segment",
+          sequence: 4,
+          startMs: 95_000,
+          text: "末尾では追従する発言",
+        },
+        totalSegments: 4,
+      },
+      sequence: 40,
+      sessionId: "session-live",
+    });
+
+    await waitFor(() =>
+      expect(scrollToMock).toHaveBeenCalledWith({ behavior: "auto", top: 1_000 }),
+    );
+
+    transcript!.scrollTop = 100;
+    fireEvent.scroll(transcript!);
+    scrollToMock.mockClear();
+    bridgeMocks.eventHandler?.({
+      event: "segment.persisted",
+      payload: {
+        characters: 260,
+        mediaDurationMs: 110_000,
+        recognizedSegments: 5,
+        rowVersion: 7,
+        segment: {
+          endMs: 110_000,
+          id: "unfollowed-segment",
+          sequence: 5,
+          startMs: 105_000,
+          text: "上では位置を保つ発言",
+        },
+        totalSegments: 5,
+      },
+      sequence: 41,
+      sessionId: "session-live",
+    });
+
+    expect(await screen.findByText("上では位置を保つ発言")).toBeInTheDocument();
+    expect(scrollToMock).not.toHaveBeenCalled();
   });
 
   it("debounces full-text history search through the backend", async () => {

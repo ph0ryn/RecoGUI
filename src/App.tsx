@@ -312,7 +312,7 @@ function App() {
   useEffect(() => {
     if (!autoFollow || selectedSession?.id !== activeSessionId) return;
     transcriptRef.current?.scrollTo({
-      behavior: "smooth",
+      behavior: "auto",
       top: transcriptRef.current.scrollHeight,
     });
   }, [activeSessionId, autoFollow, selectedSession?.id, selectedSession?.segments.length]);
@@ -1599,7 +1599,7 @@ function Transcript({
     const element = scrollRef.current;
 
     if (!element || session.status !== "running") return;
-    const isNearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+    const isNearBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 80;
 
     onAutoFollowChange(isNearBottom);
   }
@@ -1643,7 +1643,7 @@ function Transcript({
           onClick={() => {
             onAutoFollowChange(true);
             scrollRef.current?.scrollTo({
-              behavior: "smooth",
+              behavior: "auto",
               top: scrollRef.current.scrollHeight,
             });
           }}
