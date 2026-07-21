@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from threading import Lock
+from threading import Barrier, Lock, Thread
 from types import SimpleNamespace
 from typing import cast
 
@@ -179,6 +179,121 @@ def test_queue_start_is_rejected_while_a_session_is_active(tmp_path: Path, monke
     engine.start_queue()
 
   assert engine.queue_state()["autoAdvanceEnabled"] is False
+
+
+def test_enqueue_starts_first_file_immediately_when_engine_and_queue_are_idle(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  first = tmp_path / "first.wav"
+  second = tmp_path / "second.wav"
+  first.touch()
+  second.touch()
+
+  class DormantThread:
+    def __init__(self, **options: object) -> None:
+      del options
+
+    def start(self) -> None:
+      return None
+
+  engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
+  monkeypatch.setattr(engine_module, "validate_audio_file", lambda path: None)
+  monkeypatch.setattr(engine.model_manager, "ensure_verified", lambda: True)
+  monkeypatch.setattr(engine_module, "Thread", DormantThread)
+
+  snapshot = engine.enqueue_files(
+    [
+      {"path": str(first), "displayName": first.name},
+      {"path": str(second), "displayName": second.name},
+    ]
+  )
+
+  sessions = engine.repository.list_sessions().items
+  assert len(sessions) == 1
+  assert sessions[0]["source_display_name"] == first.name
+  assert engine._active_session_id == sessions[0]["session_id"]
+  assert snapshot["autoAdvanceEnabled"] is True
+  assert [item["displayName"] for item in cast(list[dict[str, object]], snapshot["items"])] == [second.name]
+
+
+def test_enqueue_only_appends_when_waiting_items_already_exist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  waiting = tmp_path / "waiting.wav"
+  added = tmp_path / "added.wav"
+  waiting.touch()
+  added.touch()
+  engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
+  monkeypatch.setattr(engine_module, "validate_audio_file", lambda path: None)
+  engine.repository.enqueue_files((NewQueueItem(str(waiting), waiting.name, fingerprint_file_snapshot(waiting).value),))
+
+  snapshot = engine.enqueue_files([{"path": str(added), "displayName": added.name}])
+
+  assert engine._active_session_id is None
+  assert snapshot["autoAdvanceEnabled"] is False
+  assert [item["displayName"] for item in cast(list[dict[str, object]], snapshot["items"])] == [
+    waiting.name,
+    added.name,
+  ]
+
+
+def test_enqueue_keeps_files_waiting_when_model_is_unavailable_or_engine_is_shutting_down(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  missing_model = tmp_path / "missing-model.wav"
+  shutdown_file = tmp_path / "shutdown.wav"
+  missing_model.touch()
+  shutdown_file.touch()
+  monkeypatch.setattr(engine_module, "validate_audio_file", lambda path: None)
+
+  unavailable_engine = RecoEngine(tmp_path / "unavailable.sqlite3", tmp_path / "models")
+  monkeypatch.setattr(unavailable_engine.model_manager, "ensure_verified", lambda: False)
+  unavailable = unavailable_engine.enqueue_files([{"path": str(missing_model)}])
+
+  shutdown_engine = RecoEngine(tmp_path / "shutdown.sqlite3", tmp_path / "models")
+  shutdown_engine._shutting_down = True
+  shutdown = shutdown_engine.enqueue_files([{"path": str(shutdown_file)}])
+
+  assert unavailable_engine._active_session_id is None
+  assert unavailable["autoAdvanceEnabled"] is False
+  assert len(cast(list[object], unavailable["items"])) == 1
+  assert shutdown_engine._active_session_id is None
+  assert shutdown["autoAdvanceEnabled"] is False
+  assert len(cast(list[object], shutdown["items"])) == 1
+
+
+def test_concurrent_idle_enqueues_create_only_one_active_session(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  files = [tmp_path / "one.wav", tmp_path / "two.wav"]
+  for path in files:
+    path.touch()
+
+  class DormantThread:
+    def __init__(self, **options: object) -> None:
+      del options
+
+    def start(self) -> None:
+      return None
+
+  barrier = Barrier(2)
+  engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
+  monkeypatch.setattr(engine_module, "validate_audio_file", lambda path: None)
+  monkeypatch.setattr(engine_module, "Thread", DormantThread)
+
+  def verify_together() -> bool:
+    barrier.wait()
+    return True
+
+  monkeypatch.setattr(engine.model_manager, "ensure_verified", verify_together)
+  workers = [
+    Thread(target=engine.enqueue_files, args=([{"path": str(path), "displayName": path.name}],)) for path in files
+  ]
+  for worker in workers:
+    worker.start()
+  for worker in workers:
+    worker.join()
+
+  assert len(engine.repository.list_sessions().items) == 1
+  assert len(cast(list[object], engine.queue_state()["items"])) == 1
 
 
 def test_restarting_engine_recognizes_paused_file_session_as_queue_origin(

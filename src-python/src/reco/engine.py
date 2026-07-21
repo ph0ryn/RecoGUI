@@ -165,7 +165,7 @@ class RecoEngine:
     return snapshot
 
   def enqueue_files(self, files: object) -> dict[str, object]:
-    """Validate and append resolved private file paths without starting work."""
+    """Append resolved files and immediately start when no work is already pending."""
 
     if not isinstance(files, list) or not files:
       raise EngineCommandError("invalid_queue_files", "files must be a non-empty array")
@@ -184,7 +184,30 @@ class RecoEngine:
         raise EngineCommandError("invalid_queue_file", str(exc)) from exc
       display_name = str(file_value.get("displayName") or path.name).strip()
       values.append(NewQueueItem(str(path), display_name, fingerprint.value))
-    self.repository.enqueue_files(values)
+
+    # Model verification may touch the filesystem, so keep it outside the engine lock.
+    # This preliminary check is repeated while committing the queue entries to make
+    # concurrent enqueue/session/shutdown transitions deterministic.
+    with self._lock:
+      may_start_immediately = (
+        not self._shutting_down and self._active_session_id is None and not self.repository.queue_snapshot()["items"]
+      )
+    model_available = may_start_immediately and self.model_manager.ensure_verified()
+
+    with self._lock:
+      start_immediately = (
+        model_available
+        and not self._shutting_down
+        and self._active_session_id is None
+        and not self.repository.queue_snapshot()["items"]
+      )
+      self.repository.enqueue_files(values)
+      if start_immediately:
+        self._queue_auto_advance = True
+
+    if start_immediately:
+      self._schedule_next_queue_item()
+      return self.queue_state()
     return self._publish_queue_changed()
 
   def reorder_queue(self, item_ids: object, revision: object) -> dict[str, object]:
