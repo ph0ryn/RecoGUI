@@ -955,12 +955,12 @@ button:disabled {
 .segment {
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr);
+  align-items: baseline;
   gap: 18px;
   padding-bottom: 20px;
 }
 
 .segment time {
-  padding-top: 3px;
   color: var(--muted);
   font-size: 9px;
   font-variant-numeric: tabular-nums;
