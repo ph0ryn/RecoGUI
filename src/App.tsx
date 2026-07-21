@@ -1285,6 +1285,10 @@ function App() {
           type="button"
         />
         <div className="input-status">
+          <svg aria-hidden="true" viewBox="0 0 16 16">
+            <rect height="8" rx="2.5" width="5" x="5.5" y="1.5" />
+            <path d="M3.5 7.5v1a4.5 4.5 0 0 0 9 0v-1M8 13v2M5.5 15h5" />
+          </svg>
           <strong>{selectedAudioInputLabel}</strong>
         </div>
       </aside>

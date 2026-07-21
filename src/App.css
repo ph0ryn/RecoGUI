@@ -630,6 +630,7 @@ button:disabled {
   grid-row: 4;
   display: flex;
   align-items: center;
+  gap: 7px;
   min-width: 0;
   padding: 0 12px;
   border-top: 1px solid var(--line-dark);
@@ -637,6 +638,18 @@ button:disabled {
   color: var(--muted);
   font-size: 8px;
   letter-spacing: 0.06em;
+}
+
+.input-status svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
+  transform: translateY(-1px);
 }
 
 .input-status strong {
