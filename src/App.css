@@ -382,7 +382,15 @@ button:disabled {
   height: 100%;
   place-items: center;
   border-right: 1px solid var(--line);
-  font-size: 15px;
+}
+
+.history-search-icon svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: square;
+  stroke-width: 1.5;
 }
 
 .settings-button {
@@ -809,10 +817,15 @@ button:disabled {
   flex: none;
   place-items: center;
   border-right: 1px solid var(--line);
-  font:
-    9px "SFMono-Regular",
-    Consolas,
-    monospace;
+}
+
+.detail-search > span:first-child svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: square;
+  stroke-width: 1.5;
 }
 
 .secondary-button,

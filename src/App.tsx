@@ -1034,7 +1034,10 @@ function App() {
             <label className="history-search">
               <span className="sr-only">履歴を検索</span>
               <span aria-hidden="true" className="history-search-icon">
-                ⌕
+                <svg viewBox="0 0 16 16">
+                  <circle cx="6.75" cy="6.75" r="3.75" />
+                  <path d="m9.5 9.5 3.5 3.5" />
+                </svg>
               </span>
               <input
                 onChange={(event) => setQuery(event.target.value)}
@@ -1679,7 +1682,12 @@ function SessionHeader({
         )}
       </div>
       <label className="detail-search">
-        <span aria-hidden="true">⌕</span>
+        <span aria-hidden="true">
+          <svg viewBox="0 0 16 16">
+            <circle cx="6.75" cy="6.75" r="3.75" />
+            <path d="m9.5 9.5 3.5 3.5" />
+          </svg>
+        </span>
         <span className="sr-only">この文字起こし内を検索</span>
         <input
           onChange={(event) => onQueryChange(event.target.value)}
