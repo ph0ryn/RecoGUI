@@ -1,88 +1,97 @@
 # RecoGUI
 
-RecoGUI is a Japanese speech transcription desktop application for Apple Silicon Macs. It combines a Tauri and React interface with a supervised Python engine built from the sample-accurate Reco pipeline.
+RecoGUI is a local Japanese speech transcription app for Apple Silicon Macs.
 
-## Features
+## What You Can Do
 
-- Microphone and audio-file transcription with a resident MLX model
-- Durable SQLite sessions and commit-before-display transcript segments
-- Searchable history, filtering, sorting, multi-selection, and permanent deletion
-- Timestamped TXT, TXT without timestamps, Markdown, JSON, SRT, and WebVTT export
-- Stop, Cancel, crash recovery, and persisted partial results
-- A versioned NDJSON engine protocol and a compatible `reco` CLI adapter
+- Transcribe microphone input or queued audio files with pause and resume support.
+- Search, filter, sort, rename, select, and permanently delete transcription history.
+- Export sessions as timestamped TXT, plain TXT, Markdown, JSON, SRT, or WebVTT.
+- Preserve confirmed and partial results in a local SQLite database.
+
+Audio and transcripts stay local. Microphone audio is not saved.
 
 ## Requirements
 
-- Apple Silicon Mac running macOS 14 or newer
-- Node.js and pnpm 11
-- Rust and the Xcode command line tools
-- Python 3.12 managed through `uv`
+- An Apple Silicon Mac running macOS 14 or later
+- [`uv`](https://docs.astral.sh/uv)
+- A [`mlx-audio`](https://github.com/Blaizzy/mlx-audio) compatible MLX speech-recognition model in the local Hugging Face cache
 
-RecoGUI only uses models that already exist in the shared Hugging Face cache. Populate and manage
-that cache outside the application before selecting a model in RecoGUI. For example, you can use
-the optional `hf` CLI:
+## Usage
+
+1. Download the latest build from [GitHub Releases](https://github.com/ph0ryn/RecoGUI/releases/latest).
+2. Download a model to the Hugging Face cache before opening RecoGUI:
 
 ```sh
-hf download ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit \
-  --revision 7c70d18cb650655d32eafb952a74a49c6a3caad0
-hf cache verify ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit \
-  --revision 7c70d18cb650655d32eafb952a74a49c6a3caad0
-hf cache rm model/ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit
+hf download ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit
 ```
 
-RecoGUI does not download, verify, or remove models.
+3. Allow RecoGUI to open (remove the quarantine attribute).
+
+```sh
+xattr -dr com.apple.quarantine /Applications/RecoGUI.app
+```
+
+4. Open RecoGUI and select the model in settings.
 
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| `⌘F` | Search within the selected transcript |
-| `⌘⇧F` | Search all transcription history |
-| `⌘⌫` | Open permanent deletion confirmation for the selection |
-| `⌘S` | Export the selected transcription sessions |
 | `⌘N` | Start microphone transcription |
 | `⌘⇧N` | Select audio files for transcription |
+| `⌘F` | Search within the selected transcript |
+| `⌘⇧F` | Search all transcription history |
+| `⌘A` | Select all visible transcript text when focus is outside an input |
+| `⌘S` | Export the selected transcription sessions |
+| `⌘⌫` | Open permanent deletion confirmation for the selection |
 | `⌘,` | Open settings |
-| Arrow keys | Move between dialog actions |
-| `Enter` | Activate the focused dialog action |
-| `Esc` | Close or cancel the current dialog |
+
+## Current Limitations
+
+- Only Apple Silicon Macs running macOS 14 or later are supported.
+- RecoGUI does not download or manage models.
+- Transcripts cannot be edited or imported back into the app.
+- Original microphone audio is not retained.
+- Automatic app updates are not implemented.
+- Release builds are not signed or notarized.
+- The first launch may download locked Python runtime dependencies through `uv`.
 
 ## Development
+
+### Prerequisites
+
+- Node.js 24
+- pnpm 11.10.0
+- `uv` and Python 3.12–3.14
+- Rust stable with the `aarch64-apple-darwin` target
+- Xcode command line tools
+
+### Set Up and Run
 
 ```sh
 pnpm install --frozen-lockfile
 uv sync --project src-python --frozen
-pnpm tauri dev
+pnpm dev
 ```
 
-The host starts the Python sidecar through `uv run --frozen --no-dev`. Release bundles include the
-engine source and lockfile, while the runtime environment is created under the application data
-directory. Engine stdout is reserved for protocol messages; diagnostics are written to stderr and
-the application log.
-
-## Validation
-
-Run the complete local validation suite:
+### Verify and Build
 
 ```sh
 pnpm verify
+pnpm build
+pnpm exec tauri build --target aarch64-apple-darwin
 ```
 
-Individual frontend, Python, Rust, and protocol checks are also available through the scripts in `package.json`.
+`pnpm build` creates a local build without a distribution bundle. See [`package.json`](package.json)
+for individual checks.
 
-## Architecture and Provenance
+## Project Documentation
 
-- `docs/application-design.md` defines the product architecture and behavior.
-- `docs/requirements.md` defines the accepted implementation scope.
-- `docs/validation.md` records completion evidence.
-- `protocol/` contains the shared engine schema and fixtures.
-- `src-python/SOURCE.md` records the exact imported Reco source revision.
+- [Requirements](docs/requirements.md)
+- [Application design](docs/application-design.md)
+- [Validation](docs/validation.md)
+- [Engine protocol](protocol/)
+- [Reco source provenance](src-python/SOURCE.md)
 
 The original Reco repository is not modified by this project.
-
-## Distribution
-
-Release bundles require `uv` to be installed. The application discovers standard user, Homebrew,
-MacPorts, and Nix installation locations even when Finder does not inherit the user's shell `PATH`.
-The first launch may download Python and runtime dependencies before the engine becomes ready.
-Developer ID signing and notarization are not configured.
