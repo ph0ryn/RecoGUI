@@ -153,6 +153,7 @@ function App() {
   const [sessionProgress, setSessionProgress] = useState<Record<string, number>>({});
   const [queue, setQueue] = useState<QueueSnapshot>(emptyQueue);
   const [isQueueWorking, setIsQueueWorking] = useState(false);
+  const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     session: SessionEntity;
     x: number;
@@ -163,6 +164,7 @@ function App() {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const newButtonRef = useRef<HTMLButtonElement>(null);
   const dialogInvokerRef = useRef<HTMLElement | null>(null);
+  const filterMenuRef = useRef<HTMLDivElement>(null);
   const sessions = sessionState.orderedSessionIds
     .map((id) => sessionState.sessionsById[id])
     .filter((session): session is SessionEntity => session !== undefined);
@@ -373,6 +375,24 @@ function App() {
       window.removeEventListener("blur", close);
     };
   }, [contextMenu]);
+
+  useEffect(() => {
+    if (!isFilterMenuOpen) return;
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (!filterMenuRef.current?.contains(event.target as Node)) setIsFilterMenuOpen(false);
+    };
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setIsFilterMenuOpen(false);
+    };
+
+    window.addEventListener("pointerdown", closeOnPointerDown);
+    window.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      window.removeEventListener("pointerdown", closeOnPointerDown);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isFilterMenuOpen]);
 
   function handleEngineEvent(message: EngineEvent): void {
     if (message.event === "queue.changed") {
@@ -1016,6 +1036,70 @@ function App() {
                 </button>
               )}
             </label>
+            <div className="filter-menu-wrap" ref={filterMenuRef}>
+              <button
+                aria-expanded={isFilterMenuOpen}
+                aria-label="履歴のフィルタと並び替え"
+                className={`icon-button filter-button${
+                  statusFilter !== "all" || inputFilter !== "all" || sortOrder !== "newest"
+                    ? " active"
+                    : ""
+                }`}
+                onClick={() => setIsFilterMenuOpen((open) => !open)}
+                title="フィルタと並び替え"
+                type="button"
+              >
+                <svg aria-hidden="true" viewBox="0 0 16 16">
+                  <path d="M2 3h12L9.5 8v4l-3 1V8L2 3Z" />
+                  <path d="M11 10h3M11 13h3" />
+                </svg>
+              </button>
+              {isFilterMenuOpen && (
+                <div aria-label="履歴のフィルタと並び替え" className="filter-popover" role="group">
+                  <label>
+                    <span>状態</span>
+                    <select
+                      aria-label="状態で絞り込み"
+                      onChange={(event) =>
+                        setStatusFilter(event.target.value as typeof statusFilter)
+                      }
+                      value={statusFilter}
+                    >
+                      <option value="all">すべての状態</option>
+                      {Object.entries(statusLabels).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>入力</span>
+                    <select
+                      aria-label="入力元で絞り込み"
+                      onChange={(event) => setInputFilter(event.target.value as typeof inputFilter)}
+                      value={inputFilter}
+                    >
+                      <option value="all">すべての入力</option>
+                      <option value="microphone">マイク</option>
+                      <option value="file">ファイル</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>並び順</span>
+                    <select
+                      aria-label="並べ替え"
+                      onChange={(event) => setSortOrder(event.target.value as typeof sortOrder)}
+                      value={sortOrder}
+                    >
+                      <option value="newest">新しい順</option>
+                      <option value="oldest">古い順</option>
+                      <option value="longest">長い順</option>
+                    </select>
+                  </label>
+                </div>
+              )}
+            </div>
             <button
               aria-label="設定を開く"
               className="icon-button settings-button"
@@ -1025,47 +1109,6 @@ function App() {
             >
               ⚙
             </button>
-          </div>
-          <div className="filters">
-            <label>
-              <span>状態</span>
-              <select
-                aria-label="状態で絞り込み"
-                onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
-                value={statusFilter}
-              >
-                <option value="all">すべての状態</option>
-                {Object.entries(statusLabels).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>入力</span>
-              <select
-                aria-label="入力元で絞り込み"
-                onChange={(event) => setInputFilter(event.target.value as typeof inputFilter)}
-                value={inputFilter}
-              >
-                <option value="all">すべての入力</option>
-                <option value="microphone">マイク</option>
-                <option value="file">ファイル</option>
-              </select>
-            </label>
-            <label>
-              <span>並び順</span>
-              <select
-                aria-label="並べ替え"
-                onChange={(event) => setSortOrder(event.target.value as typeof sortOrder)}
-                value={sortOrder}
-              >
-                <option value="newest">新しい順</option>
-                <option value="oldest">古い順</option>
-                <option value="longest">長い順</option>
-              </select>
-            </label>
           </div>
         </div>
 

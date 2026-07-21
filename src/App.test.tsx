@@ -507,6 +507,25 @@ describe("RecoGUI", () => {
     );
   });
 
+  it("opens history filters from the toolbar and keeps the selected filter", async () => {
+    const user = userEvent.setup();
+
+    await renderLoadedApp();
+    expect(screen.queryByRole("combobox", { name: "状態で絞り込み" })).not.toBeInTheDocument();
+
+    const filterButton = screen.getByRole("button", { name: "履歴のフィルタと並び替え" });
+
+    await user.click(filterButton);
+    await user.selectOptions(screen.getByRole("combobox", { name: "状態で絞り込み" }), "completed");
+    expect(filterButton).toHaveClass("active");
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("combobox", { name: "状態で絞り込み" })).not.toBeInTheDocument();
+
+    await user.click(filterButton);
+    expect(screen.getByRole("combobox", { name: "状態で絞り込み" })).toHaveValue("completed");
+  });
+
   it("persists the default microphone device and passes its id when starting", async () => {
     const user = userEvent.setup();
 
