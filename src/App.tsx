@@ -13,6 +13,7 @@ import {
 } from "react";
 
 import "./App.css";
+import { loadAppPreferences, saveAppPreferences } from "./appPreferences";
 import { recoBridge } from "./bridge";
 import { initialSessionState, sessionStateReducer, type SessionEntity } from "./sessionState";
 import { useEngineEvents } from "./useEngineEvents";
@@ -142,6 +143,7 @@ function getSnippet(session: SessionEntity, query: string): string | undefined {
 }
 
 function App() {
+  const [initialPreferences] = useState(loadAppPreferences);
   const [sessionState, dispatchSessions] = useReducer(sessionStateReducer, initialSessionState);
   const [model, setModel] = useState<ModelState>({ status: "loading" });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -164,9 +166,7 @@ function App() {
   const [toast, setToast] = useState<string>();
   const [paneWidth, setPaneWidth] = useState(320);
   const [autoFollow, setAutoFollow] = useState(true);
-  const [selectedDeviceId, setSelectedDeviceId] = useState(
-    () => localStorage.getItem("reco.defaultInputDeviceId") ?? "",
-  );
+  const [selectedDeviceId, setSelectedDeviceId] = useState(initialPreferences.defaultInputDeviceId);
   const [exportOperation, setExportOperation] = useState<ExportOperation>();
   const [sessionProgress, setSessionProgress] = useState<Record<string, number>>({});
   const [queue, setQueue] = useState<QueueSnapshot>(emptyQueue);
@@ -187,6 +187,12 @@ function App() {
     .map((id) => sessionState.sessionsById[id])
     .filter((session): session is SessionEntity => session !== undefined);
   const { activeSessionId } = sessionState;
+
+  useEffect(() => {
+    saveAppPreferences({
+      defaultInputDeviceId: selectedDeviceId,
+    });
+  }, [selectedDeviceId]);
 
   const orderedSessions = useMemo(() => {
     return [...sessions]
@@ -1303,7 +1309,6 @@ function App() {
           onDelete={() => void recoBridge.deleteModel()}
           onDeviceChange={(deviceId) => {
             setSelectedDeviceId(deviceId);
-            localStorage.setItem("reco.defaultInputDeviceId", deviceId);
           }}
           onDownload={() => void recoBridge.downloadModel()}
           onVerify={() => void recoBridge.verifyModel()}

@@ -555,7 +555,9 @@ describe("RecoGUI", () => {
         expect.objectContaining({ deviceId: "7", inputKind: "microphone" }),
       ),
     );
-    expect(localStorage.getItem("reco.defaultInputDeviceId")).toBe("7");
+    expect(JSON.parse(localStorage.getItem("reco.appPreferences") ?? "{}")).toEqual(
+      expect.objectContaining({ defaultInputDeviceId: "7" }),
+    );
   });
 
   it("requires a second explicit confirmation before force quitting", async () => {
