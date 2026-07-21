@@ -1,5 +1,11 @@
 # RecoGUI
 
+<!-- rumdl-disable MD033 -->
+<p align="center">
+  <img src="public/recogui.svg" width="180" alt="RecoGUI app icon">
+</p>
+<!-- rumdl-enable MD033 -->
+
 RecoGUI is a local Japanese speech transcription app for Apple Silicon Macs.
 
 ## What You Can Do
