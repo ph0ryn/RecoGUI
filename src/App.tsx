@@ -2407,14 +2407,6 @@ function SettingsDialog({
             <dt>RecoGUI</dt>
             <dd>0.1.0</dd>
           </div>
-          <div>
-            <dt>エンジン</dt>
-            <dd>接続済み</dd>
-          </div>
-          <div>
-            <dt>データベース</dt>
-            <dd>正常</dd>
-          </div>
         </dl>
       </div>
       <DialogActions>
