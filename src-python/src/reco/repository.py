@@ -669,7 +669,7 @@ class RecordingRepository:
     return SessionPage(items=tuple(dict(row) for row in items), next_cursor=next_cursor)
 
   def delete_sessions(self, session_ids: Iterable[str]) -> int:
-    """Permanently delete terminal sessions in one transaction."""
+    """Permanently delete inactive sessions in one transaction."""
 
     ids = tuple(dict.fromkeys(value.strip() for value in session_ids if value.strip()))
     if not ids:
@@ -678,7 +678,7 @@ class RecordingRepository:
     with self._connect() as connection:
       active = connection.execute(
         f"SELECT session_id FROM app_sessions WHERE session_id IN ({placeholders}) "
-        "AND state NOT IN ('completed', 'stopped', 'failed', 'abandoned')",
+        "AND state NOT IN ('paused', 'completed', 'stopped', 'failed', 'abandoned')",
         ids,
       ).fetchone()
       if active is not None:

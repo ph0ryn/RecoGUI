@@ -61,6 +61,7 @@ const exportLabels: Record<ExportFormat, string> = {
 
 const exportFormats = Object.keys(exportLabels) as ExportFormat[];
 const terminalStatuses: SessionStatus[] = ["completed", "stopped", "failed", "abandoned"];
+const deletableStatuses: SessionStatus[] = [...terminalStatuses, "paused"];
 const pausableStatuses: SessionStatus[] = ["preparing", "running", "pausing"];
 const emptyQueue: QueueSnapshot = { autoAdvanceEnabled: false, items: [], revision: 0 };
 
@@ -1362,7 +1363,7 @@ function App() {
           </button>
           <button
             className="context-danger"
-            disabled={!terminalStatuses.includes(contextMenu.session.status)}
+            disabled={!deletableStatuses.includes(contextMenu.session.status)}
             onClick={() => {
               setContextMenu(undefined);
               openDialog("delete");
@@ -1653,7 +1654,7 @@ function SessionHeader({
           <button
             aria-label="完全に削除"
             className="icon-button delete-icon-button"
-            disabled={!terminalStatuses.includes(session.status)}
+            disabled={!deletableStatuses.includes(session.status)}
             onClick={onDelete}
             title="完全に削除"
             type="button"
@@ -1804,7 +1805,7 @@ function MultiSelection({
     }),
     {},
   );
-  const hasActive = sessions.some(({ status }) => !terminalStatuses.includes(status));
+  const hasActive = sessions.some(({ status }) => !deletableStatuses.includes(status));
 
   return (
     <div className="multi-selection">
@@ -2016,7 +2017,7 @@ function DeleteDialog({
   onClose: () => void;
   onConfirm: () => void;
 }) {
-  const hasActive = sessions.some(({ status }) => !terminalStatuses.includes(status));
+  const hasActive = sessions.some(({ status }) => !deletableStatuses.includes(status));
 
   return (
     <DialogFrame onClose={onClose} title="文字起こしを完全に削除" titleId="delete-title">

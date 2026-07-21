@@ -348,6 +348,19 @@ describe("RecoGUI", () => {
     await waitFor(() => expect(bridgeMocks.deleteSessions).toHaveBeenCalledWith(["session-1"]));
   });
 
+  it("allows a paused session to be permanently deleted", async () => {
+    const user = userEvent.setup();
+
+    useInactiveSnapshot();
+    await renderLoadedApp();
+    await user.click(screen.getByRole("button", { name: "完全に削除" }));
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "完全に削除" }),
+    );
+
+    await waitFor(() => expect(bridgeMocks.deleteSessions).toHaveBeenCalledWith(["session-live"]));
+  });
+
   it("renames a session from the history context menu", async () => {
     const user = userEvent.setup();
 

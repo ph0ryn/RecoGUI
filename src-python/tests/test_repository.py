@@ -246,6 +246,18 @@ def test_active_session_cannot_be_deleted(tmp_path: Path) -> None:
   assert repository.delete_sessions([session_id]) == 1
 
 
+def test_paused_session_can_be_deleted(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(new_session())
+  repository.set_state(session_id, SessionState.RUNNING)
+  repository.set_state(session_id, SessionState.PAUSING)
+  repository.pause_session(session_id, 16_384)
+
+  assert repository.delete_sessions([session_id]) == 1
+  with pytest.raises(RepositoryError, match="Unknown session"):
+    repository.get_session(session_id)
+
+
 @pytest.mark.parametrize("export_format", ["txt", "md", "markdown", "json", "srt", "vtt", "csv"])
 def test_export_formats_replace_destination_atomically(tmp_path: Path, export_format: str) -> None:
   repository = RecordingRepository(tmp_path / "reco.sqlite3")
