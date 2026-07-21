@@ -27,7 +27,9 @@ const bridgeMocks = vi.hoisted(() => ({
   getQueueState: vi.fn(),
   getSession: vi.fn(),
   getSnapshot: vi.fn(),
-  listAudioInputs: vi.fn().mockResolvedValue([{ channels: 1, id: "7", name: "テストマイク" }]),
+  listAudioInputs: vi
+    .fn()
+    .mockResolvedValue([{ channels: 1, id: "7", isDefault: true, name: "テストマイク" }]),
   listHistory: vi.fn(),
   listModels: vi.fn(),
   onCloseForceRequired: vi.fn(),
@@ -641,6 +643,28 @@ describe("RecoGUI", () => {
     );
     expect(JSON.parse(localStorage.getItem("reco.appPreferences") ?? "{}")).toEqual(
       expect.objectContaining({ defaultInputDeviceId: "7" }),
+    );
+  });
+
+  it("shows only the selected microphone device name in the sidebar", async () => {
+    const user = userEvent.setup();
+
+    useInactiveSnapshot();
+    await renderLoadedApp();
+    await screen.findByText("テストマイク (システム既定)");
+    expect(document.querySelector(".input-status")).toHaveTextContent(
+      "テストマイク (システム既定)",
+    );
+    expect(screen.queryByText("INPUT")).not.toBeInTheDocument();
+    expect(screen.queryByText("DEFAULT MICROPHONE")).not.toBeInTheDocument();
+    expect(screen.queryByText("SELECTED MICROPHONE")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "設定を開く" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "使用するマイク" }), "7");
+    await user.click(screen.getByRole("button", { name: "完了" }));
+
+    expect(document.querySelector(".input-status")).toHaveTextContent(
+      "テストマイク (システム既定)",
     );
   });
 

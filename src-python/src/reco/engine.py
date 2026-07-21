@@ -559,10 +559,16 @@ class RecoEngine:
 
     try:
       devices = sd.query_devices()
+      default_input_id = int(sd.default.device[0])
     except sd.PortAudioError as exc:
       raise EngineCommandError("audio_unavailable", f"Could not list audio inputs: {exc}") from exc
     return [
-      {"id": index, "name": str(device["name"]), "channels": int(device["max_input_channels"])}
+      {
+        "id": index,
+        "name": str(device["name"]),
+        "channels": int(device["max_input_channels"]),
+        "isDefault": index == default_input_id,
+      }
       for index, device in enumerate(devices)
       if int(device["max_input_channels"]) > 0
     ]

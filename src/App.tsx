@@ -181,6 +181,7 @@ function App() {
   const [paneWidth, setPaneWidth] = useState(320);
   const [autoFollow, setAutoFollow] = useState(true);
   const [selectedDeviceId, setSelectedDeviceId] = useState(initialPreferences.defaultInputDeviceId);
+  const [audioInputs, setAudioInputs] = useState<AudioInput[]>([]);
   const [exportOperation, setExportOperation] = useState<ExportOperation>();
   const [sessionProgress, setSessionProgress] = useState<Record<string, number>>({});
   const [queue, setQueue] = useState<QueueSnapshot>(emptyQueue);
@@ -207,6 +208,15 @@ function App() {
       defaultInputDeviceId: selectedDeviceId,
     });
   }, [selectedDeviceId]);
+
+  useEffect(() => {
+    void recoBridge.listAudioInputs().then((availableInputs) => {
+      setAudioInputs(availableInputs);
+      if (selectedDeviceId && !availableInputs.some(({ id }) => id === selectedDeviceId)) {
+        setSelectedDeviceId("");
+      }
+    });
+  }, [dialog, selectedDeviceId]);
 
   const orderedSessions = useMemo(() => {
     return [...sessions]
@@ -288,6 +298,12 @@ function App() {
       setFatalError("エンジンのイベント購読に失敗しました。アプリを再起動してください。");
     },
   });
+  const selectedAudioInput = selectedDeviceId
+    ? audioInputs.find(({ id }) => id === selectedDeviceId)
+    : audioInputs.find(({ isDefault }) => isDefault);
+  const selectedAudioInputLabel = selectedAudioInput
+    ? `${selectedAudioInput.name}${selectedAudioInput.isDefault ? " (システム既定)" : ""}`
+    : "入力デバイスなし";
 
   useEffect(() => {
     if (isLoading) return;
@@ -1269,8 +1285,7 @@ function App() {
           type="button"
         />
         <div className="input-status">
-          <span>INPUT</span>
-          <strong>{selectedDeviceId ? "SELECTED MICROPHONE" : "DEFAULT MICROPHONE"}</strong>
+          <strong>{selectedAudioInputLabel}</strong>
         </div>
       </aside>
 
@@ -1380,6 +1395,7 @@ function App() {
       )}
       {dialog === "settings" && (
         <SettingsDialog
+          audioInputs={audioInputs}
           deviceId={selectedDeviceId}
           disabled={activeSessionId !== undefined || queue.autoAdvanceEnabled}
           model={model}
@@ -2239,6 +2255,7 @@ function ExportDialog({
 }
 
 function SettingsDialog({
+  audioInputs,
   deviceId,
   disabled,
   model,
@@ -2246,6 +2263,7 @@ function SettingsDialog({
   onDeviceChange,
   onModelChange,
 }: {
+  audioInputs: AudioInput[];
   deviceId: string;
   disabled: boolean;
   model: ModelState;
@@ -2253,19 +2271,9 @@ function SettingsDialog({
   onDeviceChange: (deviceId: string) => void;
   onModelChange: (model: ModelState) => void;
 }) {
-  const [inputs, setInputs] = useState<AudioInput[]>([]);
   const [models, setModels] = useState<CachedModelRevision[]>([]);
   const [modelListError, setModelListError] = useState<string>();
   const [isModelWorking, setIsModelWorking] = useState(false);
-
-  useEffect(() => {
-    void recoBridge.listAudioInputs().then((availableInputs) => {
-      setInputs(availableInputs);
-      if (deviceId && !availableInputs.some(({ id }) => id === deviceId)) {
-        onDeviceChange("");
-      }
-    });
-  }, [deviceId, onDeviceChange]);
 
   async function reloadModels(): Promise<void> {
     setIsModelWorking(true);
@@ -2318,7 +2326,7 @@ function SettingsDialog({
           使用するマイク
           <select onChange={(event) => onDeviceChange(event.target.value)} value={deviceId}>
             <option value="">システムの既定</option>
-            {inputs.map((input) => (
+            {audioInputs.map((input) => (
               <option key={input.id} value={input.id}>
                 {input.name}
               </option>

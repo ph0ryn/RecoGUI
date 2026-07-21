@@ -71,6 +71,7 @@ export interface ModelList {
 export interface AudioInput {
   channels: number;
   id: string;
+  isDefault: boolean;
   name: string;
 }
 

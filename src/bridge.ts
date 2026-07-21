@@ -356,13 +356,13 @@ export const recoBridge = {
   async listAudioInputs(): Promise<AudioInput[]> {
     if (!hasTauriRuntime()) {
       return [
-        { channels: 1, id: "default", name: "MacBookのマイク" },
-        { channels: 2, id: "external", name: "外部マイク" },
+        { channels: 1, id: "default", isDefault: true, name: "MacBookのマイク" },
+        { channels: 2, id: "external", isDefault: false, name: "外部マイク" },
       ];
     }
 
     const result = await request<{
-      inputs: { channels: number; id: number | string; name: string }[];
+      inputs: { channels: number; id: number | string; isDefault: boolean; name: string }[];
     }>("audio.listInputs");
 
     return result.inputs.map((input) => ({ ...input, id: String(input.id) }));

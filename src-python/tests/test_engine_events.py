@@ -41,6 +41,23 @@ def engine_with_repository(
   return engine, events
 
 
+def test_list_audio_inputs_marks_the_default_input(monkeypatch: pytest.MonkeyPatch) -> None:
+  devices = [
+    {"name": "Output only", "max_input_channels": 0},
+    {"name": "USB microphone", "max_input_channels": 1},
+    {"name": "MacBook microphone", "max_input_channels": 2},
+  ]
+  monkeypatch.setattr(engine_module.sd, "query_devices", lambda: devices)
+  monkeypatch.setattr(engine_module.sd, "default", SimpleNamespace(device=(2, 0)))
+
+  engine = RecoEngine.__new__(RecoEngine)
+
+  assert engine.list_audio_inputs() == [
+    {"id": 1, "name": "USB microphone", "channels": 1, "isDefault": False},
+    {"id": 2, "name": "MacBook microphone", "channels": 2, "isDefault": True},
+  ]
+
+
 def test_persisted_segment_event_contains_committed_receipt(tmp_path: Path) -> None:
   repository = RecordingRepository(tmp_path / "reco.sqlite3")
   session_id = repository.create_session(NewSession("file", "audio.wav", "model", None, "Japanese", 16_000, "Audio"))
