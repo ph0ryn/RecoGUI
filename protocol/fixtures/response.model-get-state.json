@@ -1,0 +1,18 @@
+{
+  "protocolVersion": 1,
+  "type": "response",
+  "requestId": "741bc6ea-a766-45cc-9699-cea166ca79b9",
+  "sessionId": null,
+  "sequence": 1,
+  "ok": true,
+  "error": null,
+  "payload": {
+    "status": "ready",
+    "selected": {
+      "repoId": "ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit",
+      "revision": "7c70d18cb650655d32eafb952a74a49c6a3caad0"
+    },
+    "errorCode": null,
+    "errorMessage": null
+  }
+}

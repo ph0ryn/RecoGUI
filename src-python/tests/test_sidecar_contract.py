@@ -11,6 +11,7 @@ import pytest
 
 import reco.engine as engine_module
 from reco.engine import ModelRuntime, RecoEngine, SessionControl
+from reco.model_manager import ModelReference, ModelState
 from reco.protocol import NdjsonWriter, Request
 from reco.repository import ExportResult, NewSession, SessionMutationReceipt, SessionPage, SessionState
 from reco.sidecar import SidecarServer
@@ -64,6 +65,18 @@ class StubEngine:
     self.resume_call: str | None = None
     self.stop_call: tuple[str, str] | None = None
     self.queue_call: tuple[str, object] | None = None
+    self.model_call: tuple[str, object] | None = None
+
+  def state(self) -> dict[str, object]:
+    return {"model": {"status": "unselected", "selected": None}}
+
+  def list_models(self) -> dict[str, object]:
+    self.model_call = ("list", None)
+    return {"models": [], "state": {"status": "unselected", "selected": None}}
+
+  def select_model(self, repo_id: str, revision: str) -> dict[str, object]:
+    self.model_call = ("select", (repo_id, revision))
+    return {"status": "ready", "selected": {"repoId": repo_id, "revision": revision}}
 
   def start_session(self, payload: object, requested_session_id: str | None) -> dict[str, object]:
     self.start_payload = payload
@@ -146,6 +159,17 @@ def test_session_start_accepts_nested_rust_source_payload() -> None:
 
   assert engine.start_payload == payload
   assert result == {"sessionId": session_id, "state": "preparing"}
+
+
+def test_model_cache_commands_cross_the_sidecar_contract() -> None:
+  server, engine = server_with_stub()
+
+  assert server.dispatch(request("model.getState", {}))["status"] == "unselected"
+  assert server.dispatch(request("model.list", {}))["models"] == []
+  selected = server.dispatch(request("model.select", {"repoId": "owner/model", "revision": "commit"}))
+
+  assert selected["status"] == "ready"
+  assert engine.model_call == ("select", ("owner/model", "commit"))
 
 
 def test_system_sleep_reason_crosses_the_sidecar_contract() -> None:
@@ -328,6 +352,8 @@ def test_system_sleep_is_persisted_as_terminal_reason(tmp_path: Path, monkeypatc
   control = SessionControl()
   control.request_stop("systemSleep")
   engine.runtime = cast(ModelRuntime, FakeRuntime())
+  engine.model_manager.selected = ModelReference("model", "revision")
+  engine.model_manager._state = ModelState.READY
   monkeypatch.setattr(engine_module, "audio_file_duration_ms", lambda path: 1_000)
   monkeypatch.setattr(engine_module, "ensure_silero_vad_asset", lambda path: path)
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())

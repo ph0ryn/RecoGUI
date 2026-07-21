@@ -20,6 +20,7 @@ import { useEngineEvents } from "./useEngineEvents";
 
 import type {
   AudioInput,
+  CachedModelRevision,
   EngineEvent,
   ExportFormat,
   InputKind,
@@ -142,10 +143,23 @@ function getSnippet(session: SessionEntity, query: string): string | undefined {
   return segment?.text;
 }
 
+function modelStatusText(model: ModelState): string {
+  const labels: Record<ModelState["status"], string> = {
+    cliMissing: "hf CLIが見つかりません。",
+    error: "選択したモデルを読み込めませんでした。",
+    loading: "モデルを読み込んでいます。",
+    ready: "利用可能",
+    unavailable: "選択したモデルがHFキャッシュにありません。",
+    unselected: "音声認識モデルが選択されていません。",
+  };
+
+  return labels[model.status];
+}
+
 function App() {
   const [initialPreferences] = useState(loadAppPreferences);
   const [sessionState, dispatchSessions] = useReducer(sessionStateReducer, initialSessionState);
-  const [model, setModel] = useState<ModelState>({ status: "loading" });
+  const [model, setModel] = useState<ModelState>({ selected: null, status: "loading" });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [anchorId, setAnchorId] = useState<string>();
   const [query, setQuery] = useState("");
@@ -542,21 +556,6 @@ function App() {
           type: "statusChanged",
         });
       }
-    }
-    if (message.event === "model.loading") {
-      setModel({ status: "loading" });
-    }
-    if (message.event === "model.ready") {
-      setModel({ status: "ready" });
-    }
-    if (message.event === "model.downloadProgress") {
-      const payload = message.payload as { bytesDownloaded?: number; bytesTotal?: number };
-      const progress =
-        payload.bytesTotal && payload.bytesDownloaded
-          ? payload.bytesDownloaded / payload.bytesTotal
-          : undefined;
-
-      setModel({ progress, status: "downloading" });
     }
     if (message.event === "history.changed" && message.sessionId) {
       void recoBridge
@@ -1270,7 +1269,7 @@ function App() {
           }
           model={model}
           onClose={closeDialog}
-          onDownload={() => void recoBridge.downloadModel()}
+          onOpenSettings={() => setDialog("settings")}
           onStart={(kind) => void startSession(kind)}
         />
       )}
@@ -1304,14 +1303,13 @@ function App() {
       {dialog === "settings" && (
         <SettingsDialog
           deviceId={selectedDeviceId}
+          disabled={activeSessionId !== undefined || queue.autoAdvanceEnabled}
           model={model}
           onClose={closeDialog}
-          onDelete={() => void recoBridge.deleteModel()}
           onDeviceChange={(deviceId) => {
             setSelectedDeviceId(deviceId);
           }}
-          onDownload={() => void recoBridge.downloadModel()}
-          onVerify={() => void recoBridge.verifyModel()}
+          onModelChange={setModel}
         />
       )}
       {dialog === "close" && closeRequest?.sessionId && (
@@ -1907,37 +1905,25 @@ function NewSessionDialog({
   microphoneDisabled,
   model,
   onClose,
-  onDownload,
+  onOpenSettings,
   onStart,
 }: {
   fileDisabled: boolean;
   microphoneDisabled: boolean;
   model: ModelState;
   onClose: () => void;
-  onDownload: () => void;
+  onOpenSettings: () => void;
   onStart: (kind: InputKind) => void;
 }) {
   return (
     <DialogFrame onClose={onClose} title="新規文字起こし" titleId="new-session-title">
       {model.status !== "ready" ? (
         <div className="model-setup">
-          <span aria-hidden="true">⬇</span>
-          <h3>音声認識モデルを準備</h3>
-          <p>初回のみモデルをダウンロードします。完了後はオフラインでも利用できます。</p>
-          {model.status === "downloading" && (
-            <progress
-              aria-label="モデルのダウンロード進捗"
-              max={100}
-              value={(model.progress ?? 0) * 100}
-            />
-          )}
-          <button
-            className="primary-button"
-            disabled={model.status === "downloading"}
-            onClick={onDownload}
-            type="button"
-          >
-            {model.status === "downloading" ? "ダウンロード中…" : "モデルをダウンロード"}
+          <span aria-hidden="true">◎</span>
+          <h3>音声認識モデルを選択</h3>
+          <p>{modelStatusText(model)}</p>
+          <button className="primary-button" onClick={onOpenSettings} type="button">
+            設定を開く
           </button>
         </div>
       ) : (
@@ -2128,22 +2114,23 @@ function ExportDialog({
 
 function SettingsDialog({
   deviceId,
+  disabled,
   model,
   onClose,
-  onDelete,
   onDeviceChange,
-  onDownload,
-  onVerify,
+  onModelChange,
 }: {
   deviceId: string;
+  disabled: boolean;
   model: ModelState;
   onClose: () => void;
-  onDelete: () => void;
   onDeviceChange: (deviceId: string) => void;
-  onDownload: () => void;
-  onVerify: () => void;
+  onModelChange: (model: ModelState) => void;
 }) {
   const [inputs, setInputs] = useState<AudioInput[]>([]);
+  const [models, setModels] = useState<CachedModelRevision[]>([]);
+  const [modelListError, setModelListError] = useState<string>();
+  const [isModelWorking, setIsModelWorking] = useState(false);
 
   useEffect(() => {
     void recoBridge.listAudioInputs().then((availableInputs) => {
@@ -2153,6 +2140,44 @@ function SettingsDialog({
       }
     });
   }, [deviceId, onDeviceChange]);
+
+  async function reloadModels(): Promise<void> {
+    setIsModelWorking(true);
+    setModelListError(undefined);
+    try {
+      const result = await recoBridge.listModels();
+
+      setModels(result.models);
+      onModelChange(result.state);
+    } catch (error) {
+      setModelListError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsModelWorking(false);
+    }
+  }
+
+  useEffect(() => {
+    void reloadModels();
+  }, []);
+
+  async function selectModel(value: string): Promise<void> {
+    const selected = models.find(({ repoId, revision }) => `${repoId}\n${revision}` === value);
+
+    if (!selected) return;
+    setIsModelWorking(true);
+    setModelListError(undefined);
+    try {
+      const reference = { repoId: selected.repoId, revision: selected.revision };
+
+      onModelChange({ selected: reference, status: "loading" });
+      onModelChange(await recoBridge.selectModel(reference));
+    } catch (error) {
+      setModelListError(error instanceof Error ? error.message : String(error));
+      onModelChange(await recoBridge.getModelState());
+    } finally {
+      setIsModelWorking(false);
+    }
+  }
 
   return (
     <DialogFrame onClose={onClose} title="設定" titleId="settings-title">
@@ -2172,33 +2197,51 @@ function SettingsDialog({
       </div>
       <div className="settings-section">
         <h3>音声認識モデル</h3>
+        <label>
+          使用するモデル
+          <select
+            disabled={disabled || isModelWorking || model.status === "cliMissing"}
+            onChange={(event) => void selectModel(event.target.value)}
+            value={model.selected ? `${model.selected.repoId}\n${model.selected.revision}` : ""}
+          >
+            <option value="">モデルを選択…</option>
+            {model.selected &&
+              !models.some(
+                ({ repoId, revision }) =>
+                  repoId === model.selected?.repoId && revision === model.selected.revision,
+              ) && (
+                <option value={`${model.selected.repoId}\n${model.selected.revision}`}>
+                  {model.selected.repoId} — {model.selected.revision.slice(0, 8)} — 利用不可
+                </option>
+              )}
+            {models.map((candidate) => (
+              <option
+                key={`${candidate.repoId}:${candidate.revision}`}
+                value={`${candidate.repoId}\n${candidate.revision}`}
+              >
+                {candidate.repoId} — {candidate.revision.slice(0, 8)} — {candidate.size}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="model-row">
-          <div>
-            <strong>Qwen3-ASR 1.7B JA</strong>
-            <span>
-              <span className={`model-dot model-${model.status}`} />
-              {model.status === "ready"
-                ? "利用可能"
-                : model.status === "missing"
-                  ? "未ダウンロード"
-                  : "準備中"}
-            </span>
-          </div>
-          {model.status === "ready" ? (
-            <div className="model-actions">
-              <button className="secondary-button" onClick={onVerify} type="button">
-                整合性を確認
-              </button>
-              <button className="danger-secondary" onClick={onDelete} type="button">
-                削除
-              </button>
-            </div>
-          ) : (
-            <button className="primary-button" onClick={onDownload} type="button">
-              ダウンロード
-            </button>
-          )}
+          <span>
+            <span className={`model-dot model-${model.status}`} />
+            {modelStatusText(model)}
+          </span>
+          <button
+            className="secondary-button"
+            disabled={disabled || isModelWorking}
+            onClick={() => void reloadModels()}
+            type="button"
+          >
+            {isModelWorking ? "確認中…" : "一覧を再読み込み"}
+          </button>
         </div>
+        {disabled && <p>処理中はモデルを変更できません。</p>}
+        {(model.errorMessage || modelListError) && (
+          <p role="alert">{model.errorMessage ?? modelListError}</p>
+        )}
       </div>
       <div className="settings-section about">
         <h3>このアプリについて</h3>

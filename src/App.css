@@ -1246,7 +1246,6 @@ button:disabled {
   line-height: 1.6;
 }
 
-.model-setup progress,
 .export-operation progress {
   width: 100%;
   accent-color: var(--signal);
@@ -1296,9 +1295,7 @@ button:disabled {
   font-size: 10px;
 }
 
-.model-row,
-.model-row > div,
-.model-actions {
+.model-row {
   display: flex;
   align-items: center;
 }
@@ -1306,18 +1303,6 @@ button:disabled {
 .model-row {
   justify-content: space-between;
   gap: 20px;
-}
-
-.model-row > div {
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.model-actions {
-  flex-direction: row !important;
-  align-items: center !important;
-  gap: 7px !important;
 }
 
 .model-row span {
@@ -1336,6 +1321,16 @@ button:disabled {
 
 .model-ready {
   background: #5e8b68;
+}
+
+.model-loading {
+  background: var(--signal);
+}
+
+.model-error,
+.model-unavailable,
+.model-cliMissing {
+  background: #a66d2d;
 }
 
 .about dl {

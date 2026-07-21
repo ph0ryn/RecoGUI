@@ -19,17 +19,17 @@ const bridgeMocks = vi.hoisted(() => ({
     | undefined,
   closeHandler: undefined as ((payload: { sessionId: string }) => void) | undefined,
   copySessions: vi.fn(),
-  deleteModel: vi.fn(),
   deleteSessions: vi.fn(),
-  downloadModel: vi.fn(),
   enqueueFiles: vi.fn(),
   eventHandler: undefined as ((event: EngineEvent) => void) | undefined,
   exportSessions: vi.fn().mockResolvedValue({ canceled: false, completed: true }),
+  getModelState: vi.fn(),
   getQueueState: vi.fn(),
   getSession: vi.fn(),
   getSnapshot: vi.fn(),
   listAudioInputs: vi.fn().mockResolvedValue([{ channels: 1, id: "7", name: "テストマイク" }]),
   listHistory: vi.fn(),
+  listModels: vi.fn(),
   onCloseForceRequired: vi.fn(),
   onCloseRequested: vi.fn(),
   onEngineEvent: vi.fn(),
@@ -42,9 +42,9 @@ const bridgeMocks = vi.hoisted(() => ({
   resolveClose: vi.fn(),
   resumeSession: vi.fn(),
   searchHistory: vi.fn(),
+  selectModel: vi.fn(),
   startQueue: vi.fn(),
   startSession: vi.fn().mockResolvedValue({ sessionId: "new-session" }),
-  verifyModel: vi.fn(),
 }));
 
 vi.mock("./bridge", () => ({
@@ -89,6 +89,27 @@ beforeEach(() => {
     return Promise.resolve(structuredClone(session));
   });
   bridgeMocks.getSnapshot.mockResolvedValue(structuredClone(mockSnapshot));
+  bridgeMocks.getModelState.mockResolvedValue(structuredClone(mockSnapshot.model));
+  bridgeMocks.listModels.mockResolvedValue({
+    models: [
+      {
+        lastModified: "2 months ago",
+        refs: ["main"],
+        repoId: "ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit",
+        revision: "7c70d18cb650655d32eafb952a74a49c6a3caad0",
+        size: "2.5G",
+      },
+      {
+        lastModified: "1 month ago",
+        refs: [],
+        repoId: "owner/another-model",
+        revision: "another-revision",
+        size: "1.0G",
+      },
+    ],
+    state: structuredClone(mockSnapshot.model),
+  });
+  bridgeMocks.selectModel.mockResolvedValue(structuredClone(mockSnapshot.model));
   const queue = { autoAdvanceEnabled: false, items: [], revision: 0 };
 
   bridgeMocks.getQueueState.mockResolvedValue(structuredClone(queue));
@@ -557,6 +578,29 @@ describe("RecoGUI", () => {
     );
     expect(JSON.parse(localStorage.getItem("reco.appPreferences") ?? "{}")).toEqual(
       expect.objectContaining({ defaultInputDeviceId: "7" }),
+    );
+  });
+
+  it("lists every cached model revision and selects one without compatibility filtering", async () => {
+    const user = userEvent.setup();
+
+    useInactiveSnapshot();
+    bridgeMocks.selectModel.mockResolvedValue({
+      selected: { repoId: "owner/another-model", revision: "another-revision" },
+      status: "ready",
+    });
+
+    await renderLoadedApp();
+    await user.click(screen.getByRole("button", { name: "設定を開く" }));
+    const selector = await screen.findByRole("combobox", { name: "使用するモデル" });
+
+    expect(within(selector).getAllByRole("option")).toHaveLength(3);
+    await user.selectOptions(selector, "owner/another-model\nanother-revision");
+    await waitFor(() =>
+      expect(bridgeMocks.selectModel).toHaveBeenCalledWith({
+        repoId: "owner/another-model",
+        revision: "another-revision",
+      }),
     );
   });
 

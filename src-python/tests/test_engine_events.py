@@ -10,6 +10,7 @@ import pytest
 
 import reco.engine as engine_module
 from reco.engine import EngineCommandError, ModelRuntime, RecoEngine, SessionControl
+from reco.model_manager import ModelReference, ModelState
 from reco.models import SplitReason, TranscriptionDiagnostics, TranscriptSegment, VadDiagnostics
 from reco.pipeline import TranscriptionProgress
 from reco.recording import fingerprint_file_snapshot
@@ -172,7 +173,8 @@ def test_resume_is_rejected_while_another_session_is_active(tmp_path: Path) -> N
 
 def test_queue_start_is_rejected_while_a_session_is_active(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
   engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
-  monkeypatch.setattr(engine.model_manager, "ensure_verified", lambda: True)
+  engine.model_manager.selected = ModelReference("owner/model", "revision")
+  engine.model_manager._state = ModelState.READY
   engine._active_session_id = "active-session"
 
   with pytest.raises(EngineCommandError, match="already active"):
@@ -198,7 +200,8 @@ def test_enqueue_starts_first_file_immediately_when_engine_and_queue_are_idle(
 
   engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
   monkeypatch.setattr(engine_module, "validate_audio_file", lambda path: None)
-  monkeypatch.setattr(engine.model_manager, "ensure_verified", lambda: True)
+  engine.model_manager.selected = ModelReference("owner/model", "revision")
+  engine.model_manager._state = ModelState.READY
   monkeypatch.setattr(engine_module, "Thread", DormantThread)
 
   snapshot = engine.enqueue_files(
@@ -245,7 +248,6 @@ def test_enqueue_keeps_files_waiting_when_model_is_unavailable_or_engine_is_shut
   monkeypatch.setattr(engine_module, "validate_audio_file", lambda path: None)
 
   unavailable_engine = RecoEngine(tmp_path / "unavailable.sqlite3", tmp_path / "models")
-  monkeypatch.setattr(unavailable_engine.model_manager, "ensure_verified", lambda: False)
   unavailable = unavailable_engine.enqueue_files([{"path": str(missing_model)}])
 
   shutdown_engine = RecoEngine(tmp_path / "shutdown.sqlite3", tmp_path / "models")
@@ -258,6 +260,62 @@ def test_enqueue_keeps_files_waiting_when_model_is_unavailable_or_engine_is_shut
   assert shutdown_engine._active_session_id is None
   assert shutdown["autoAdvanceEnabled"] is False
   assert len(cast(list[object], shutdown["items"])) == 1
+
+
+def test_failed_model_selection_is_persisted_and_disables_the_previous_runtime(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  snapshot = tmp_path / "snapshot"
+  snapshot.mkdir()
+  engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "assets")
+  paused_session_id = engine.repository.create_session(
+    NewSession("microphone", "Microphone", "old-model", "old-revision", "Japanese", 16_000, "Recording")
+  )
+  engine.repository.set_state(paused_session_id, SessionState.PAUSING)
+  engine.repository.pause_session(paused_session_id, 0)
+  previous_closed = False
+
+  class PreviousRuntime:
+    def close(self) -> None:
+      nonlocal previous_closed
+      previous_closed = True
+
+  class FailingRuntime:
+    def __init__(self, path: Path) -> None:
+      assert path == snapshot
+
+    def acquire(self) -> None:
+      raise RuntimeError("incompatible model")
+
+    def close(self) -> None:
+      return None
+
+  engine.runtime = cast(ModelRuntime, PreviousRuntime())
+  monkeypatch.setattr(engine.model_manager, "resolve", lambda reference: snapshot)
+  monkeypatch.setattr(engine_module, "ModelRuntime", FailingRuntime)
+
+  with pytest.raises(EngineCommandError, match="incompatible model"):
+    engine.select_model("owner/model", "commit")
+
+  assert previous_closed is True
+  assert engine.runtime is None
+  assert engine.repository.get_selected_model() == ("owner/model", "commit")
+  assert engine.model_manager.snapshot().state is ModelState.ERROR
+  assert engine.model_manager.snapshot().selected == ModelReference("owner/model", "commit")
+
+
+def test_model_selection_is_rejected_while_a_session_or_queue_is_active(tmp_path: Path) -> None:
+  engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "assets")
+  engine._active_session_id = "active"
+  with pytest.raises(EngineCommandError) as active:
+    engine.select_model("owner/model", "commit")
+  assert active.value.code == "session_active"
+
+  engine._active_session_id = None
+  engine._queue_auto_advance = True
+  with pytest.raises(EngineCommandError) as queue:
+    engine.select_model("owner/model", "commit")
+  assert queue.value.code == "queue_active"
 
 
 def test_concurrent_idle_enqueues_create_only_one_active_session(
@@ -279,11 +337,9 @@ def test_concurrent_idle_enqueues_create_only_one_active_session(
   monkeypatch.setattr(engine_module, "validate_audio_file", lambda path: None)
   monkeypatch.setattr(engine_module, "Thread", DormantThread)
 
-  def verify_together() -> bool:
-    barrier.wait()
-    return True
-
-  monkeypatch.setattr(engine.model_manager, "ensure_verified", verify_together)
+  del barrier
+  engine.model_manager.selected = ModelReference("owner/model", "revision")
+  engine.model_manager._state = ModelState.READY
   workers = [
     Thread(target=engine.enqueue_files, args=([{"path": str(path), "displayName": path.name}],)) for path in files
   ]
@@ -366,6 +422,8 @@ def test_drained_pause_persists_the_resume_sample(tmp_path: Path, monkeypatch: p
   control = SessionControl()
   control.request_stop("userPause")
   engine.runtime = cast(ModelRuntime, FakeRuntime())
+  engine.model_manager.selected = ModelReference("model", "revision")
+  engine.model_manager._state = ModelState.READY
   monkeypatch.setattr(engine_module, "ensure_silero_vad_asset", lambda path: path)
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())

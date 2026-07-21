@@ -17,11 +17,8 @@ const ALLOWED_ENGINE_COMMANDS: &[&str] = &[
     "engine.getState",
     "engine.shutdown",
     "model.getState",
-    "model.download",
-    "model.cancelDownload",
-    "model.verify",
-    "model.load",
-    "model.delete",
+    "model.list",
+    "model.select",
     "audio.listInputs",
     "queue.getState",
     "queue.enqueueFiles",
@@ -127,12 +124,6 @@ pub struct HistorySearchCommand {
 #[serde(rename_all = "camelCase")]
 pub struct SessionIdsCommand {
     pub session_ids: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelDownloadCommand {
-    pub allow_cellular: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -284,25 +275,6 @@ pub async fn engine_shutdown(supervisor: State<'_, EngineSupervisor>) -> Command
     Ok(())
 }
 
-#[tauri::command]
-pub async fn model_get_state(supervisor: State<'_, EngineSupervisor>) -> CommandResult<Value> {
-    request(&supervisor, "model.getState", None, json!({})).await
-}
-
-#[tauri::command]
-pub async fn model_download(
-    input: ModelDownloadCommand,
-    supervisor: State<'_, EngineSupervisor>,
-) -> CommandResult<Value> {
-    request(
-        &supervisor,
-        "model.download",
-        None,
-        json!({ "allowCellular": input.allow_cellular.unwrap_or(false) }),
-    )
-    .await
-}
-
 macro_rules! empty_engine_command {
     ($function:ident, $wire_name:literal) => {
         #[tauri::command]
@@ -312,10 +284,6 @@ macro_rules! empty_engine_command {
     };
 }
 
-empty_engine_command!(model_cancel_download, "model.cancelDownload");
-empty_engine_command!(model_verify, "model.verify");
-empty_engine_command!(model_load, "model.load");
-empty_engine_command!(model_delete, "model.delete");
 empty_engine_command!(audio_list_inputs, "audio.listInputs");
 
 #[tauri::command]
@@ -631,6 +599,14 @@ mod tests {
         assert!(ALLOWED_ENGINE_COMMANDS.contains(&"session.start"));
         assert!(ALLOWED_ENGINE_COMMANDS.contains(&"queue.enqueueFiles"));
         assert!(ALLOWED_ENGINE_COMMANDS.contains(&"queue.pause"));
+        assert!(ALLOWED_ENGINE_COMMANDS.contains(&"model.getState"));
+        assert!(ALLOWED_ENGINE_COMMANDS.contains(&"model.list"));
+        assert!(ALLOWED_ENGINE_COMMANDS.contains(&"model.select"));
+        assert!(!ALLOWED_ENGINE_COMMANDS.contains(&"model.download"));
+        assert!(!ALLOWED_ENGINE_COMMANDS.contains(&"model.cancelDownload"));
+        assert!(!ALLOWED_ENGINE_COMMANDS.contains(&"model.verify"));
+        assert!(!ALLOWED_ENGINE_COMMANDS.contains(&"model.load"));
+        assert!(!ALLOWED_ENGINE_COMMANDS.contains(&"model.delete"));
         assert!(!ALLOWED_ENGINE_COMMANDS.contains(&"shell.execute"));
     }
 

@@ -399,6 +399,33 @@ class RecordingRepository:
         raise
     return session_id
 
+  def get_selected_model(self) -> tuple[str, str] | None:
+    """Return the durable Hugging Face model identity, if configured."""
+
+    with self._connect(readonly=True) as connection:
+      row = connection.execute("SELECT value FROM app_metadata WHERE key = 'selected_model'").fetchone()
+    if row is None:
+      return None
+    try:
+      value = json.loads(str(row[0]))
+    except json.JSONDecodeError:
+      return None
+    if not isinstance(value, dict):
+      return None
+    repo_id, revision = value.get("repoId"), value.get("revision")
+    if not isinstance(repo_id, str) or not repo_id or not isinstance(revision, str) or not revision:
+      return None
+    return repo_id, revision
+
+  def set_selected_model(self, repo_id: str, revision: str) -> None:
+    """Atomically replace the durable Hugging Face model identity."""
+
+    if not repo_id.strip() or not revision.strip():
+      raise ValueError("Model repository and revision must not be empty")
+    value = json.dumps({"repoId": repo_id, "revision": revision}, separators=(",", ":"))
+    with self._connect() as connection:
+      connection.execute("INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('selected_model', ?)", (value,))
+
   @staticmethod
   def _queue_revision(connection: sqlite3.Connection) -> int:
     row = connection.execute("SELECT value FROM app_metadata WHERE key = 'queue_revision'").fetchone()

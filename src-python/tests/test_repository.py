@@ -244,6 +244,8 @@ def test_active_session_cannot_be_deleted(tmp_path: Path) -> None:
 
   repository.set_state(session_id, SessionState.STOPPED, end_reason="userStop")
   assert repository.delete_sessions([session_id]) == 1
+  with pytest.raises(RepositoryError, match="Unknown session"):
+    repository.get_session(session_id)
 
 
 def test_paused_session_can_be_deleted(tmp_path: Path) -> None:
@@ -254,8 +256,17 @@ def test_paused_session_can_be_deleted(tmp_path: Path) -> None:
   repository.pause_session(session_id, 16_384)
 
   assert repository.delete_sessions([session_id]) == 1
-  with pytest.raises(RepositoryError, match="Unknown session"):
-    repository.get_session(session_id)
+
+
+def test_selected_model_round_trips_through_metadata(tmp_path: Path) -> None:
+  database = tmp_path / "reco.sqlite3"
+  repository = RecordingRepository(database)
+
+  assert repository.get_selected_model() is None
+  repository.set_selected_model("owner/model", "commit-one")
+  repository.set_selected_model("owner/model", "commit-two")
+
+  assert RecordingRepository(database).get_selected_model() == ("owner/model", "commit-two")
 
 
 @pytest.mark.parametrize("export_format", ["txt", "md", "markdown", "json", "srt", "vtt", "csv"])

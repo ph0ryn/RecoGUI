@@ -95,7 +95,7 @@ Run the RecoGUI sidecar directly for development with:
 uv run reco-engine serve \
   --protocol-version 1 \
   --database ./reco.sqlite3 \
-  --models-directory ./models \
+  --assets-directory ./assets \
   --logs-directory ./logs
 ```
 

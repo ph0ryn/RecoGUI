@@ -8,7 +8,11 @@
   "error": null,
   "payload": {
     "engineState": "idle",
-    "modelState": "missing",
+    "modelState": "unselected",
+    "model": {
+      "status": "unselected",
+      "selected": null
+    },
     "activeSession": null
   }
 }

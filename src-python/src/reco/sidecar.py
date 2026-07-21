@@ -13,7 +13,6 @@ from typing import Any, cast
 from uuid import uuid4
 
 from reco.engine import EngineCommandError, RecoEngine, _camel
-from reco.model_manager import ModelState
 from reco.protocol import (
   MAX_LINE_BYTES,
   PROTOCOL_VERSION,
@@ -31,12 +30,11 @@ LOG = logging.getLogger("reco-engine")
 class SidecarServer:
   """Strict request dispatcher whose stdout contains protocol messages only."""
 
-  def __init__(self, database: Path, models_directory: Path, output: Any = None) -> None:
+  def __init__(self, database: Path, assets_directory: Path, output: Any = None) -> None:
     self.writer = NdjsonWriter(output or sys.stdout)
-    self.engine = RecoEngine(database, models_directory, self._event)
+    self.engine = RecoEngine(database, assets_directory, self._event)
     self._stopped = Event()
     self._previous_request_sequence = 0
-    self._download_thread: Thread | None = None
     self._export_lock = Lock()
     self._export_operations: dict[str, Event] = {}
     self._export_acceptance: dict[str, Event] = {}
@@ -108,25 +106,14 @@ class SidecarServer:
       return {"inputs": self.engine.list_audio_inputs()}
     if command == "model.getState":
       return _mapping(self.engine.state()["model"])
-    if command == "model.download":
-      return self._start_download()
-    if command == "model.cancelDownload":
-      self.engine.model_manager.cancel_download()
-      return {"cancelRequested": True}
-    if command == "model.verify":
-      return {"valid": self.engine.model_manager.verify()}
-    if command == "model.load":
-      if not self.engine.model_manager.verify():
-        raise EngineCommandError("model_missing", "The fixed transcription model is not installed")
-      self._event("model.loading", None, {})
-      self.engine.runtime.acquire()
-      self._event("model.ready", None, {})
-      return {"state": ModelState.LOADED.value}
-    if command == "model.delete":
-      if self.engine.state()["activeSession"] is not None:
-        raise EngineCommandError("session_active", "The model cannot be deleted during transcription")
-      self.engine.runtime.close()
-      return {"deleted": self.engine.model_manager.delete(engine_idle=True)}
+    if command == "model.list":
+      return self.engine.list_models()
+    if command == "model.select":
+      repo_id = payload.get("repoId")
+      revision = payload.get("revision")
+      if not isinstance(repo_id, str) or not isinstance(revision, str):
+        raise ValueError("repoId and revision must be strings")
+      return self.engine.select_model(repo_id, revision)
     if command == "session.start":
       return self.engine.start_session(payload, request.session_id)
     if command == "session.stop":
@@ -212,21 +199,6 @@ class SidecarServer:
     if command == "history.cancelExport":
       return self._cancel_export(str(payload.get("operationId", "")))
     raise EngineCommandError("unknown_command", f"Unknown engine command: {command}", recoverable=False)
-
-  def _start_download(self) -> dict[str, object]:
-    if self._download_thread is not None and self._download_thread.is_alive():
-      raise EngineCommandError("model_download_active", "Model download is already in progress")
-
-    def download() -> None:
-      try:
-        self.engine.model_manager.download(lambda progress: self._event("model.downloadProgress", None, progress))
-        self._event("model.ready", None, {})
-      except BaseException as exc:
-        self._event("operation.failed", None, {"operation": "model.download", "message": str(exc)})
-
-    self._download_thread = Thread(target=download, daemon=True, name="reco-model-download")
-    self._download_thread.start()
-    return {"accepted": True}
 
   def _start_export(
     self,
@@ -361,7 +333,7 @@ def build_parser() -> argparse.ArgumentParser:
   serve = subparsers.add_parser("serve")
   serve.add_argument("--protocol-version", type=int, required=True)
   serve.add_argument("--database", type=Path, required=True)
-  serve.add_argument("--models-directory", type=Path, required=True)
+  serve.add_argument("--assets-directory", type=Path, required=True)
   serve.add_argument("--logs-directory", type=Path, required=True)
   return parser
 
@@ -373,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
     return 2
   args.logs_directory.mkdir(parents=True, exist_ok=True)
   logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(levelname)s %(message)s")
-  return SidecarServer(args.database, args.models_directory).serve()
+  return SidecarServer(args.database, args.assets_directory).serve()
 
 
 def _session_id(request: Request, payload: Mapping[str, object]) -> str:

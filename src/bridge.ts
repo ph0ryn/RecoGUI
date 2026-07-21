@@ -13,6 +13,8 @@ import type {
   ExportResult,
   HistoryPage,
   InputKind,
+  ModelList,
+  ModelReference,
   ModelState,
   QueueSnapshot,
   SelectedAudioFile,
@@ -44,7 +46,6 @@ interface EngineRequest<T> {
 
 interface RawEngineState {
   activeSession: string | null;
-  modelState: string;
 }
 
 interface RawHistoryPage {
@@ -114,18 +115,6 @@ async function request<Result, Payload = unknown>(
   return invoke<Result>("engine_request", {
     ...({ command, payload: payload ?? ({} as Payload) } satisfies EngineRequest<Payload>),
   });
-}
-
-function modelStatus(value: string): ModelState["status"] {
-  if (["missing", "downloading", "verifying", "loading"].includes(value)) {
-    return value as ModelState["status"];
-  }
-
-  if (["ready", "loaded"].includes(value)) {
-    return "ready";
-  }
-
-  return "failed";
 }
 
 function mapSegment(sessionId: string, segment: RawSegment): TranscriptSegment {
@@ -215,10 +204,6 @@ export const recoBridge = {
     await navigator.clipboard.writeText(content);
   },
 
-  async deleteModel(): Promise<void> {
-    if (hasTauriRuntime()) await request("model.delete");
-  },
-
   async deleteSessions(sessionIds: string[]): Promise<void> {
     if (hasTauriRuntime()) {
       await request(
@@ -226,10 +211,6 @@ export const recoBridge = {
         sessionIds.length === 1 ? { sessionId: sessionIds[0] } : { sessionIds },
       );
     }
-  },
-
-  async downloadModel(): Promise<void> {
-    if (hasTauriRuntime()) await request("model.download");
   },
 
   async enqueueFiles(files: SelectedAudioFile[]): Promise<QueueSnapshot> {
@@ -289,6 +270,11 @@ export const recoBridge = {
     return { ...result, canceled: false };
   },
 
+  async getModelState(): Promise<ModelState> {
+    if (!hasTauriRuntime()) return structuredClone(mockSnapshot.model);
+    return request<ModelState>("model.getState");
+  },
+
   async getQueueState(): Promise<QueueSnapshot> {
     if (!hasTauriRuntime()) return structuredClone(mockQueueSnapshot);
     return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.getState"));
@@ -337,9 +323,10 @@ export const recoBridge = {
   async getSnapshot(): Promise<EngineSnapshot> {
     if (!hasTauriRuntime()) return structuredClone(mockSnapshot);
 
-    const [engine, history] = await Promise.all([
+    const [engine, history, model] = await Promise.all([
       request<RawEngineState>("engine.getState"),
       request<RawHistoryPage, { limit: number }>("history.list", { limit: 100 }),
+      request<ModelState>("model.getState"),
     ]);
     const sessions: (SessionSummary | SessionDetail)[] = history.items.map(mapSessionSummary);
 
@@ -360,7 +347,7 @@ export const recoBridge = {
 
     return {
       activeSessionId: engine.activeSession ?? undefined,
-      model: { status: modelStatus(engine.modelState) },
+      model,
       nextCursor: history.nextCursor ?? undefined,
       sessions,
     };
@@ -403,6 +390,16 @@ export const recoBridge = {
       items: result.items.map(mapSessionSummary),
       nextCursor: result.nextCursor ?? undefined,
     };
+  },
+
+  async listModels(): Promise<ModelList> {
+    if (!hasTauriRuntime()) {
+      return {
+        models: [],
+        state: structuredClone(mockSnapshot.model),
+      };
+    }
+    return request<ModelList>("model.list");
   },
 
   async onCloseForceRequired(
@@ -585,6 +582,11 @@ export const recoBridge = {
     };
   },
 
+  async selectModel(model: ModelReference): Promise<ModelState> {
+    if (!hasTauriRuntime()) return { selected: model, status: "ready" };
+    return request<ModelState, ModelReference>("model.select", model);
+  },
+
   async startQueue(): Promise<QueueSnapshot> {
     if (!hasTauriRuntime()) {
       mockQueueSnapshot.autoAdvanceEnabled = mockQueueSnapshot.items.length > 0;
@@ -606,9 +608,5 @@ export const recoBridge = {
 
   async stopSession(sessionId: string): Promise<void> {
     if (hasTauriRuntime()) await request("session.stop", { sessionId });
-  },
-
-  async verifyModel(): Promise<void> {
-    if (hasTauriRuntime()) await request("model.verify");
   },
 };

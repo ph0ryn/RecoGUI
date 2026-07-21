@@ -1,0 +1,12 @@
+{
+  "protocolVersion": 1,
+  "type": "request",
+  "requestId": "3d63370d-6ab3-41e0-9f0d-39c6a4ca54bd",
+  "sessionId": null,
+  "sequence": 1,
+  "command": "model.select",
+  "payload": {
+    "repoId": "ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit",
+    "revision": "7c70d18cb650655d32eafb952a74a49c6a3caad0"
+  }
+}

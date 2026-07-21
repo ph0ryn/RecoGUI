@@ -4,7 +4,13 @@ const now = Date.now();
 
 export const mockSnapshot: EngineSnapshot = {
   activeSessionId: "session-live",
-  model: { status: "ready" },
+  model: {
+    selected: {
+      repoId: "ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit",
+      revision: "7c70d18cb650655d32eafb952a74a49c6a3caad0",
+    },
+    status: "ready",
+  },
   sessions: [
     {
       characterCount: 238,

@@ -17,8 +17,20 @@ RecoGUI is a Japanese speech transcription desktop application for Apple Silicon
 - Node.js and pnpm 11
 - Rust and the Xcode command line tools
 - Python 3.12 managed through `uv`
+- Hugging Face `hf` CLI 1.x
 
-The transcription model is downloaded into application-managed storage when first requested. It is not committed to this repository.
+RecoGUI only uses models that already exist in the Hugging Face cache. Install the `hf` CLI and
+manage models from a terminal before selecting one in the application.
+
+```sh
+hf download ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit \
+  --revision 7c70d18cb650655d32eafb952a74a49c6a3caad0
+hf cache verify ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit \
+  --revision 7c70d18cb650655d32eafb952a74a49c6a3caad0
+hf cache rm model/ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit
+```
+
+RecoGUI does not install `hf`, download models, verify them, or remove them.
 
 ## Development
 

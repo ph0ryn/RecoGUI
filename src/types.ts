@@ -45,10 +45,27 @@ export interface SessionDetail extends SessionSummary {
 
 export type ExportFormat = "txt" | "markdown" | "json" | "srt" | "vtt" | "csv";
 
+export interface ModelReference {
+  repoId: string;
+  revision: string;
+}
+
+export interface CachedModelRevision extends ModelReference {
+  lastModified: string;
+  refs: string[];
+  size: string;
+}
+
 export interface ModelState {
-  status: "missing" | "downloading" | "verifying" | "loading" | "ready" | "failed";
-  progress?: number;
-  detail?: string;
+  status: "cliMissing" | "unselected" | "unavailable" | "loading" | "ready" | "error";
+  selected: ModelReference | null;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+export interface ModelList {
+  models: CachedModelRevision[];
+  state: ModelState;
 }
 
 export interface AudioInput {

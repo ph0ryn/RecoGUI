@@ -55,6 +55,44 @@ beforeEach(() => {
 });
 
 describe("recoBridge", () => {
+  it("lists cached models through the fixed model command", async () => {
+    tauriMocks.invoke.mockResolvedValue({
+      models: [
+        {
+          lastModified: "2 months ago",
+          refs: ["main"],
+          repoId: "owner/model",
+          revision: "revision",
+          size: "2.5G",
+        },
+      ],
+      state: { selected: null, status: "unselected" },
+    });
+
+    await expect(recoBridge.listModels()).resolves.toMatchObject({
+      models: [{ repoId: "owner/model", revision: "revision" }],
+    });
+
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("engine_request", {
+      command: "model.list",
+      payload: {},
+    });
+  });
+
+  it("selects a cached model by repository and revision only", async () => {
+    tauriMocks.invoke.mockResolvedValue({
+      selected: { repoId: "owner/model", revision: "revision" },
+      status: "ready",
+    });
+
+    await recoBridge.selectModel({ repoId: "owner/model", revision: "revision" });
+
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("engine_request", {
+      command: "model.select",
+      payload: { repoId: "owner/model", revision: "revision" },
+    });
+  });
+
   it("enqueues selected file tokens and maps the canonical queue snapshot", async () => {
     tauriMocks.invoke.mockResolvedValue({
       autoAdvanceEnabled: false,
@@ -167,8 +205,12 @@ describe("recoBridge", () => {
     const history = { items: [rawSession(7, 6, null)], nextCursor: null };
 
     tauriMocks.invoke
-      .mockResolvedValueOnce({ activeSession: "session-1", modelState: "ready" })
+      .mockResolvedValueOnce({ activeSession: "session-1" })
       .mockResolvedValueOnce(history)
+      .mockResolvedValueOnce({
+        selected: { repoId: "owner/model", revision: "revision" },
+        status: "ready",
+      })
       .mockResolvedValueOnce(rawSession(1, 0, 500))
       .mockResolvedValueOnce(rawSession(2, 1, null))
       .mockResolvedValueOnce(rawSession(3, 0, 500))

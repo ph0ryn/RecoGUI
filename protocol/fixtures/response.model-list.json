@@ -1,0 +1,29 @@
+{
+  "protocolVersion": 1,
+  "type": "response",
+  "requestId": "859823c7-cc7f-46aa-a5f3-32e0dbb9c89b",
+  "sessionId": null,
+  "sequence": 1,
+  "ok": true,
+  "error": null,
+  "payload": {
+    "models": [
+      {
+        "repoId": "ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit",
+        "revision": "7c70d18cb650655d32eafb952a74a49c6a3caad0",
+        "size": "2.5G",
+        "lastModified": "2 months ago",
+        "refs": ["main"]
+      }
+    ],
+    "state": {
+      "status": "ready",
+      "selected": {
+        "repoId": "ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit",
+        "revision": "7c70d18cb650655d32eafb952a74a49c6a3caad0"
+      },
+      "errorCode": null,
+      "errorMessage": null
+    }
+  }
+}

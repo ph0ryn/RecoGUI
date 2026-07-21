@@ -153,6 +153,14 @@ mod tests {
             "../../protocol/fixtures/request.engine-get-state.json"
         ))
         .unwrap();
+        let model_list: IncomingEnvelope = serde_json::from_str(include_str!(
+            "../../protocol/fixtures/response.model-list.json"
+        ))
+        .unwrap();
+        let model_select: serde_json::Value = serde_json::from_str(include_str!(
+            "../../protocol/fixtures/request.model-select.json"
+        ))
+        .unwrap();
 
         assert_eq!(response.message_type, IncomingType::Response);
         assert_eq!(event.message_type, IncomingType::Event);
@@ -161,5 +169,7 @@ mod tests {
         assert_eq!(event.payload["totalSegments"], 1);
         assert_eq!(request["command"], "engine.getState");
         assert_eq!(request["protocolVersion"], PROTOCOL_VERSION);
+        assert_eq!(model_list.payload["models"][0]["size"], "2.5G");
+        assert_eq!(model_select["command"], "model.select");
     }
 }

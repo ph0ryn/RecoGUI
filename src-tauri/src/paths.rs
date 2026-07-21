@@ -20,7 +20,7 @@ pub struct AppPaths {
     pub database: PathBuf,
     #[allow(dead_code)]
     pub backups: PathBuf,
-    pub models: PathBuf,
+    pub assets: PathBuf,
     pub logs: PathBuf,
     #[allow(dead_code)]
     pub engine_lock: PathBuf,
@@ -41,9 +41,9 @@ impl AppPaths {
             .app_data_dir()
             .map_err(|_| PathError::AppDataUnavailable)?;
         let backups = root.join("backups");
-        let models = root.join("models");
+        let assets = root.join("assets");
         let logs = root.join("logs");
-        for directory in [&root, &backups, &models, &logs] {
+        for directory in [&root, &backups, &assets, &logs] {
             std::fs::create_dir_all(directory)?;
         }
 
@@ -53,7 +53,7 @@ impl AppPaths {
             engine_lock: root.join("engine.lock"),
             root,
             backups,
-            models,
+            assets,
             logs,
             engine_executable,
         })
