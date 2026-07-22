@@ -1,3 +1,4 @@
+pub mod application_core;
 mod audio_capture;
 mod close_handshake;
 mod commands;

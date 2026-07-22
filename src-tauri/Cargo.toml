@@ -24,13 +24,18 @@ tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros", "net", "process", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 command-fds = { version = "0.3.3", features = ["tokio"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 rfd = "0.15"
 cpal = "0.18.1"
 rtrb = "0.3.4"
 rubato = "4.0.0"
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled", "serde_json", "uuid"] }
+time = { version = "0.3.53", features = ["formatting", "macros"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
