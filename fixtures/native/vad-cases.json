@@ -1,0 +1,50 @@
+{
+  "sampleRate": 16000,
+  "frameSamples": 512,
+  "contextSamples": 64,
+  "modelSha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+  "zeroFrameProbability": 0.0016698241233825684,
+  "probabilityTolerance": 0.00001,
+  "cases": [
+    {
+      "name": "silence-boundary-with-padding",
+      "probabilities": [0.0, 0.0, 0.9, 0.9, 0.0, 0.0],
+      "config": {
+        "minSilenceDurationMs": 64,
+        "minSpeechDurationMs": 32,
+        "speechPadMs": 64,
+        "targetSegmentDurationMs": 1000,
+        "maxSegmentDurationMs": 2000
+      },
+      "segments": [{ "startSample": 0, "endSample": 3072, "splitReason": "silence" }]
+    },
+    {
+      "name": "adaptive-split-no-gap",
+      "probabilities": [0.9, 0.9, 0.9, 0.9, 0.9],
+      "config": {
+        "minSilenceDurationMs": 800,
+        "minSpeechDurationMs": 32,
+        "speechPadMs": 0,
+        "targetSegmentDurationMs": 64,
+        "maxSegmentDurationMs": 96
+      },
+      "flush": true,
+      "segments": [
+        { "startSample": 0, "endSample": 1536, "splitReason": "adaptiveSplit" },
+        { "startSample": 1536, "endSample": 2560, "splitReason": "endOfInput" }
+      ]
+    },
+    {
+      "name": "non-aligned-hard-limit",
+      "probabilities": [0.9, 0.0],
+      "config": {
+        "minSilenceDurationMs": 800,
+        "minSpeechDurationMs": 1,
+        "speechPadMs": 0,
+        "targetSegmentDurationMs": 45,
+        "maxSegmentDurationMs": 45
+      },
+      "segments": [{ "startSample": 0, "endSample": 720, "splitReason": "adaptiveSplit" }]
+    }
+  ]
+}

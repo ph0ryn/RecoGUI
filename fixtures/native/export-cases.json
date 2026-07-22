@@ -1,0 +1,22 @@
+{
+  "session": {
+    "sessionId": "session-file",
+    "title": "Fixture file",
+    "sampleRate": 16000,
+    "segments": [
+      { "segmentIndex": 0, "startSample": 0, "endSample": 16000, "text": "hello" },
+      { "segmentIndex": 1, "startSample": 16000, "endSample": 32000, "text": "world" }
+    ]
+  },
+  "expected": {
+    "txt": "hello\nworld",
+    "timestampedTxt": "[00:00:00.000] hello\n[00:00:01.000] world",
+    "markdown": "# Fixture file\n[00:00:00.000] hello  \n[00:00:01.000] world",
+    "srt": "1\n00:00:00,000 --> 00:00:01,000\nhello\n\n2\n00:00:01,000 --> 00:00:02,000\nworld\n",
+    "vtt": "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nhello\n\n00:00:01.000 --> 00:00:02.000\nworld\n"
+  },
+  "multiSessionZip": {
+    "format": "markdown",
+    "entries": ["Fixture-file-session-file.md", "Second-session-second.md", "manifest.json"]
+  }
+}

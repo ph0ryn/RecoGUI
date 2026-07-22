@@ -1,0 +1,26 @@
+{
+  "output": { "sampleRate": 16000, "channels": 1, "frameSamples": 512, "sampleType": "f32" },
+  "supportedExtensions": ["aac", "aif", "aiff", "caf", "flac", "m4a", "mp3", "ogg", "wav"],
+  "unsupportedExtensions": ["au", "opus"],
+  "fingerprint": {
+    "utf8Contents": "deterministic audio fixture",
+    "value": "sha256:943bdde4fd37b6c42d1d7c431ffdfddab4ae76f83993658b600c4fccaf537897"
+  },
+  "cases": [
+    {
+      "name": "mono-passthrough",
+      "input": { "sampleRate": 16000, "channels": 1, "samples": [0.25, -0.5, 1.0, -1.0] },
+      "expected": [0.25, -0.5, 1.0, -1.0]
+    },
+    {
+      "name": "stereo-average",
+      "input": { "sampleRate": 16000, "channels": 2, "samples": [1.0, -1.0, 0.5, 0.25] },
+      "expected": [0.0, 0.375]
+    },
+    {
+      "name": "partial-eof",
+      "input": { "sampleRate": 16000, "channels": 1, "samples": [0.1, 0.2, 0.3] },
+      "expectedFrameLengths": [3]
+    }
+  ]
+}
