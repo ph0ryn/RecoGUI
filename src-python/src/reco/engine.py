@@ -148,6 +148,7 @@ class RecoEngine:
     self._active_control: SessionControl | None = None
     self._active_thread: Thread | None = None
     self._lock = Lock()
+    self._capture_transition_lock = Lock()
     self._shutting_down = False
     self._queue_auto_advance = False
     self._queue_language: str | None = None
@@ -469,8 +470,9 @@ class RecoEngine:
       return {"sessionId": session_id, **self._state_receipt(paused_receipt)}
     assert control is not None
     self._stop_queue_for_active_session()
-    receipt = self.repository.set_state(session_id, SessionState.STOPPING)
-    control.request_stop(reason)
+    with self._capture_transition_gate():
+      receipt = self.repository.set_state(session_id, SessionState.STOPPING)
+      control.request_stop(reason)
     self._request_capture_stop(session_id, reason)
     self._emit("session.stateChanged", session_id, {**self._state_receipt(receipt), "reason": reason})
     return {"sessionId": session_id, **self._state_receipt(receipt)}
@@ -480,8 +482,9 @@ class RecoEngine:
 
     control = self._require_active(session_id)
     self._stop_queue_for_active_session()
-    receipt = self.repository.set_state(session_id, SessionState.STOPPING)
-    control.request_cancel()
+    with self._capture_transition_gate():
+      receipt = self.repository.set_state(session_id, SessionState.STOPPING)
+      control.request_cancel()
     self._request_capture_stop(session_id, "userCancel")
     self._emit("session.stateChanged", session_id, {**self._state_receipt(receipt), "cancelled": True})
     return {"sessionId": session_id, **self._state_receipt(receipt)}
@@ -498,8 +501,9 @@ class RecoEngine:
         self._queue_auto_advance = False
     if queue_origin:
       self._publish_queue_changed()
-    receipt = self.repository.set_state(session_id, SessionState.PAUSING)
-    control.request_stop("userPause")
+    with self._capture_transition_gate():
+      receipt = self.repository.set_state(session_id, SessionState.PAUSING)
+      control.request_stop("userPause")
     self._request_capture_stop(session_id, "userPause")
     self._emit("session.stateChanged", session_id, self._state_receipt(receipt))
     return {"sessionId": session_id, **self._state_receipt(receipt)}
@@ -592,9 +596,10 @@ class RecoEngine:
       control = self._active_control
       thread = self._active_thread
     if session_id is not None and control is not None:
-      with _ignore_repository_error():
-        self.repository.set_state(session_id, SessionState.STOPPING)
-      control.request_stop("appQuit")
+      with self._capture_transition_gate():
+        with _ignore_repository_error():
+          self.repository.set_state(session_id, SessionState.STOPPING)
+        control.request_stop("appQuit")
       self._request_capture_stop(session_id, "appQuit")
     if thread is not None:
       thread.join(timeout)
@@ -802,13 +807,6 @@ class RecoEngine:
           },
         )
         audio_input.await_start()
-        if control.stop_requested():
-          reason = "userCancel" if control.cancel_requested() else control.stop_reason
-          self._request_capture_stop(session_id, reason)
-          audio_input.drain_and_release()
-          live_audio_input = None
-          self._finish_before_running(session_id, control, initial_sample)
-          return
       else:
         expected_identity = getattr(fingerprint, "identity", None)
         total_audio_ms = audio_file_duration_ms(source_path)
@@ -817,9 +815,26 @@ class RecoEngine:
           expected_identity=expected_identity,
           start_sample=initial_sample,
         )
-      running_receipt = self.repository.set_state(session_id, SessionState.RUNNING)
-      entered_running = True
-      self._emit("session.stateChanged", session_id, self._state_receipt(running_receipt))
+      with self._capture_transition_gate():
+        stopped_before_running = control.stop_requested()
+        running_receipt = None if stopped_before_running else self.repository.start_running(session_id)
+        if running_receipt is not None:
+          entered_running = True
+          self._emit("session.stateChanged", session_id, self._state_receipt(running_receipt))
+      if stopped_before_running:
+        if live_audio_input is not None:
+          reason = "userCancel" if control.cancel_requested() else control.stop_reason
+          self._request_capture_stop(session_id, reason)
+          live_audio_input.drain_and_release()
+          live_audio_input = None
+        self._finish_before_running(session_id, control, initial_sample)
+        return
+      if running_receipt is None:
+        raise EngineCommandError(
+          "session_state_conflict",
+          "The session left preparing before processing could enter running",
+          recoverable=False,
+        )
       document = run_transcription(
         audio_input,
         SileroVadEngine(model=OnnxSileroProbabilityModel(self.vad_model)),
@@ -964,6 +979,11 @@ class RecoEngine:
       session_id,
       {"sessionId": session_id, "reason": reason},
     )
+
+  def _capture_transition_gate(self) -> Lock:
+    if not hasattr(self, "_capture_transition_lock"):
+      self._capture_transition_lock = Lock()
+    return self._capture_transition_lock
 
   def _persist_segment(self, session_id: str, segment: TranscriptSegment) -> None:
     receipt = self.repository.append_segment(session_id, segment)

@@ -485,6 +485,23 @@ def test_failed_live_session_is_not_resumable(tmp_path: Path) -> None:
     repository.get_resume_context(session_id)
 
 
+def test_start_running_is_a_preparing_only_compare_and_swap(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(new_session())
+
+  running = repository.start_running(session_id)
+  assert running is not None
+  assert running.state is SessionState.RUNNING
+
+  repository.set_state(session_id, SessionState.PAUSING)
+  before_retry = repository.get_session(session_id)
+  assert repository.start_running(session_id) is None
+  after_retry = repository.get_session(session_id)
+
+  assert after_retry["state"] == "pausing"
+  assert after_retry["row_version"] == before_retry["row_version"]
+
+
 def test_failed_session_checkpoint_never_moves_backwards(tmp_path: Path) -> None:
   repository = RecordingRepository(tmp_path / "reco.sqlite3")
   session_id = repository.create_session(new_session())

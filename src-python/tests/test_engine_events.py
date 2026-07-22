@@ -15,7 +15,14 @@ from reco.model_manager import ModelReference, ModelState
 from reco.models import SplitReason, TranscriptionDiagnostics, TranscriptSegment, VadDiagnostics
 from reco.pipeline import TranscriptionProgress
 from reco.recording import fingerprint_file_snapshot
-from reco.repository import NewQueueItem, NewSession, RecordingRepository, RepositoryError, SessionState
+from reco.repository import (
+  NewQueueItem,
+  NewSession,
+  RecordingRepository,
+  RepositoryError,
+  SessionMutationReceipt,
+  SessionState,
+)
 
 
 class FakeHostPcmInput:
@@ -1105,6 +1112,102 @@ def test_stop_arriving_during_capture_start_is_resent_after_start_and_drained(
   assert trace.index("started") < post_start_stop < trace.index("drained")
   assert engine.repository.get_session(session_id)["state"] == "paused"
   assert session_id in engine._capture_generations
+
+
+@pytest.mark.parametrize("source_kind", ["microphone", "file"])
+def test_pause_cannot_overtake_the_preparing_to_running_transition(
+  source_kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  reference = ModelReference("owner/model", "revision")
+  engine = RecoEngine(tmp_path / "running-race.sqlite3", tmp_path / "models")
+  source_path = tmp_path / "audio.wav" if source_kind == "file" else None
+  session_id = engine.repository.create_session(
+    NewSession(
+      source_kind,
+      "audio.wav" if source_path is not None else "Microphone",
+      reference.repo_id,
+      reference.revision,
+      "Japanese",
+      16_000,
+      "Recording",
+      source_path=str(source_path) if source_path is not None else None,
+    )
+  )
+  control = SessionControl()
+  cas_entered = Event()
+  release_cas = Event()
+  pause_completed = Event()
+  state_events: list[str] = []
+
+  class StartedInput:
+    def await_start(self) -> None:
+      return None
+
+    def drain_and_release(self) -> None:
+      return None
+
+  class StartedBroker:
+    def input(self, session: str, generation: int, start: int, source: str) -> HostPcmInput:
+      del session, generation, start, source
+      return cast(HostPcmInput, StartedInput())
+
+  class FakeRuntime:
+    model_path = tmp_path / "snapshot"
+
+    def close(self) -> None:
+      return None
+
+  original_start_running = engine.repository.start_running
+
+  def blocked_start_running(captured_session_id: str) -> SessionMutationReceipt | None:
+    cas_entered.set()
+    assert release_cas.wait(1)
+    return original_start_running(captured_session_id)
+
+  runtime = FakeRuntime()
+  engine.host_pcm_broker = cast(HostPcmBroker, StartedBroker())
+  engine.runtime = cast(ModelRuntime, runtime)
+  engine._runtime_reference = reference
+  engine._active_session_id = session_id
+  engine._active_control = control
+  engine._active_queue_origin = source_path is not None
+  engine._event_callback = lambda event, _session_id, payload: (
+    state_events.append(str(payload["state"])) if event == "session.stateChanged" else None
+  )
+  monkeypatch.setattr(engine.repository, "start_running", blocked_start_running)
+  monkeypatch.setattr(engine, "_acquire_runtime", lambda requested, language: (runtime, object(), object()))
+  monkeypatch.setattr(engine_module, "audio_file_duration_ms", lambda path: 1_000)
+  monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
+  monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
+
+  def drained_pipeline(*args: object, **options: object) -> SimpleNamespace:
+    del args, options
+    assert pause_completed.wait(1)
+    return SimpleNamespace(timing=SimpleNamespace(media_duration_ms=0))
+
+  monkeypatch.setattr(engine_module, "run_transcription", drained_pipeline)
+  session_thread = Thread(
+    target=engine._run_session,
+    args=(session_id, source_path, None, None, control),
+    kwargs={"model_reference": reference, "source_kind": source_kind},
+  )
+  session_thread.start()
+  assert cas_entered.wait(1)
+
+  def pause() -> None:
+    engine.pause_session(session_id)
+    pause_completed.set()
+
+  pause_thread = Thread(target=pause)
+  pause_thread.start()
+  release_cas.set()
+  pause_thread.join(1)
+  session_thread.join(1)
+
+  assert not pause_thread.is_alive()
+  assert not session_thread.is_alive()
+  assert state_events == ["running", "pausing", "paused"]
+  assert engine.repository.get_session(session_id)["state"] == "paused"
 
 
 def test_new_session_model_load_failure_is_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

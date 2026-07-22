@@ -480,6 +480,41 @@ class RecordingRepository:
         ended_at=str(row["ended_at"]) if row["ended_at"] is not None else None,
       )
 
+  def start_running(self, session_id: str) -> SessionMutationReceipt | None:
+    """Atomically enter running only while the session is still preparing."""
+
+    now = _now()
+    with self._connect() as connection:
+      row = connection.execute(
+        """
+        UPDATE app_sessions
+        SET state = 'running', end_reason = NULL, error_code = NULL,
+            error_message = NULL, ended_at = NULL, updated_at = ?,
+            row_version = row_version + 1
+        WHERE session_id = ? AND state = 'preparing'
+        RETURNING state, row_version, total_segments, recognized_segments,
+          characters, media_duration_ms, ended_at
+        """,
+        (now, session_id),
+      ).fetchone()
+      if row is None:
+        exists = connection.execute(
+          "SELECT 1 FROM app_sessions WHERE session_id = ?",
+          (session_id,),
+        ).fetchone()
+        if exists is None:
+          raise RepositoryError(f"Unknown session: {session_id}")
+        return None
+      return SessionMutationReceipt(
+        state=SessionState.RUNNING,
+        row_version=int(row["row_version"]),
+        total_segments=int(row["total_segments"]),
+        recognized_segments=int(row["recognized_segments"]),
+        characters=int(row["characters"]),
+        media_duration_ms=int(row["media_duration_ms"]),
+        ended_at=None,
+      )
+
   def pause_session(self, session_id: str, resume_sample: int) -> SessionMutationReceipt:
     """Persist a resumable checkpoint after input and queued ASR have drained."""
 
