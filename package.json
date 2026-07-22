@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tauri build --no-bundle",
     "build:python-worker": "uv run --directory src-python task bundle-worker",
-    "check:bindings": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --bin generate-bindings -- --check src/generated/bindings.ts",
+    "check:bindings": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --example generate-bindings -- --check src/generated/bindings.ts",
     "dev": "tauri dev",
     "fix": "pnpm --aggregate-output /^fix:/",
     "fix:python": "uv run --directory src-python task fix",
@@ -16,7 +16,7 @@
     "format:python": "uv run --directory src-python task format",
     "format:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all",
     "format:typescript": "oxfmt",
-    "generate:bindings": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --bin generate-bindings -- --write src/generated/bindings.ts",
+    "generate:bindings": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --example generate-bindings -- --write src/generated/bindings.ts",
     "preinstall": "npx only-allow pnpm",
     "postinstall": "git config core.hooksPath .githooks",
     "lint": "pnpm --aggregate-output /^lint:/",

@@ -59,7 +59,7 @@ pub fn check_typescript(path: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "generated bindings are stale; run `cargo run --bin generate-bindings -- --write {}`",
+            "generated bindings are stale; run `cargo run --example generate-bindings -- --write {}`",
             path.display()
         ))
     }
