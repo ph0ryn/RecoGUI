@@ -39,7 +39,8 @@
       "../src-python/LICENSE": "src-python/LICENSE",
       "../src-python/pyproject.toml": "src-python/pyproject.toml",
       "../src-python/dist/reco-asr-worker.pyz": "src-python/reco-asr-worker.pyz",
-      "resources/models/silero_vad.onnx": "models/silero_vad.onnx",
+      "vad/LICENSE": "vad/LICENSE",
+      "vad/silero_vad.onnx": "vad/silero_vad.onnx",
       "../src-python/uv.lock": "src-python/uv.lock"
     },
     "macOS": {

@@ -67,7 +67,9 @@ RecoGUI/
 │   └── dist/reco-asr-worker.pyz # code-only archive
 ├── src-tauri/
 │   ├── src/                     # domain, store, media, core, supervisor, commands
-│   └── resources/models/silero_vad.onnx
+│   └── vad/
+│       ├── LICENSE
+│       └── silero_vad.onnx
 ├── fixtures/rasr-v1/             # cross-language RASR v1 fixtures
 └── docs/
 ```

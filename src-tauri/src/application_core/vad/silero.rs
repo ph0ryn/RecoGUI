@@ -128,7 +128,7 @@ mod tests {
     use super::*;
 
     fn asset() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/models/silero_vad.onnx")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("vad/silero_vad.onnx")
     }
 
     #[test]

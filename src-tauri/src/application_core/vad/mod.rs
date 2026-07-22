@@ -76,8 +76,7 @@ mod contract_tests {
         assert_eq!(fixture.frame_samples, VAD_FRAME_SAMPLES);
         assert_eq!(fixture.context_samples, 64);
         assert_eq!(fixture.model_sha256, SILERO_VAD_SHA256);
-        let asset = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("resources/models/silero_vad.onnx");
+        let asset = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("vad/silero_vad.onnx");
         let mut model = SileroOnnx::load(&asset).unwrap();
         let probability = model.probability(&[0.0; VAD_FRAME_SAMPLES]).unwrap();
         assert!(

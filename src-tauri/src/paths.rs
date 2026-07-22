@@ -77,9 +77,8 @@ fn resolve_vad_asset(app: &AppHandle) -> Result<PathBuf, PathError> {
         .path()
         .resource_dir()
         .map_err(|_| PathError::VadAssetMissing)?
-        .join("models/silero_vad.onnx");
-    let development =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/models/silero_vad.onnx");
+        .join("vad/silero_vad.onnx");
+    let development = Path::new(env!("CARGO_MANIFEST_DIR")).join("vad/silero_vad.onnx");
     [resource, development]
         .into_iter()
         .find(|path| path.is_file())
