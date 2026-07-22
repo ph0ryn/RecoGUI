@@ -38,6 +38,7 @@ from reco.vad import OnnxSileroProbabilityModel, SileroVadEngine
 
 EngineEventCallback = Callable[[str, str | None, Mapping[str, object]], None]
 LOGGER = logging.getLogger(__name__)
+LIVE_SOURCE_KINDS = frozenset({"microphone", "systemAudio"})
 
 
 class EngineCommandError(RecoError):
@@ -735,7 +736,9 @@ class RecoEngine:
         with self._lock:
           self._queue_scheduler_active = False
 
-  def _finish_before_running(self, session_id: str, control: SessionControl, resume_sample: int) -> None:
+  def _finish_before_running(
+    self, session_id: str, control: SessionControl, resume_sample: int, *, is_live_input: bool
+  ) -> None:
     """Commit a stop requested before audio capture or generation begins."""
 
     if control.stop_reason == "userPause":
@@ -743,7 +746,8 @@ class RecoEngine:
       self._emit("session.stateChanged", session_id, self._state_receipt(paused_receipt))
       return
     reason = "userCancel" if control.cancel_requested() else control.stop_reason
-    stopped_receipt = self.repository.set_state(session_id, SessionState.STOPPED, end_reason=reason)
+    terminal_state = SessionState.COMPLETED if reason == "userStop" and is_live_input else SessionState.STOPPED
+    stopped_receipt = self.repository.set_state(session_id, terminal_state, end_reason=reason)
     self._emit(
       "session.completed",
       session_id,
@@ -775,11 +779,11 @@ class RecoEngine:
       if reference is None:
         raise EngineCommandError("model_unavailable", "The session has no transcription model revision")
       if control.stop_requested():
-        self._finish_before_running(session_id, control, initial_sample)
+        self._finish_before_running(session_id, control, initial_sample, is_live_input=source_path is None)
         return
       runtime, service, worker = self._acquire_runtime(reference, language)
       if control.stop_requested():
-        self._finish_before_running(session_id, control, initial_sample)
+        self._finish_before_running(session_id, control, initial_sample, is_live_input=source_path is None)
         return
       total_audio_ms = None
       if source_path is None:
@@ -827,7 +831,7 @@ class RecoEngine:
           self._request_capture_stop(session_id, reason)
           live_audio_input.drain_and_release()
           live_audio_input = None
-        self._finish_before_running(session_id, control, initial_sample)
+        self._finish_before_running(session_id, control, initial_sample, is_live_input=source_path is None)
         return
       if running_receipt is None:
         raise EngineCommandError(
@@ -862,7 +866,12 @@ class RecoEngine:
         )
         return
       elif control.stop_requested():
-        state, reason = SessionState.STOPPED, control.stop_reason
+        reason = control.stop_reason
+        state = (
+          SessionState.COMPLETED
+          if reason == "userStop" and (source_kind in LIVE_SOURCE_KINDS or source_path is None)
+          else SessionState.STOPPED
+        )
       else:
         state, reason = SessionState.COMPLETED, "naturalEnd"
       terminal_receipt = self.repository.set_state(session_id, state, end_reason=reason)

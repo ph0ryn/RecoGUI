@@ -331,7 +331,7 @@ def test_stop_finalizes_a_paused_session_without_restarting_it(tmp_path: Path) -
 
   result = engine.stop_session(session_id)
 
-  assert result["state"] == "stopped"
+  assert result["state"] == "completed"
   assert repository.get_session(session_id)["end_reason"] == "userStop"
   assert [event for event, _, _ in events] == ["session.completed", "history.changed"]
 
@@ -353,7 +353,7 @@ def test_stop_finalizes_pause_before_worker_cleanup_without_changing_control(tmp
 
   result = engine.stop_session(session_id)
 
-  assert result["state"] == "stopped"
+  assert result["state"] == "completed"
   assert control.stop_reason == "userPause"
   assert session_id not in engine._paused_queue_sessions
   assert [event for event, _, _ in events] == ["session.completed", "history.changed"]
@@ -938,7 +938,7 @@ def test_runtime_release_failure_does_not_keep_the_active_slot(tmp_path: Path, m
 
 @pytest.mark.parametrize(
   ("outcome", "expected_state"),
-  [("stop", "stopped"), ("cancel", "stopped"), ("error", "failed")],
+  [("stop", "completed"), ("cancel", "stopped"), ("error", "failed")],
 )
 def test_terminal_outcomes_release_runtime_once(
   outcome: str, expected_state: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

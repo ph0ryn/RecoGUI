@@ -190,6 +190,39 @@ def test_stop_paused_session_commits_a_terminal_receipt(tmp_path: Path) -> None:
     repository.get_resume_context(session_id)
 
 
+def test_stop_paused_live_session_commits_completion(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(replace(new_session(), source_kind="systemAudio"))
+  repository.set_state(session_id, SessionState.PAUSING)
+  repository.pause_session(session_id, 16_000)
+
+  receipt = repository.stop_paused_session(session_id)
+  session = repository.get_session(session_id)
+
+  assert receipt is not None
+  assert receipt.state is SessionState.COMPLETED
+  assert session["state"] == "completed"
+  assert session["end_reason"] == "userStop"
+
+
+def test_initialization_normalizes_user_stopped_live_sessions(tmp_path: Path) -> None:
+  database_path = tmp_path / "reco.sqlite3"
+  repository = RecordingRepository(database_path)
+  session_id = repository.create_session(replace(new_session(), source_kind="microphone"))
+  file_session_id = repository.create_session(new_session())
+  repository.set_state(session_id, SessionState.STOPPED, end_reason="userStop")
+  repository.set_state(file_session_id, SessionState.STOPPED, end_reason="userStop")
+  previous_version = int(repository.get_session(session_id)["row_version"])
+
+  reopened_repository = RecordingRepository(database_path)
+  normalized = reopened_repository.get_session(session_id)
+
+  assert normalized["state"] == "completed"
+  assert normalized["end_reason"] == "userStop"
+  assert normalized["row_version"] == previous_version + 1
+  assert reopened_repository.get_session(file_session_id)["state"] == "stopped"
+
+
 def test_stop_paused_session_rejects_a_running_session(tmp_path: Path) -> None:
   repository = RecordingRepository(tmp_path / "reco.sqlite3")
   session_id = repository.create_session(new_session())

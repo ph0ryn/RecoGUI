@@ -70,7 +70,7 @@ pnpm dev
 - queue実行中はライブ入力の開始とpaused sessionのResumeが拒否される。
 - queue itemが履歴、検索、Export、履歴削除へ混入しない。
 - Pauseが処理待ちを完了して`paused`になり、Resumeが同じsessionへ追記する。
-- pausedのライブセッションをResumeせずStopでき、`stopped`として履歴に残る。
+- pausedのライブセッションをResumeせずStopでき、`completed`として履歴に残る。
 - 音声ファイルの失敗時は最後に保存したsegment終端がcheckpointになり、Retryが同じsessionへ
   重複なく追記する。
 - 明示的にPauseしたマイクとデスクトップ音声は同じsessionへResumeでき、pause中の実時間が

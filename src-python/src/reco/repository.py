@@ -553,7 +553,11 @@ class RecordingRepository:
       row = connection.execute(
         """
         UPDATE app_sessions
-        SET state = 'stopped', end_reason = 'userStop', error_code = NULL,
+        SET state = CASE
+              WHEN source_kind IN ('microphone', 'systemAudio') THEN 'completed'
+              ELSE 'stopped'
+            END,
+            end_reason = 'userStop', error_code = NULL,
             error_message = NULL, ended_at = ?, updated_at = ?,
             row_version = row_version + 1
         WHERE session_id = ? AND state = 'paused'
@@ -566,7 +570,7 @@ class RecordingRepository:
         return None
       self._update_search(connection, session_id)
       return SessionMutationReceipt(
-        state=SessionState.STOPPED,
+        state=SessionState(str(row["state"])),
         row_version=int(row["row_version"]),
         total_segments=int(row["total_segments"]),
         recognized_segments=int(row["recognized_segments"]),
@@ -1002,6 +1006,15 @@ class RecordingRepository:
         connection.execute(
           "INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('schema_version', ?)",
           (str(APPLICATION_SCHEMA_VERSION),),
+        )
+        connection.execute(
+          """
+          UPDATE app_sessions
+          SET state = 'completed', updated_at = ?, row_version = row_version + 1
+          WHERE state = 'stopped' AND end_reason = 'userStop'
+            AND source_kind IN ('microphone', 'systemAudio')
+          """,
+          (_now(),),
         )
         connection.execute("COMMIT")
       except BaseException:

@@ -134,7 +134,7 @@ export const mockSnapshot: EngineSnapshot = {
       ],
       segmentsLoaded: true,
       startedAt: new Date(now - 87_109_000).toISOString(),
-      status: "stopped",
+      status: "completed",
       title: "ユーザーインタビュー",
     },
     {
