@@ -5,4 +5,6 @@
 
 pub mod domain;
 pub mod error;
+pub mod media;
 pub mod store;
+pub mod vad;
