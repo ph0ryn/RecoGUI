@@ -24,12 +24,20 @@ tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros", "process", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "sync", "time"] }
+command-fds = { version = "0.3.3", features = ["tokio"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 rfd = "0.15"
+cpal = "0.18.1"
+rtrb = "0.3.4"
+rubato = "4.0.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWorkspace"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["block2", "NSNotification", "NSOperation", "NSObject", "NSString"] }
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["AVCaptureDevice", "AVMediaFormat", "block2"] }
+objc2-core-audio = { version = "0.3.2", default-features = false, features = ["AudioHardware", "block2", "dispatch2", "objc2", "objc2-core-audio-types", "objc2-foundation", "std"] }
+objc2-core-audio-types = "0.3.2"
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFDictionary"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["block2", "NSArray", "NSDictionary", "NSNotification", "NSOperation", "NSUUID"] }

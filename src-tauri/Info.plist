@@ -4,5 +4,7 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>音声を文字起こしするためにマイクを使用します。</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>デスクトップ音声を文字起こしするためにシステムの音声を使用します。</string>
 </dict>
 </plist>

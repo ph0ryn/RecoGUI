@@ -2,7 +2,10 @@ use std::{
     collections::{HashMap, VecDeque},
     ffi::OsStr,
     future::Future,
-    os::unix::fs::PermissionsExt,
+    os::{
+        fd::OwnedFd,
+        unix::{fs::PermissionsExt, net::UnixStream as StdUnixStream},
+    },
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
@@ -13,11 +16,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use command_fds::{CommandFdExt, FdMapping};
+use serde::Deserialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::UnixStream,
     process::{Child, ChildStdin, Command},
     sync::{Mutex, RwLock, oneshot},
     time::timeout,
@@ -25,6 +31,9 @@ use tokio::{
 use uuid::Uuid;
 
 use crate::{
+    audio_capture::{
+        AudioCaptureError, AudioCaptureManager, CaptureEvent, CaptureSource, wire::AudioWireWriter,
+    },
     paths::AppPaths,
     protocol::{
         EngineConnectionState, EngineStateSnapshot, HostEngineEvent, IncomingEnvelope,
@@ -34,7 +43,8 @@ use crate::{
 
 const EVENT_CHANNEL: &str = "engine://event";
 const STATE_CHANNEL: &str = "engine://state";
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(40);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(10);
 const RESTART_WINDOW: Duration = Duration::from_secs(60);
 const MAX_RESTARTS: usize = 3;
@@ -62,6 +72,7 @@ impl From<std::io::Error> for SupervisorError {
 }
 
 struct Runtime {
+    audio_transport: Arc<Mutex<UnixStream>>,
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
     pid: u32,
@@ -79,6 +90,7 @@ struct SupervisorInner {
     last_activity: Mutex<Option<Instant>>,
     restart_attempts: Mutex<VecDeque<Instant>>,
     intentionally_stopping: RwLock<bool>,
+    audio_capture: Arc<AudioCaptureManager>,
 }
 
 #[derive(Clone)]
@@ -101,12 +113,17 @@ impl EngineSupervisor {
                 last_activity: Mutex::new(None),
                 restart_attempts: Mutex::new(VecDeque::new()),
                 intentionally_stopping: RwLock::new(false),
+                audio_capture: Arc::new(AudioCaptureManager::default()),
             }),
         }
     }
 
     pub fn paths(&self) -> &AppPaths {
         &self.inner.paths
+    }
+
+    pub fn audio_capture(&self) -> Arc<AudioCaptureManager> {
+        self.inner.audio_capture.clone()
     }
 
     pub async fn is_running(&self) -> bool {
@@ -167,7 +184,11 @@ impl EngineSupervisor {
                 self.set_state(EngineConnectionState::Offline).await;
                 return Err(error);
             }
-            let mut child = match engine_command(&self.inner.paths).spawn() {
+            let (host_audio, child_audio) = StdUnixStream::pair()?;
+            host_audio.set_nonblocking(true)?;
+            let host_audio = UnixStream::from_std(host_audio)?;
+            let mut command = engine_command(&self.inner.paths, child_audio.into())?;
+            let mut child = match command.spawn() {
                 Ok(child) => child,
                 Err(error) => {
                     self.set_state(EngineConnectionState::Offline).await;
@@ -191,6 +212,7 @@ impl EngineSupervisor {
                 .last_incoming_sequence
                 .store(0, Ordering::Relaxed);
             *self.inner.runtime.lock().await = Some(Runtime {
+                audio_transport: Arc::new(Mutex::new(host_audio)),
                 child: child.clone(),
                 stdin: Arc::new(Mutex::new(stdin)),
                 pid,
@@ -284,14 +306,21 @@ impl EngineSupervisor {
             self.request("queue.pause", None, serde_json::json!({})),
         )
         .await;
-        let _ = timeout(
-            Duration::from_secs(5),
+        let shutdown_result = timeout(
+            SHUTDOWN_TIMEOUT,
             self.request("engine.shutdown", None, serde_json::json!({})),
         )
         .await;
+        if shutdown_result.is_ok() {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while self.inner.audio_capture.is_active() && Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        }
         if let Some(runtime) = self.inner.runtime.lock().await.as_ref() {
             let _ = runtime.child.lock().await.kill().await;
         }
+        self.stop_audio_capture().await;
     }
 
     pub async fn force_terminate(&self) {
@@ -299,6 +328,7 @@ impl EngineSupervisor {
         if let Some(runtime) = self.inner.runtime.lock().await.as_ref() {
             let _ = runtime.child.lock().await.kill().await;
         }
+        self.stop_audio_capture().await;
     }
 
     async fn read_stdout(&self, stdout: tokio::process::ChildStdout) {
@@ -399,6 +429,15 @@ impl EngineSupervisor {
                 let _ = sender.send(result);
             }
             IncomingType::Event => {
+                let event_name = envelope.event.as_deref().unwrap_or("protocol.unknownEvent");
+                if event_name == "audio.captureRequested" {
+                    self.handle_capture_requested(envelope).await;
+                    return;
+                }
+                if event_name == "audio.captureStopRequested" {
+                    self.inner.audio_capture.request_stop();
+                    return;
+                }
                 let event = HostEngineEvent {
                     event: envelope
                         .event
@@ -441,6 +480,7 @@ impl EngineSupervisor {
     }
 
     async fn handle_exit(&self, reason: String) {
+        self.stop_audio_capture().await;
         *self.inner.runtime.lock().await = None;
         let pending = std::mem::take(&mut *self.inner.pending.lock().await);
         for (_, sender) in pending {
@@ -513,6 +553,251 @@ impl EngineSupervisor {
             },
         );
     }
+
+    async fn handle_capture_requested(&self, envelope: IncomingEnvelope) {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct CaptureRequest {
+            session_id: String,
+            source_kind: String,
+            device_id: Option<String>,
+            start_sample: u64,
+            generation: u32,
+        }
+
+        let request: CaptureRequest = match serde_json::from_value(envelope.payload.clone()) {
+            Ok(request) => request,
+            Err(error) => {
+                self.reject_capture_request(
+                    &envelope,
+                    format!("invalid audio capture request: {error}"),
+                )
+                .await;
+                return;
+            }
+        };
+        if envelope.session_id.as_deref() != Some(request.session_id.as_str()) {
+            self.reject_capture_request(
+                &envelope,
+                "audio capture sessionId does not match its envelope".into(),
+            )
+            .await;
+            return;
+        }
+        let session_id = match Uuid::parse_str(&request.session_id) {
+            Ok(session_id) => session_id,
+            Err(_) => {
+                self.reject_capture_request(
+                    &envelope,
+                    "audio capture sessionId is not a UUID".into(),
+                )
+                .await;
+                return;
+            }
+        };
+        let source = match request.source_kind.as_str() {
+            "microphone" => CaptureSource::Microphone {
+                device_id: request.device_id,
+            },
+            "systemAudio" if request.device_id.is_none() => CaptureSource::SystemAudio,
+            _ => {
+                self.reject_capture_request(&envelope, "audio capture source is invalid".into())
+                    .await;
+                return;
+            }
+        };
+        let Some(transport) = self
+            .inner
+            .runtime
+            .lock()
+            .await
+            .as_ref()
+            .map(|runtime| runtime.audio_transport.clone())
+        else {
+            self.emit_protocol_failure("audio capture transport is unavailable")
+                .await;
+            self.terminate_engine_after_protocol_failure().await;
+            return;
+        };
+        let manager = self.inner.audio_capture.clone();
+        let token = match manager.reserve_start() {
+            Ok(token) => token,
+            Err(error) => {
+                tauri::async_runtime::spawn(write_startup_error(
+                    transport,
+                    session_id,
+                    request.generation,
+                    request.start_sample,
+                    error,
+                ));
+                return;
+            }
+        };
+        tauri::async_runtime::spawn(async move {
+            let start_manager = manager.clone();
+            let start_sample = request.start_sample;
+            let receiver = match tokio::task::spawn_blocking(move || {
+                start_manager.start_reserved(token, source, start_sample)
+            })
+            .await
+            {
+                Ok(Ok(receiver)) => receiver,
+                Ok(Err(error)) => {
+                    write_startup_error(
+                        transport.clone(),
+                        session_id,
+                        request.generation,
+                        request.start_sample,
+                        error,
+                    )
+                    .await;
+                    manager.request_stop();
+                    let _ = tokio::task::spawn_blocking(move || manager.wait_stopped()).await;
+                    return;
+                }
+                Err(error) => {
+                    write_startup_error(
+                        transport.clone(),
+                        session_id,
+                        request.generation,
+                        request.start_sample,
+                        AudioCaptureError::Device(error.to_string()),
+                    )
+                    .await;
+                    manager.request_stop();
+                    let _ = tokio::task::spawn_blocking(move || manager.wait_stopped()).await;
+                    return;
+                }
+            };
+            pump_audio(
+                receiver,
+                transport,
+                manager,
+                session_id,
+                request.generation,
+                request.start_sample,
+            )
+            .await;
+        });
+    }
+
+    async fn reject_capture_request(&self, envelope: &IncomingEnvelope, message: String) {
+        self.emit_protocol_failure(&message).await;
+        let Some((session_id, generation, start_sample)) = capture_wire_metadata(envelope) else {
+            self.terminate_engine_after_protocol_failure().await;
+            return;
+        };
+        let transport = self
+            .inner
+            .runtime
+            .lock()
+            .await
+            .as_ref()
+            .map(|runtime| runtime.audio_transport.clone());
+        let Some(transport) = transport else {
+            self.terminate_engine_after_protocol_failure().await;
+            return;
+        };
+        tauri::async_runtime::spawn(write_startup_error(
+            transport,
+            session_id,
+            generation,
+            start_sample,
+            AudioCaptureError::Protocol(message),
+        ));
+    }
+
+    async fn terminate_engine_after_protocol_failure(&self) {
+        self.inner.audio_capture.request_stop();
+        let child = self
+            .inner
+            .runtime
+            .lock()
+            .await
+            .as_ref()
+            .map(|runtime| runtime.child.clone());
+        if let Some(child) = child {
+            let _ = child.lock().await.start_kill();
+        }
+    }
+
+    async fn stop_audio_capture(&self) {
+        self.inner.audio_capture.request_stop();
+        let manager = self.inner.audio_capture.clone();
+        let _ = tokio::task::spawn_blocking(move || manager.wait_stopped()).await;
+    }
+}
+
+fn capture_wire_metadata(envelope: &IncomingEnvelope) -> Option<(Uuid, u32, u64)> {
+    let session_id = envelope
+        .payload
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .or(envelope.session_id.as_deref())
+        .and_then(|value| Uuid::parse_str(value).ok())?;
+    let generation = u32::try_from(envelope.payload.get("generation")?.as_u64()?).ok()?;
+    let start_sample = envelope.payload.get("startSample")?.as_u64()?;
+    Some((session_id, generation, start_sample))
+}
+
+async fn write_startup_error(
+    transport: Arc<Mutex<UnixStream>>,
+    session_id: Uuid,
+    generation: u32,
+    start_sample: u64,
+    error: AudioCaptureError,
+) {
+    let mut transport = transport.lock().await;
+    let mut writer = AudioWireWriter::new(&mut *transport, session_id, generation, start_sample);
+    let _ = writer.write_error(&error).await;
+}
+
+async fn pump_audio(
+    mut receiver: tokio::sync::mpsc::Receiver<CaptureEvent>,
+    transport: Arc<Mutex<UnixStream>>,
+    manager: Arc<AudioCaptureManager>,
+    session_id: Uuid,
+    generation: u32,
+    start_sample: u64,
+) {
+    let mut transport = transport.lock().await;
+    {
+        let mut writer =
+            AudioWireWriter::new(&mut *transport, session_id, generation, start_sample);
+        let mut output_failed = false;
+        let mut terminal_seen = false;
+        while let Some(event) = receiver.recv().await {
+            let terminal = matches!(event, CaptureEvent::Error(_) | CaptureEvent::Ended);
+            let result = if output_failed {
+                Ok(())
+            } else {
+                match event {
+                    CaptureEvent::Started { .. } => writer.write_start().await,
+                    CaptureEvent::Frame(ref frame) => writer.write_frame(frame).await,
+                    CaptureEvent::Error(ref error) => writer.write_error(error).await,
+                    CaptureEvent::Ended => writer.write_end().await,
+                }
+            };
+            if result.is_err() {
+                output_failed = true;
+                manager.request_stop();
+            }
+            if terminal {
+                terminal_seen = true;
+                break;
+            }
+        }
+        if !terminal_seen && !output_failed {
+            let _ = writer
+                .write_error(&AudioCaptureError::Device(
+                    "native audio stream closed without a terminal record".into(),
+                ))
+                .await;
+        }
+    }
+    drop(transport);
+    manager.request_stop();
+    let _ = tokio::task::spawn_blocking(move || manager.wait_stopped()).await;
 }
 
 async fn sync_engine_environment(
@@ -545,7 +830,7 @@ fn sync_command(paths: &AppPaths, uv_executable: &Path) -> Command {
     command
 }
 
-fn engine_command(paths: &AppPaths) -> Command {
+fn engine_command(paths: &AppPaths, audio_fd: OwnedFd) -> Result<Command, SupervisorError> {
     let mut command = Command::new(paths.engine_environment.join("bin/python"));
     command
         .arg(&paths.engine_archive)
@@ -558,11 +843,19 @@ fn engine_command(paths: &AppPaths) -> Command {
         .arg(&paths.engine_vad_model)
         .arg("--logs-directory")
         .arg(&paths.logs)
+        .arg("--audio-fd")
+        .arg("3")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     command
+        .fd_mappings(vec![FdMapping {
+            parent_fd: audio_fd,
+            child_fd: 3,
+        }])
+        .map_err(|error| SupervisorError::Unavailable(error.to_string()))?;
+    Ok(command)
 }
 
 fn resolve_uv_executable() -> Option<PathBuf> {
@@ -682,7 +975,8 @@ mod tests {
     fn engine_command_runs_the_archive_with_the_managed_python() {
         let paths = app_paths();
 
-        let command = engine_command(&paths);
+        let (_host_audio, child_audio) = StdUnixStream::pair().unwrap();
+        let command = engine_command(&paths, child_audio.into()).unwrap();
         let command = command.as_std();
         let arguments = command.get_args().collect::<Vec<_>>();
 
@@ -694,6 +988,8 @@ mod tests {
         assert!(arguments.contains(&OsStr::new("serve")));
         assert!(arguments.contains(&OsStr::new("--vad-model")));
         assert!(arguments.contains(&paths.engine_vad_model.as_os_str()));
+        assert!(arguments.contains(&OsStr::new("--audio-fd")));
+        assert!(arguments.contains(&OsStr::new("3")));
     }
 
     #[test]
@@ -735,5 +1031,52 @@ mod tests {
         );
 
         assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn capture_wire_metadata_survives_other_invalid_fields() {
+        let session_id = Uuid::new_v4();
+        let envelope = IncomingEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            message_type: IncomingType::Event,
+            request_id: None,
+            session_id: Some(session_id.to_string()),
+            sequence: 1,
+            event: Some("audio.captureRequested".into()),
+            ok: None,
+            payload: serde_json::json!({
+                "sessionId": session_id,
+                "generation": 3,
+                "startSample": 1024,
+                "sourceKind": 7
+            }),
+            error: None,
+        };
+
+        assert_eq!(
+            capture_wire_metadata(&envelope),
+            Some((session_id, 3, 1024))
+        );
+    }
+
+    #[test]
+    fn capture_wire_metadata_rejects_values_that_cannot_be_encoded() {
+        let session_id = Uuid::new_v4();
+        let envelope = IncomingEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            message_type: IncomingType::Event,
+            request_id: None,
+            session_id: Some(session_id.to_string()),
+            sequence: 1,
+            event: Some("audio.captureRequested".into()),
+            ok: None,
+            payload: serde_json::json!({
+                "generation": u64::from(u32::MAX) + 1,
+                "startSample": 0
+            }),
+            error: None,
+        };
+
+        assert_eq!(capture_wire_metadata(&envelope), None);
     }
 }

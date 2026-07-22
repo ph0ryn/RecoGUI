@@ -1,3 +1,4 @@
+mod audio_capture;
 mod close_handshake;
 mod commands;
 mod file_tokens;

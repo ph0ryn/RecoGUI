@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use tauri::State;
 
 use crate::{
+    audio_capture::{AudioCaptureError, AudioInputDevice, CaptureSource, list_input_devices},
     file_tokens::{FileTokenStore, SelectedFile},
     paths::PublicAppPaths,
     protocol::EngineStateSnapshot,
@@ -19,7 +20,6 @@ const ALLOWED_ENGINE_COMMANDS: &[&str] = &[
     "model.getState",
     "model.list",
     "model.select",
-    "audio.listInputs",
     "queue.getState",
     "queue.enqueueFiles",
     "queue.reorder",
@@ -61,6 +61,7 @@ pub struct SessionStartCommand {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum SessionSource {
     Microphone { device_id: Option<String> },
+    SystemAudio,
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,6 +157,12 @@ pub struct HostInfo {
     pub paths: PublicAppPaths,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioInputList {
+    pub inputs: Vec<AudioInputDevice>,
+}
+
 fn validate_page_limit(limit: Option<u16>, maximum: u16) -> CommandResult<()> {
     if limit.is_some_and(|limit| limit == 0 || limit > maximum) {
         return Err(format!("limit must be between 1 and {maximum}"));
@@ -241,10 +248,14 @@ pub async fn engine_request(
         object.insert("destination".into(), json!(path));
     }
 
-    let session_id = object
-        .get("sessionId")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
+    let session_id = if command == "session.start" {
+        Some(prepare_live_session(&supervisor, object).await?)
+    } else {
+        object
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    };
     let result = request(&supervisor, &command, session_id, payload).await;
     if result.is_ok() {
         for token in source_tokens_to_remove {
@@ -292,7 +303,14 @@ macro_rules! empty_engine_command {
     };
 }
 
-empty_engine_command!(audio_list_inputs, "audio.listInputs");
+#[tauri::command]
+pub async fn audio_list_inputs() -> CommandResult<AudioInputList> {
+    let inputs = tauri::async_runtime::spawn_blocking(list_input_devices)
+        .await
+        .map_err(|error| format!("audio device task failed: {error}"))?
+        .map_err(|error| error.to_string())?;
+    Ok(AudioInputList { inputs })
+}
 
 #[tauri::command]
 pub async fn select_audio_file(
@@ -435,14 +453,63 @@ pub async fn session_start(
         SessionSource::Microphone { device_id } => {
             json!({ "type": "microphone", "deviceId": device_id })
         }
+        SessionSource::SystemAudio => json!({ "type": "systemAudio" }),
     };
-    request(
+    let mut payload = json!({
+        "language": input.language,
+        "title": input.title,
+        "source": source
+    });
+    let session_id = prepare_live_session(
         &supervisor,
-        "session.start",
-        None,
-        json!({ "language": input.language, "title": input.title, "source": source }),
+        payload
+            .as_object_mut()
+            .expect("session payload is an object"),
     )
-    .await
+    .await?;
+    request(&supervisor, "session.start", Some(session_id), payload).await
+}
+
+async fn prepare_live_session(
+    supervisor: &EngineSupervisor,
+    payload: &mut serde_json::Map<String, Value>,
+) -> CommandResult<String> {
+    let source_value = payload
+        .get("source")
+        .cloned()
+        .ok_or_else(|| "session start requires a source".to_owned())?;
+    let source: CaptureSource = serde_json::from_value(source_value)
+        .map_err(|error| format!("invalid live audio source: {error}"))?;
+    let manager = supervisor.audio_capture();
+    let preflight_source = source.clone();
+    let display_name =
+        tauri::async_runtime::spawn_blocking(move || -> Result<String, AudioCaptureError> {
+            manager.preflight(&preflight_source)?;
+            match &preflight_source {
+                CaptureSource::Microphone { device_id } => {
+                    let devices = list_input_devices()?;
+                    let selected = match device_id {
+                        Some(device_id) => devices.iter().find(|device| &device.id == device_id),
+                        None => devices.iter().find(|device| device.is_default),
+                    }
+                    .ok_or_else(|| match device_id {
+                        Some(device_id) => AudioCaptureError::DeviceNotFound(device_id.clone()),
+                        None => AudioCaptureError::NoInputDevice,
+                    })?;
+                    Ok(selected.name.clone())
+                }
+                CaptureSource::SystemAudio => Ok("Desktop Audio".to_owned()),
+            }
+        })
+        .await
+        .map_err(|error| format!("audio preflight task failed: {error}"))?
+        .map_err(|error| error.to_string())?;
+    payload
+        .get_mut("source")
+        .and_then(Value::as_object_mut)
+        .expect("validated source is an object")
+        .insert("displayName".into(), json!(display_name));
+    Ok(uuid::Uuid::new_v4().to_string())
 }
 
 #[tauri::command]

@@ -45,7 +45,7 @@
       "../src-python/uv.lock": "src-python/uv.lock"
     },
     "macOS": {
-      "minimumSystemVersion": "14.0"
+      "minimumSystemVersion": "14.2"
     },
     "icon": [
       "icons/32x32.png",
