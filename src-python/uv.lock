@@ -795,7 +795,6 @@ dependencies = [
     { name = "mlx-audio", extra = ["stt"] },
     { name = "numpy" },
     { name = "onnxruntime" },
-    { name = "sounddevice" },
     { name = "soundfile" },
     { name = "soxr" },
 ]
@@ -816,7 +815,6 @@ requires-dist = [
     { name = "mlx-audio", extras = ["stt"], specifier = ">=0.4.3" },
     { name = "numpy", specifier = ">=2.4.5" },
     { name = "onnxruntime", specifier = ">=1.23.2" },
-    { name = "sounddevice", specifier = ">=0.5.5" },
     { name = "soundfile", specifier = ">=0.13.1" },
     { name = "soxr", specifier = ">=1.1.0" },
 ]

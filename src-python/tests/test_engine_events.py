@@ -9,13 +9,49 @@ from typing import cast
 import pytest
 
 import reco.engine as engine_module
-from reco.audio import MicrophoneDevice
 from reco.engine import EngineCommandError, ModelRuntime, RecoEngine, SessionControl
+from reco.host_pcm import HostPcmBroker, HostPcmInput
 from reco.model_manager import ModelReference, ModelState
 from reco.models import SplitReason, TranscriptionDiagnostics, TranscriptSegment, VadDiagnostics
 from reco.pipeline import TranscriptionProgress
 from reco.recording import fingerprint_file_snapshot
 from reco.repository import NewQueueItem, NewSession, RecordingRepository, RepositoryError, SessionState
+
+
+class FakeHostPcmInput:
+  def await_start(self) -> None:
+    return None
+
+  def drain_and_release(self) -> None:
+    return None
+
+
+class FakeHostPcmBroker:
+  def input(self, session_id: str, generation: int, start_sample: int, source_kind: str) -> HostPcmInput:
+    del session_id, generation, start_sample, source_kind
+    return cast(HostPcmInput, FakeHostPcmInput())
+
+
+@pytest.fixture(autouse=True)
+def provide_host_pcm_to_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+  original_init = RecoEngine.__init__
+
+  def initialize(
+    self: RecoEngine,
+    database: Path,
+    vad_model: Path,
+    event_callback: Callable[[str, str | None, Mapping[str, object]], None] | None = None,
+    host_pcm_broker: HostPcmBroker | None = None,
+  ) -> None:
+    original_init(
+      self,
+      database,
+      vad_model,
+      event_callback,
+      host_pcm_broker or cast(HostPcmBroker, FakeHostPcmBroker()),
+    )
+
+  monkeypatch.setattr(RecoEngine, "__init__", initialize)
 
 
 def segment() -> TranscriptSegment:
@@ -51,6 +87,9 @@ def engine_with_repository(
   engine = RecoEngine.__new__(RecoEngine)
   engine.repository = repository
   engine._event_callback = lambda event, session_id, payload: events.append((event, session_id, payload))
+  engine._active_queue_origin = False
+  engine._queue_auto_advance = False
+  engine._shutting_down = False
   return engine, events
 
 
@@ -83,25 +122,7 @@ def test_model_runtime_close_invalidates_worker_and_clears_mlx_memory(
   assert calls == ["invalidate", "gc", "mlx"]
 
 
-def test_list_audio_inputs_marks_the_default_input(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setattr(
-    engine_module,
-    "list_microphone_devices",
-    lambda: (
-      MicrophoneDevice("usb-uid", 1, "USB microphone", 1, False),
-      MicrophoneDevice("builtin-uid", 2, "MacBook microphone", 2, True),
-    ),
-  )
-
-  engine = RecoEngine.__new__(RecoEngine)
-
-  assert engine.list_audio_inputs() == [
-    {"id": "usb-uid", "name": "USB microphone", "channels": 1, "isDefault": False},
-    {"id": "builtin-uid", "name": "MacBook microphone", "channels": 2, "isDefault": True},
-  ]
-
-
-def test_new_microphone_session_resolves_and_persists_the_core_audio_uid(
+def test_new_microphone_session_persists_the_host_device_uid(
   tmp_path: Path,
   monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -118,22 +139,22 @@ def test_new_microphone_session_resolves_and_persists_the_core_audio_uid(
   engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
   engine.model_manager.selected = ModelReference("owner/model", "revision")
   engine.model_manager._state = ModelState.READY
-  monkeypatch.setattr(
-    engine_module,
-    "resolve_microphone_device",
-    lambda uid: MicrophoneDevice(uid, 7, "Studio Mic", 1, False),
-  )
   monkeypatch.setattr(engine_module, "Thread", CapturingThread)
 
-  result = engine.start_session({"language": None, "source": {"type": "microphone", "deviceId": "studio-uid"}})
+  result = engine.start_session(
+    {
+      "language": None,
+      "source": {"type": "microphone", "deviceId": "studio-uid", "displayName": "Studio Mic"},
+    }
+  )
 
   session = engine.repository.get_session(str(result["sessionId"]))
   assert session["source_device_id"] == "studio-uid"
   assert session["source_display_name"] == "Studio Mic"
-  assert captured[0][2] == 7
+  assert captured[0][2] == "studio-uid"
 
 
-def test_microphone_resume_resolves_the_saved_uid_to_the_current_index(
+def test_microphone_resume_passes_the_saved_uid_to_the_host(
   tmp_path: Path,
   monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -152,7 +173,8 @@ def test_microphone_resume_resolves_the_saved_uid_to_the_current_index(
     )
   )
   repository.set_state(session_id, SessionState.RUNNING)
-  repository.fail_session(session_id, "capture_failed", "Disconnected")
+  repository.set_state(session_id, SessionState.PAUSING)
+  repository.pause_session(session_id, 0)
   captured: list[tuple[object, ...]] = []
 
   class CapturingThread:
@@ -164,16 +186,26 @@ def test_microphone_resume_resolves_the_saved_uid_to_the_current_index(
       return None
 
   engine = RecoEngine(database, tmp_path / "models")
-  monkeypatch.setattr(
-    engine_module,
-    "resolve_microphone_device",
-    lambda uid: MicrophoneDevice(uid, 9, "Studio Mic", 1, False),
-  )
   monkeypatch.setattr(engine_module, "Thread", CapturingThread)
 
   engine.resume_session(session_id)
 
-  assert captured[0][2] == 9
+  assert captured[0][2] == "studio-uid"
+
+
+def test_failed_live_session_resume_has_a_stable_nonrecoverable_error(tmp_path: Path) -> None:
+  engine = RecoEngine(tmp_path / "reco.sqlite3", tmp_path / "models")
+  session_id = engine.repository.create_session(
+    NewSession("systemAudio", "Desktop Audio", "model", "revision", "Japanese", 16_000, "Recording")
+  )
+  engine.repository.set_state(session_id, SessionState.RUNNING)
+  engine.repository.fail_session(session_id, "capture_failed", "Capture stopped")
+
+  with pytest.raises(EngineCommandError) as failure:
+    engine.resume_session(session_id)
+
+  assert failure.value.code == "session_not_resumable"
+  assert failure.value.recoverable is False
 
 
 def test_persisted_segment_event_contains_committed_receipt(tmp_path: Path) -> None:
@@ -245,6 +277,7 @@ def test_state_event_contains_the_committed_revision_and_aggregates(tmp_path: Pa
   engine._lock = Lock()
   engine._active_session_id = session_id
   engine._active_control = SessionControl()
+  engine._active_queue_origin = True
 
   result = engine.stop_session(session_id)
 
@@ -793,7 +826,6 @@ def test_session_loads_runtime_on_demand_and_releases_it_after_completion(
 
   monkeypatch.setattr(engine.model_manager, "resolve", lambda requested: snapshot if requested == reference else None)
   monkeypatch.setattr(engine_module, "ModelRuntime", FakeRuntime)
-  monkeypatch.setattr(engine_module, "MicrophoneInput", lambda **options: object())
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
   monkeypatch.setattr(
@@ -847,7 +879,6 @@ def test_session_drops_local_model_references_before_runtime_release(
     return runtime, service, worker
 
   monkeypatch.setattr(engine, "_acquire_runtime", acquire)
-  monkeypatch.setattr(engine_module, "MicrophoneInput", lambda **options: object())
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
   monkeypatch.setattr(
@@ -881,7 +912,6 @@ def test_runtime_release_failure_does_not_keep_the_active_slot(tmp_path: Path, m
   engine.runtime = cast(ModelRuntime, runtime)
   engine._runtime_reference = reference
   monkeypatch.setattr(engine, "_acquire_runtime", lambda requested, language: (runtime, object(), object()))
-  monkeypatch.setattr(engine_module, "MicrophoneInput", lambda **options: object())
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
   monkeypatch.setattr(
@@ -925,7 +955,6 @@ def test_terminal_outcomes_release_runtime_once(
   engine.runtime = cast(ModelRuntime, runtime)
   engine._runtime_reference = reference
   monkeypatch.setattr(engine, "_acquire_runtime", lambda requested, language: (runtime, object(), object()))
-  monkeypatch.setattr(engine_module, "MicrophoneInput", lambda **options: object())
   monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
   monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
 
@@ -948,6 +977,134 @@ def test_terminal_outcomes_release_runtime_once(
   assert engine.repository.get_session(session_id)["state"] == expected_state
   assert close_count == 1
   assert engine.runtime is None
+
+
+def test_live_capture_starts_before_running_and_stops_before_error_drain(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  reference = ModelReference("owner/model", "revision")
+  engine = RecoEngine(tmp_path / "capture.sqlite3", tmp_path / "models")
+  session_id = engine.repository.create_session(
+    NewSession("systemAudio", "Desktop Audio", reference.repo_id, reference.revision, "Japanese", 16_000, "Recording")
+  )
+  control = SessionControl()
+  trace: list[str] = []
+
+  class TracedInput:
+    def await_start(self) -> None:
+      trace.append("start")
+
+    def drain_and_release(self) -> None:
+      trace.append("drain")
+
+  class TracedBroker:
+    def input(self, captured_session_id: str, generation: int, start_sample: int, source_kind: str) -> HostPcmInput:
+      assert (captured_session_id, generation, start_sample, source_kind) == (session_id, 0, 0, "systemAudio")
+      trace.append("input")
+      return cast(HostPcmInput, TracedInput())
+
+  class FakeRuntime:
+    model_path = tmp_path / "snapshot"
+
+    def close(self) -> None:
+      return None
+
+  runtime = FakeRuntime()
+  engine.host_pcm_broker = cast(HostPcmBroker, TracedBroker())
+  engine.runtime = cast(ModelRuntime, runtime)
+  engine._runtime_reference = reference
+  engine._event_callback = lambda event, _session_id, _payload: trace.append(event)
+  engine._active_session_id = session_id
+  engine._active_control = control
+  monkeypatch.setattr(engine, "_acquire_runtime", lambda requested, language: (runtime, object(), object()))
+  monkeypatch.setattr(engine_module, "OnnxSileroProbabilityModel", lambda path: object())
+  monkeypatch.setattr(engine_module, "SileroVadEngine", lambda **options: object())
+
+  def fail_pipeline(*args: object, **options: object) -> None:
+    del args, options
+    trace.append("pipeline")
+    raise RuntimeError("VAD failed")
+
+  monkeypatch.setattr(engine_module, "run_transcription", fail_pipeline)
+
+  engine._run_session(session_id, None, None, None, control, model_reference=reference, source_kind="systemAudio")
+
+  assert trace.index("audio.captureRequested") < trace.index("start") < trace.index("session.stateChanged")
+  assert trace.index("session.stateChanged") < trace.index("pipeline")
+  assert trace.index("pipeline") < trace.index("audio.captureStopRequested") < trace.index("drain")
+  failed_event_index = trace.index("session.failed")
+  assert trace.index("drain") < failed_event_index
+  assert engine.repository.get_session(session_id)["state"] == "failed"
+  assert session_id not in engine._capture_generations
+
+
+def test_stop_arriving_during_capture_start_is_resent_after_start_and_drained(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  reference = ModelReference("owner/model", "revision")
+  engine = RecoEngine(tmp_path / "start-race.sqlite3", tmp_path / "models")
+  session_id = engine.repository.create_session(
+    NewSession("microphone", "Microphone", reference.repo_id, reference.revision, "Japanese", 16_000, "Recording")
+  )
+  control = SessionControl()
+  waiting_in_start = Event()
+  release_start = Event()
+  trace: list[str] = []
+
+  class RacingInput:
+    def await_start(self) -> None:
+      trace.append("awaitStart")
+      waiting_in_start.set()
+      assert release_start.wait(1)
+      trace.append("started")
+
+    def drain_and_release(self) -> None:
+      trace.append("drained")
+
+  class RacingBroker:
+    def input(self, captured_session_id: str, generation: int, start_sample: int, source_kind: str) -> HostPcmInput:
+      assert (captured_session_id, generation, start_sample, source_kind) == (session_id, 0, 0, "microphone")
+      return cast(HostPcmInput, RacingInput())
+
+  class FakeRuntime:
+    model_path = tmp_path / "snapshot"
+
+    def close(self) -> None:
+      return None
+
+  runtime = FakeRuntime()
+  engine.host_pcm_broker = cast(HostPcmBroker, RacingBroker())
+  engine.runtime = cast(ModelRuntime, runtime)
+  engine._runtime_reference = reference
+  engine._event_callback = lambda event, _session_id, _payload: trace.append(event)
+  engine._active_session_id = session_id
+  engine._active_control = control
+  monkeypatch.setattr(engine, "_acquire_runtime", lambda requested, language: (runtime, object(), object()))
+  monkeypatch.setattr(
+    engine_module,
+    "run_transcription",
+    lambda *args, **options: pytest.fail("pipeline must not run after a start-time stop"),
+  )
+
+  session_thread = Thread(
+    target=engine._run_session,
+    args=(session_id, None, None, None, control),
+    kwargs={"model_reference": reference, "source_kind": "microphone"},
+  )
+  session_thread.start()
+  assert waiting_in_start.wait(1)
+
+  engine.pause_session(session_id)
+  release_start.set()
+  session_thread.join(1)
+
+  assert not session_thread.is_alive()
+  assert trace.count("audio.captureStopRequested") == 2
+  assert trace.index("audio.captureRequested") < trace.index("awaitStart")
+  post_start_stop = trace.index("audio.captureStopRequested", trace.index("started"))
+  assert trace.index("started") < post_start_stop < trace.index("drained")
+  assert engine.repository.get_session(session_id)["state"] == "paused"
+  assert session_id in engine._capture_generations
 
 
 def test_new_session_model_load_failure_is_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

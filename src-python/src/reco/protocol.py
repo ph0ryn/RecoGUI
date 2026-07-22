@@ -8,7 +8,7 @@ from threading import Lock
 from typing import TextIO, cast
 from uuid import UUID
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 MAX_LINE_BYTES = 8 * 1024 * 1024
 
 

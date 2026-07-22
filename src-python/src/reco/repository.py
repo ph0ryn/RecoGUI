@@ -592,7 +592,7 @@ class RecordingRepository:
       ).fetchone()
     if row is None:
       raise RepositoryError(f"Unknown session: {session_id}")
-    if row["state"] not in {"paused", "failed"}:
+    if row["state"] not in {"paused", "failed"} or (row["state"] == "failed" and row["source_kind"] != "file"):
       raise RepositoryError(f"Session is not resumable: {session_id}")
     return dict(row)
 

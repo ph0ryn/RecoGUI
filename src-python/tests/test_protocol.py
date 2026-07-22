@@ -7,10 +7,10 @@ from uuid import uuid4
 
 import pytest
 
-from reco.protocol import NdjsonWriter, ProtocolError, Request, parse_protocol_message, parse_request
+from reco.protocol import PROTOCOL_VERSION, NdjsonWriter, ProtocolError, Request, parse_protocol_message, parse_request
 
 
-def request_line(*, sequence: int = 1, version: int = 1) -> bytes:
+def request_line(*, sequence: int = 1, version: int = PROTOCOL_VERSION) -> bytes:
   return (
     json.dumps(
       {
@@ -40,7 +40,7 @@ def test_sequence_must_increase() -> None:
 
 def test_unknown_protocol_version_has_stable_error() -> None:
   with pytest.raises(ProtocolError) as failure:
-    parse_request(request_line(version=2), previous_sequence=0)
+    parse_request(request_line(version=1), previous_sequence=0)
   assert failure.value.code == "unsupported_protocol"
 
 

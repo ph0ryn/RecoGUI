@@ -411,26 +411,38 @@ def test_progress_is_coalesced_instead_of_emitted_for_every_32ms_frame() -> None
   assert result.timing.decode_time_ms == 0
 
 
-@pytest.mark.parametrize("finite", [False, True])
-def test_pipeline_rejects_partial_frames_that_are_not_a_finite_terminal_frame(finite: bool) -> None:
+def test_pipeline_rejects_data_after_a_terminal_partial_frame() -> None:
   partial = AudioChunk(samples=np.zeros(20, dtype=np.float32), sample_rate=SAMPLE_RATE, start_sample=0)
-  chunks = [partial]
-  if finite:
-    chunks.append(
-      AudioChunk(
-        samples=np.zeros(VAD_FRAME_SAMPLES, dtype=np.float32),
-        sample_rate=SAMPLE_RATE,
-        start_sample=20,
-      )
-    )
+  chunks = [
+    partial,
+    AudioChunk(
+      samples=np.zeros(VAD_FRAME_SAMPLES, dtype=np.float32),
+      sample_rate=SAMPLE_RATE,
+      start_sample=20,
+    ),
+  ]
 
-  with pytest.raises(RecoError, match=r"exactly 512|after its final partial"):
+  with pytest.raises(RecoError, match="after its final partial"):
     run_transcription(
-      audio_input=FakeInput(chunks=chunks, finite=finite),
+      audio_input=FakeInput(chunks=chunks, finite=False),
       vad_engine=FakeVad(),
       transcription_service=FakeTranscriptionService(),
       model_metadata=model_metadata(),
     )
+
+
+def test_pipeline_accepts_a_terminal_partial_realtime_frame() -> None:
+  result = run_transcription(
+    audio_input=FakeInput(
+      chunks=[AudioChunk(samples=np.zeros(20, dtype=np.float32), sample_rate=SAMPLE_RATE, start_sample=0)],
+      finite=False,
+    ),
+    vad_engine=FakeVad(),
+    transcription_service=FakeTranscriptionService(),
+    model_metadata=model_metadata(),
+  )
+
+  assert result.timing.media_duration_ms == 1
 
 
 def test_max_queue_depth_is_tracked_exactly_during_worker_dequeues() -> None:

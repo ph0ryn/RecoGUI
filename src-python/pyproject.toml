@@ -18,7 +18,6 @@ dependencies = [
   "mlx-audio[stt]>=0.4.3",
   "numpy>=2.4.5",
   "onnxruntime>=1.23.2",
-  "sounddevice>=0.5.5",
   "soundfile>=0.13.1",
   "soxr>=1.1.0",
 ]

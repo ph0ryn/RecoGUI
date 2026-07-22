@@ -225,12 +225,12 @@ def run_transcription(
     pipeline_started = monotonic()
     next_progress_at = pipeline_started
     for chunk in stream.chunks:
-      if control is not None and control.cancel_requested():
+      if control is not None and control.cancel_requested() and not stream.drain_on_stop:
         interrupted = True
         cancelled = True
         controlled_stop = True
         break
-      if control is not None and control.stop_requested():
+      if control is not None and control.stop_requested() and not stream.drain_on_stop:
         interrupted = True
         controlled_stop = True
         break
@@ -243,10 +243,8 @@ def run_transcription(
       if chunk.samples.size > VAD_FRAME_SAMPLES:
         raise RecoError(f"Audio input frame cannot exceed {VAD_FRAME_SAMPLES} samples.")
       if partial_frame_seen:
-        raise RecoError("Finite audio input emitted data after its final partial VAD frame.")
+        raise RecoError("Audio input emitted data after its final partial VAD frame.")
       if chunk.samples.size < VAD_FRAME_SAMPLES:
-        if not stream.finite:
-          raise RecoError(f"Realtime audio input must emit exactly {VAD_FRAME_SAMPLES} samples per frame.")
         partial_frame_seen = True
       expected_start_sample = chunk.start_sample + chunk.samples.size
       chunk_end_ms = round((chunk.start_sample + chunk.samples.size) * 1000 / chunk.sample_rate)
@@ -278,6 +276,11 @@ def run_transcription(
       interrupted = True
   except BaseException as exc:
     pipeline_error = exc
+
+  if stream is not None and stream.drain_on_stop and control is not None and control.stop_requested():
+    interrupted = True
+    controlled_stop = True
+    cancelled = control.cancel_requested()
 
   if stream is not None:
     try:

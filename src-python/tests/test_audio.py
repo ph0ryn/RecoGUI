@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
-from types import SimpleNamespace
-from typing import cast
 
 import numpy as np
 import pytest
@@ -11,23 +8,16 @@ import soundfile as sf
 import soxr
 
 from reco.audio import (
-  AUDIO_QUEUE_MAX_FRAMES,
   SAMPLE_RATE,
   VAD_FRAME_SAMPLES,
   AudioChunk,
   AudioFileIdentity,
   LocalAudioFileInput,
-  MicrophoneDevice,
-  MicrophoneInput,
   SourceMetadata,
   audio_file_duration_ms,
-  list_microphone_devices,
   normalize_channels,
-  resolve_microphone_device,
-  resolve_microphone_device_name,
   validate_audio_file,
 )
-from reco.core_audio import CoreAudioDevice
 from reco.errors import RecoError
 
 
@@ -51,10 +41,6 @@ def test_input_adapters_reject_incompatible_frame_contracts(tmp_path: Path) -> N
   for invalid_size in (VAD_FRAME_SAMPLES // 2, VAD_FRAME_SAMPLES * 2):
     with pytest.raises(ValueError, match="exactly 512"):
       LocalAudioFileInput(tmp_path / "audio.wav", frame_samples=invalid_size)
-    with pytest.raises(ValueError, match="exactly 512"):
-      MicrophoneInput(frame_samples=invalid_size)
-  with pytest.raises(ValueError, match="internal"):
-    MicrophoneInput(sample_rate=44_100)
 
 
 def test_validate_audio_file_rejects_unsupported_extension(tmp_path: Path) -> None:
@@ -177,162 +163,3 @@ def test_local_audio_file_input_resumes_at_an_unaligned_checkpoint_without_losin
   assert [chunk.start_sample for chunk in chunks] == [checkpoint, checkpoint + VAD_FRAME_SAMPLES]
   assert [chunk.samples.size for chunk in chunks] == [VAD_FRAME_SAMPLES, VAD_FRAME_SAMPLES - 123]
   np.testing.assert_allclose(np.concatenate([chunk.samples for chunk in chunks]), signal[checkpoint:])
-
-
-def test_microphone_input_source_uses_input_device_name(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setattr("reco.audio.resolve_microphone_device_name", lambda device=None: "Studio Mic")
-
-  stream = MicrophoneInput().open()
-
-  assert stream.source.kind == "microphone"
-  assert stream.source.path == "Studio Mic"
-
-
-def test_resolve_microphone_device_name_queries_default_input(monkeypatch: pytest.MonkeyPatch) -> None:
-  calls: list[tuple[int | str | None, str]] = []
-
-  def fake_query_devices(device: int | str | None = None, kind: str | None = None) -> dict[str, object]:
-    assert kind is not None
-    calls.append((device, kind))
-    return {"name": "MacBook Pro Microphone"}
-
-  monkeypatch.setattr("reco.audio.sd.query_devices", fake_query_devices)
-
-  assert resolve_microphone_device_name() == "MacBook Pro Microphone"
-  assert calls == [(None, "input")]
-
-
-def test_microphone_devices_use_persistent_core_audio_uids(monkeypatch: pytest.MonkeyPatch) -> None:
-  port_audio_devices = [
-    {"name": "Display", "max_input_channels": 0},
-    {"name": "Studio Mic", "max_input_channels": 1},
-    {"name": "MacBook Microphone", "max_input_channels": 2},
-  ]
-  monkeypatch.setattr("reco.audio.sd.query_devices", lambda: port_audio_devices)
-  monkeypatch.setattr(
-    "reco.audio.sd.query_hostapis",
-    lambda: ({"name": "Core Audio", "devices": [0, 1, 2]},),
-  )
-  monkeypatch.setattr("reco.audio.sd.default", SimpleNamespace(device=(2, 0)))
-  monkeypatch.setattr(
-    "reco.audio.list_core_audio_devices",
-    lambda: (
-      CoreAudioDevice(10, "display-uid", "Display"),
-      CoreAudioDevice(11, "studio-uid", "Studio Mic"),
-      CoreAudioDevice(12, "builtin-uid", "MacBook Microphone"),
-    ),
-  )
-
-  devices = list_microphone_devices()
-
-  assert [(device.uid, device.index, device.is_default) for device in devices] == [
-    ("studio-uid", 1, False),
-    ("builtin-uid", 2, True),
-  ]
-  assert resolve_microphone_device("builtin-uid").index == 2
-
-
-def test_microphone_device_mapping_rejects_mismatched_enumerations(monkeypatch: pytest.MonkeyPatch) -> None:
-  monkeypatch.setattr(
-    "reco.audio.sd.query_devices",
-    lambda: [{"name": "PortAudio Mic", "max_input_channels": 1}],
-  )
-  monkeypatch.setattr(
-    "reco.audio.sd.query_hostapis",
-    lambda: ({"name": "Core Audio", "devices": [0]},),
-  )
-  monkeypatch.setattr("reco.audio.sd.default", SimpleNamespace(device=(0, 0)))
-  monkeypatch.setattr(
-    "reco.audio.list_core_audio_devices",
-    lambda: (CoreAudioDevice(10, "uid", "Different Core Audio Mic"),),
-  )
-
-  with pytest.raises(RecoError, match="identities do not match"):
-    list_microphone_devices()
-
-
-def test_microphone_uid_resolves_after_the_port_audio_index_changes(monkeypatch: pytest.MonkeyPatch) -> None:
-  state = {
-    "core": (
-      CoreAudioDevice(10, "selected-uid", "Selected Mic"),
-      CoreAudioDevice(11, "other-uid", "Other Mic"),
-    ),
-    "port": [
-      {"name": "Selected Mic", "max_input_channels": 1},
-      {"name": "Other Mic", "max_input_channels": 1},
-    ],
-  }
-  monkeypatch.setattr("reco.audio.sd.query_devices", lambda: state["port"])
-  monkeypatch.setattr(
-    "reco.audio.sd.query_hostapis",
-    lambda: ({"name": "Core Audio", "devices": [0, 1]},),
-  )
-  monkeypatch.setattr("reco.audio.sd.default", SimpleNamespace(device=(0, 0)))
-  monkeypatch.setattr("reco.audio.list_core_audio_devices", lambda: state["core"])
-
-  assert resolve_microphone_device("selected-uid").index == 0
-
-  state["port"] = [
-    {"name": "Other Mic", "max_input_channels": 1},
-    {"name": "Selected Mic", "max_input_channels": 1},
-  ]
-  state["core"] = (
-    CoreAudioDevice(21, "other-uid", "Other Mic"),
-    CoreAudioDevice(20, "selected-uid", "Selected Mic"),
-  )
-
-  assert resolve_microphone_device("selected-uid").index == 1
-
-
-def test_microphone_uid_does_not_fall_back_when_the_device_is_disconnected(
-  monkeypatch: pytest.MonkeyPatch,
-) -> None:
-  monkeypatch.setattr(
-    "reco.audio.list_microphone_devices",
-    lambda: (MicrophoneDevice("other-uid", 0, "Other Mic", 1, True),),
-  )
-
-  with pytest.raises(RecoError, match="selected audio input device is unavailable"):
-    resolve_microphone_device("disconnected-uid")
-
-
-def test_microphone_callback_reports_bounded_buffer_overflow_without_blocking(
-  monkeypatch: pytest.MonkeyPatch,
-) -> None:
-  class FloodingInputStream:
-    def __init__(self, **kwargs: object) -> None:
-      self.callback = cast(Callable[..., None], kwargs["callback"])
-
-    def __enter__(self) -> FloodingInputStream:
-      assert callable(self.callback)
-      for _ in range(AUDIO_QUEUE_MAX_FRAMES + 1):
-        self.callback(np.zeros((VAD_FRAME_SAMPLES, 1), dtype=np.float32), VAD_FRAME_SAMPLES, None, 0)
-      return self
-
-    def __exit__(self, *args: object) -> None:
-      del args
-
-  monkeypatch.setattr("reco.audio.sd.InputStream", FloodingInputStream)
-  stream = MicrophoneInput().open()
-
-  with pytest.raises(RecoError, match="bounded"):
-    next(stream.chunks)
-
-
-def test_microphone_callback_rejects_unexpected_frame_sizes(monkeypatch: pytest.MonkeyPatch) -> None:
-  class ShortInputStream:
-    def __init__(self, **kwargs: object) -> None:
-      self.callback = cast(Callable[..., None], kwargs["callback"])
-
-    def __enter__(self) -> ShortInputStream:
-      samples = np.zeros((VAD_FRAME_SAMPLES // 2, 1), dtype=np.float32)
-      self.callback(samples, samples.size, None, 0)
-      return self
-
-    def __exit__(self, *args: object) -> None:
-      del args
-
-  monkeypatch.setattr("reco.audio.sd.InputStream", ShortInputStream)
-
-  with pytest.raises(RecoError, match="returned 256 samples"):
-    next(MicrophoneInput().open().chunks)

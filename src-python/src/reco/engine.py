@@ -15,15 +15,12 @@ from typing import cast
 from reco.audio import (
   SAMPLE_RATE,
   LocalAudioFileInput,
-  MicrophoneInput,
   audio_file_duration_ms,
-  list_microphone_devices,
-  resolve_microphone_device,
-  resolve_microphone_device_name,
   validate_audio_file,
 )
 from reco.config import DEFAULT_CONFIG
 from reco.errors import RecoError
+from reco.host_pcm import HostPcmBroker, HostPcmError
 from reco.model_manager import ModelManager, ModelReference, ModelState
 from reco.models import TranscriptModelMetadata, TranscriptSegment
 from reco.pipeline import AsrWorker, TranscriptionProgress, run_transcription, start_asr_worker
@@ -129,7 +126,13 @@ class ModelRuntime:
 class RecoEngine:
   """Single-session application engine with durable history."""
 
-  def __init__(self, database: Path, vad_model: Path, event_callback: EngineEventCallback | None = None) -> None:
+  def __init__(
+    self,
+    database: Path,
+    vad_model: Path,
+    event_callback: EngineEventCallback | None = None,
+    host_pcm_broker: HostPcmBroker | None = None,
+  ) -> None:
     self.repository = RecordingRepository(database)
     self.repository.recover_abandoned()
     selected_value = self.repository.get_selected_model()
@@ -139,6 +142,8 @@ class RecoEngine:
     self.runtime: ModelRuntime | None = None
     self._runtime_reference: ModelReference | None = None
     self._event_callback = event_callback
+    self.host_pcm_broker = host_pcm_broker
+    self._capture_generations: dict[str, int] = {}
     self._active_session_id: str | None = None
     self._active_control: SessionControl | None = None
     self._active_thread: Thread | None = None
@@ -362,7 +367,7 @@ class RecoEngine:
     return self._publish_queue_changed()
 
   def start_session(self, payload: Mapping[str, object], requested_session_id: str | None = None) -> dict[str, object]:
-    """Commit and asynchronously start a microphone transcription."""
+    """Commit and asynchronously start a host-captured live transcription."""
 
     with self._lock:
       if self._shutting_down:
@@ -380,29 +385,26 @@ class RecoEngine:
       raise EngineCommandError("invalid_source", "source must be an object")
     source_value = cast(Mapping[str, object], source_value)
     source_kind = str(source_value.get("type", "microphone"))
-    if source_kind != "microphone":
+    if source_kind == "file":
       raise EngineCommandError("queue_required", "File sources must be added to the processing queue")
-    source_path = Path(str(source_value["path"])) if source_kind == "file" and source_value.get("path") else None
-    if source_kind == "file" and source_path is None:
-      raise EngineCommandError("invalid_source", "A file source requires path")
+    if source_kind not in {"microphone", "systemAudio"}:
+      raise EngineCommandError("invalid_source", f"Unsupported live source type: {source_kind}")
     device_uid = source_value.get("deviceId")
-    if device_uid is not None and (not isinstance(device_uid, str) or not device_uid.strip()):
-      raise EngineCommandError("invalid_source", "A microphone deviceId must be a Core Audio UID or null")
-    try:
-      microphone = resolve_microphone_device(device_uid) if isinstance(device_uid, str) else None
-    except RecoError as exc:
-      raise EngineCommandError("audio_input_unavailable", str(exc)) from exc
-    device_index = microphone.index if microphone is not None else None
-    fingerprint = None
-    if source_path is not None:
-      validate_audio_file(source_path)
-      fingerprint = fingerprint_file_snapshot(source_path)
-      display_name = source_path.name
-    else:
-      display_name = microphone.name if microphone is not None else resolve_microphone_device_name() or "microphone"
-    title = str(
-      payload.get("title") or (source_path.stem if source_path else datetime.now().strftime("Recording %Y-%m-%d %H:%M"))
+    if source_kind == "systemAudio" and device_uid is not None:
+      raise EngineCommandError("invalid_source", "Desktop audio does not accept a deviceId")
+    if (
+      source_kind == "microphone"
+      and device_uid is not None
+      and (not isinstance(device_uid, str) or not device_uid.strip())
+    ):
+      raise EngineCommandError("invalid_source", "A microphone deviceId must be a host audio device ID or null")
+    display_name_value = source_value.get("displayName")
+    display_name = (
+      display_name_value.strip()
+      if isinstance(display_name_value, str) and display_name_value.strip()
+      else ("Desktop Audio" if source_kind == "systemAudio" else "Microphone")
     )
+    title = str(payload.get("title") or datetime.now().strftime("Recording %Y-%m-%d %H:%M"))
     control = SessionControl()
     with self._lock:
       if self._shutting_down:
@@ -419,9 +421,9 @@ class RecoEngine:
           session_id=requested_session_id or "",
           source_kind=source_kind,
           source_display_name=display_name,
-          source_fingerprint=fingerprint.value if fingerprint else None,
-          source_path=str(source_path) if source_path is not None else None,
-          source_device_id=microphone.uid if microphone is not None else None,
+          source_fingerprint=None,
+          source_path=None,
+          source_device_id=str(device_uid) if isinstance(device_uid, str) else None,
           model=selected.repo_id,
           model_revision=selected.revision,
           language=language,
@@ -432,7 +434,7 @@ class RecoEngine:
       )
       thread = Thread(
         target=self._run_session,
-        args=(session_id, source_path, device_index, fingerprint, control, 0, 0, selected, language, False),
+        args=(session_id, None, device_uid, None, control, 0, 0, selected, language, False, source_kind),
         daemon=True,
         name=f"reco-session-{session_id}",
       )
@@ -469,6 +471,7 @@ class RecoEngine:
     self._stop_queue_for_active_session()
     receipt = self.repository.set_state(session_id, SessionState.STOPPING)
     control.request_stop(reason)
+    self._request_capture_stop(session_id, reason)
     self._emit("session.stateChanged", session_id, {**self._state_receipt(receipt), "reason": reason})
     return {"sessionId": session_id, **self._state_receipt(receipt)}
 
@@ -479,6 +482,7 @@ class RecoEngine:
     self._stop_queue_for_active_session()
     receipt = self.repository.set_state(session_id, SessionState.STOPPING)
     control.request_cancel()
+    self._request_capture_stop(session_id, "userCancel")
     self._emit("session.stateChanged", session_id, {**self._state_receipt(receipt), "cancelled": True})
     return {"sessionId": session_id, **self._state_receipt(receipt)}
 
@@ -496,6 +500,7 @@ class RecoEngine:
       self._publish_queue_changed()
     receipt = self.repository.set_state(session_id, SessionState.PAUSING)
     control.request_stop("userPause")
+    self._request_capture_stop(session_id, "userPause")
     self._emit("session.stateChanged", session_id, self._state_receipt(receipt))
     return {"sessionId": session_id, **self._state_receipt(receipt)}
 
@@ -507,18 +512,17 @@ class RecoEngine:
         raise EngineCommandError("engine_shutting_down", "The engine is shutting down", recoverable=False)
       if self._active_session_id is not None:
         raise EngineCommandError("session_active", "Another transcription session is already active")
-      context = self.repository.get_resume_context(session_id)
+      try:
+        context = self.repository.get_resume_context(session_id)
+      except RepositoryError as exc:
+        code = "session_not_found" if str(exc).startswith("Unknown session") else "session_not_resumable"
+        raise EngineCommandError(code, str(exc), recoverable=False) from exc
       source_kind = str(context["source_kind"])
       queue_origin = source_kind == "file"
       if self._queue_auto_advance and not queue_origin:
         raise EngineCommandError("queue_active", "The file queue is active")
       source_path = Path(str(context["source_path"])) if context.get("source_path") else None
       device_uid = context.get("source_device_id")
-      try:
-        microphone = resolve_microphone_device(str(device_uid)) if device_uid is not None else None
-      except RecoError as exc:
-        raise EngineCommandError("audio_input_unavailable", str(exc)) from exc
-      device = microphone.index if microphone is not None else None
       fingerprint = None
       if source_kind == "file":
         if source_path is None:
@@ -532,6 +536,12 @@ class RecoEngine:
       resume_sample = int(context["resume_sample"])
       segment_offset = int(context["total_segments"])
       resumable_state = SessionState(str(context["state"]))
+      if source_kind != "file" and resumable_state is SessionState.FAILED:
+        raise EngineCommandError(
+          "session_not_resumable",
+          "Failed live audio sessions cannot be resumed; start a new session",
+          recoverable=False,
+        )
       model = context.get("model")
       model_revision = context.get("model_revision")
       if not isinstance(model, str) or not model or not isinstance(model_revision, str) or not model_revision:
@@ -546,7 +556,7 @@ class RecoEngine:
         args=(
           session_id,
           source_path,
-          device,
+          device_uid,
           fingerprint,
           control,
           resume_sample,
@@ -554,6 +564,7 @@ class RecoEngine:
           model_reference,
           language,
           resumable_state,
+          source_kind,
         ),
         daemon=True,
         name=f"reco-session-{session_id}",
@@ -584,6 +595,7 @@ class RecoEngine:
       with _ignore_repository_error():
         self.repository.set_state(session_id, SessionState.STOPPING)
       control.request_stop("appQuit")
+      self._request_capture_stop(session_id, "appQuit")
     if thread is not None:
       thread.join(timeout)
       if thread.is_alive():
@@ -718,23 +730,6 @@ class RecoEngine:
         with self._lock:
           self._queue_scheduler_active = False
 
-  def list_audio_inputs(self) -> list[dict[str, object]]:
-    """Return current input-capable PortAudio devices."""
-
-    try:
-      devices = list_microphone_devices()
-    except RecoError as exc:
-      raise EngineCommandError("audio_unavailable", f"Could not list audio inputs: {exc}") from exc
-    return [
-      {
-        "id": device.uid,
-        "name": device.name,
-        "channels": device.channels,
-        "isDefault": device.is_default,
-      }
-      for device in devices
-    ]
-
   def _finish_before_running(self, session_id: str, control: SessionControl, resume_sample: int) -> None:
     """Commit a stop requested before audio capture or generation begins."""
 
@@ -762,12 +757,14 @@ class RecoEngine:
     model_reference: ModelReference | None = None,
     language: str | None = None,
     resuming_from: SessionState | None = None,
+    source_kind: str | None = None,
   ) -> None:
     runtime: ModelRuntime | None = None
     service: LocalAsrTranscriptionService | None = None
     worker: AsrWorker | None = None
     entered_running = False
     runtime_failed = False
+    live_audio_input = None
     try:
       reference = model_reference or self.model_manager.snapshot().selected
       if reference is None:
@@ -779,15 +776,39 @@ class RecoEngine:
       if control.stop_requested():
         self._finish_before_running(session_id, control, initial_sample)
         return
-      running_receipt = self.repository.set_state(session_id, SessionState.RUNNING)
-      entered_running = True
-      self._emit("session.stateChanged", session_id, self._state_receipt(running_receipt))
       total_audio_ms = None
       if source_path is None:
-        audio_input = MicrophoneInput(
-          device=device if isinstance(device, int | str) else None,
-          start_sample=initial_sample,
+        live_source_kind = source_kind or "microphone"
+        broker = self.host_pcm_broker
+        if broker is None:
+          raise EngineCommandError("audio_transport_unavailable", "The host PCM transport is unavailable")
+        generation = self._next_capture_generation(session_id)
+        audio_input = broker.input(
+          session_id,
+          generation,
+          initial_sample,
+          live_source_kind,
         )
+        live_audio_input = audio_input
+        self._emit(
+          "audio.captureRequested",
+          session_id,
+          {
+            "sessionId": session_id,
+            "sourceKind": live_source_kind,
+            "deviceId": device if isinstance(device, str) else None,
+            "startSample": initial_sample,
+            "generation": generation,
+          },
+        )
+        audio_input.await_start()
+        if control.stop_requested():
+          reason = "userCancel" if control.cancel_requested() else control.stop_reason
+          self._request_capture_stop(session_id, reason)
+          audio_input.drain_and_release()
+          live_audio_input = None
+          self._finish_before_running(session_id, control, initial_sample)
+          return
       else:
         expected_identity = getattr(fingerprint, "identity", None)
         total_audio_ms = audio_file_duration_ms(source_path)
@@ -796,6 +817,9 @@ class RecoEngine:
           expected_identity=expected_identity,
           start_sample=initial_sample,
         )
+      running_receipt = self.repository.set_state(session_id, SessionState.RUNNING)
+      entered_running = True
+      self._emit("session.stateChanged", session_id, self._state_receipt(running_receipt))
       document = run_transcription(
         audio_input,
         SileroVadEngine(model=OnnxSileroProbabilityModel(self.vad_model)),
@@ -833,8 +857,11 @@ class RecoEngine:
         {**self._state_receipt(terminal_receipt), "endReason": reason},
       )
     except BaseException as exc:
-      code = exc.code if isinstance(exc, EngineCommandError) else "transcription_failed"
+      code = exc.code if isinstance(exc, EngineCommandError | HostPcmError) else "transcription_failed"
       runtime_failed = True
+      if live_audio_input is not None:
+        self._request_capture_stop(session_id, "captureError")
+        live_audio_input.drain_and_release()
       if resuming_from is not None and not entered_running:
         queue_changed = False
         with self._lock:
@@ -871,7 +898,7 @@ class RecoEngine:
               **(self._state_receipt(failed_receipt) if failed_receipt is not None else {}),
               "code": code,
               "message": str(exc),
-              "recoverable": True,
+              "recoverable": source_path is not None,
             },
           )
         if queue_changed:
@@ -887,7 +914,7 @@ class RecoEngine:
           **(self._state_receipt(failed_receipt) if failed_receipt is not None else {}),
           "code": code,
           "message": str(exc),
-          "recoverable": True,
+          "recoverable": source_path is not None,
         },
       )
     finally:
@@ -911,9 +938,32 @@ class RecoEngine:
           self._active_control = None
           self._active_thread = None
           self._active_queue_origin = False
+      self._release_terminal_capture_generation(session_id)
       self._emit("history.changed", session_id, {"sessionId": session_id})
       if should_advance:
         self._schedule_next_queue_item()
+
+  def _next_capture_generation(self, session_id: str) -> int:
+    generation = self._capture_generations.get(session_id, -1) + 1
+    self._capture_generations[session_id] = generation
+    return generation
+
+  def _release_terminal_capture_generation(self, session_id: str) -> None:
+    try:
+      paused = self.repository.get_session(session_id)["state"] == SessionState.PAUSED.value
+    except RepositoryError:
+      paused = False
+    if not paused:
+      self._capture_generations.pop(session_id, None)
+
+  def _request_capture_stop(self, session_id: str, reason: str) -> None:
+    if getattr(self, "_active_queue_origin", False):
+      return
+    self._emit(
+      "audio.captureStopRequested",
+      session_id,
+      {"sessionId": session_id, "reason": reason},
+    )
 
   def _persist_segment(self, session_id: str, segment: TranscriptSegment) -> None:
     receipt = self.repository.append_segment(session_id, segment)

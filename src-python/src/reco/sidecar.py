@@ -10,10 +10,11 @@ from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 from threading import Event, Lock, Thread
-from typing import Any, cast
+from typing import Any, BinaryIO, cast
 from uuid import uuid4
 
 from reco.engine import EngineCommandError, RecoEngine, _camel
+from reco.host_pcm import HostPcmBroker
 from reco.protocol import (
   MAX_LINE_BYTES,
   PROTOCOL_VERSION,
@@ -32,9 +33,16 @@ LOG = logging.getLogger("reco-engine")
 class SidecarServer:
   """Strict request dispatcher whose stdout contains protocol messages only."""
 
-  def __init__(self, database: Path, vad_model: Path, output: Any = None) -> None:
+  def __init__(
+    self,
+    database: Path,
+    vad_model: Path,
+    output: Any = None,
+    audio_source: BinaryIO | None = None,
+  ) -> None:
     self.writer = NdjsonWriter(output or sys.stdout)
-    self.engine = RecoEngine(database, vad_model, self._event)
+    self.audio_broker = HostPcmBroker(audio_source) if audio_source is not None else None
+    self.engine = RecoEngine(database, vad_model, self._event, self.audio_broker)
     self._stopped = Event()
     self._previous_request_sequence = 0
     self._export_lock = Lock()
@@ -104,8 +112,6 @@ class SidecarServer:
       self.engine.shutdown()
       self._stopped.set()
       return {"state": "stopped"}
-    if command == "audio.listInputs":
-      return {"inputs": self.engine.list_audio_inputs()}
     if command == "model.getState":
       return _mapping(self.engine.state()["model"])
     if command == "model.list":
@@ -337,6 +343,7 @@ def build_parser() -> argparse.ArgumentParser:
   serve.add_argument("--database", type=Path, required=True)
   serve.add_argument("--vad-model", type=Path, required=True)
   serve.add_argument("--logs-directory", type=Path, required=True)
+  serve.add_argument("--audio-fd", type=int, required=True)
   return parser
 
 
@@ -347,7 +354,8 @@ def main(argv: list[str] | None = None) -> int:
     return 2
   args.logs_directory.mkdir(parents=True, exist_ok=True)
   logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(levelname)s %(message)s")
-  return SidecarServer(args.database, validate_silero_vad_asset(args.vad_model)).serve()
+  with open(args.audio_fd, "rb", buffering=0, closefd=True) as audio_source:
+    return SidecarServer(args.database, validate_silero_vad_asset(args.vad_model), audio_source=audio_source).serve()
 
 
 def _session_id(request: Request, payload: Mapping[str, object]) -> str:

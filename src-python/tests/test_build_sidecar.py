@@ -77,6 +77,8 @@ def test_built_sidecar_propagates_engine_exit_codes(tmp_path: Path) -> None:
       str(PROJECT_ROOT / "assets" / "silero_vad.onnx"),
       "--logs-directory",
       str(tmp_path / "logs"),
+      "--audio-fd",
+      "0",
     ],
     check=False,
     capture_output=True,

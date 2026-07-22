@@ -473,6 +473,18 @@ def test_failed_session_uses_the_last_committed_segment_as_its_resume_checkpoint
   }
 
 
+def test_failed_live_session_is_not_resumable(tmp_path: Path) -> None:
+  repository = RecordingRepository(tmp_path / "reco.sqlite3")
+  session_id = repository.create_session(
+    NewSession("microphone", "Microphone", "model", "revision", "Japanese", 16_000, "Recording")
+  )
+  repository.set_state(session_id, SessionState.RUNNING)
+  repository.fail_session(session_id, "capture_failed", "Disconnected")
+
+  with pytest.raises(RepositoryError, match="not resumable"):
+    repository.get_resume_context(session_id)
+
+
 def test_failed_session_checkpoint_never_moves_backwards(tmp_path: Path) -> None:
   repository = RecordingRepository(tmp_path / "reco.sqlite3")
   session_id = repository.create_session(new_session())
