@@ -33,12 +33,14 @@ def test_build_sidecar_contains_only_runtime_files(tmp_path: Path) -> None:
     path.relative_to(SOURCE_DIRECTORY).as_posix()
     for path in SOURCE_DIRECTORY.rglob("*.py")
     if "__pycache__" not in path.parts
+    and (path == SOURCE_DIRECTORY / "__main__.py" or path.relative_to(SOURCE_DIRECTORY).parts[:1] == ("reco",))
   }
   assert expected_python <= names
   assert "__main__.py" in names
   assert not any(name.endswith((".md", ".onnx")) for name in names)
   assert not any("__pycache__" in name or name.endswith((".pyc", ".pyo")) for name in names)
   assert not any(name.startswith("tests/") for name in names)
+  assert not any(name.startswith("reco_worker/") and name.endswith(".py") for name in names)
 
 
 def test_built_sidecar_is_executable(tmp_path: Path) -> None:

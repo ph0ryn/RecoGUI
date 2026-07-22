@@ -787,7 +787,7 @@ wheels = [
 ]
 
 [[package]]
-name = "reco"
+name = "reco-worker"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [

@@ -1,0 +1,140 @@
+{
+  "protocolVersion": 1,
+  "magicHex": "52415352",
+  "limits": { "jsonBytes": 65536, "binaryBytes": 4194304, "segmentBytes": 3840000 },
+  "valid": [
+    {
+      "name": "hello",
+      "kind": 1,
+      "metadata": {
+        "workerVersion": "0.2.0",
+        "capabilities": [
+          "models.list",
+          "model.load",
+          "segment.transcribe",
+          "model.unload",
+          "shutdown"
+        ]
+      },
+      "binaryHex": ""
+    },
+    {
+      "name": "models-list-request",
+      "kind": 2,
+      "metadata": { "requestId": "request-models", "operation": "models.list" },
+      "binaryHex": ""
+    },
+    {
+      "name": "model-load-request",
+      "kind": 2,
+      "metadata": {
+        "requestId": "request-load",
+        "operation": "model.load",
+        "repoId": "owner/model",
+        "revision": "0123456789abcdef"
+      },
+      "binaryHex": ""
+    },
+    {
+      "name": "segment-transcribe-request",
+      "kind": 2,
+      "metadata": {
+        "requestId": "request-segment",
+        "operation": "segment.transcribe",
+        "sessionId": "session-opaque",
+        "runId": "run-opaque",
+        "jobId": "job-opaque",
+        "segmentIndex": 7,
+        "startSample": 32000,
+        "endSample": 32002,
+        "sampleRate": 16000,
+        "splitReason": "adaptiveSplit",
+        "language": null,
+        "vad": { "meanProbability": 0.75, "peakProbability": 0.9, "speechRatio": 0.5 },
+        "options": {
+          "generationTokensPerSecond": 20.0,
+          "minGenerationTokens": 64,
+          "maxGenerationTokens": 2048,
+          "temperature": 0.0,
+          "repetitionPenalty": null
+        }
+      },
+      "binaryHex": "0000803e000080be"
+    },
+    {
+      "name": "segment-transcribe-response",
+      "kind": 3,
+      "metadata": {
+        "requestId": "request-segment",
+        "operation": "segment.transcribe",
+        "ok": true,
+        "result": {
+          "sessionId": "session-opaque",
+          "runId": "run-opaque",
+          "jobId": "job-opaque",
+          "segmentIndex": 7,
+          "text": "hello",
+          "rawText": " hello ",
+          "language": "English",
+          "diagnostics": {
+            "maxTokens": 64,
+            "generationTokens": 2,
+            "promptTokens": null,
+            "totalTokens": 2,
+            "modelTotalTimeMs": 10,
+            "retryCount": 0,
+            "tokenLimitReached": false,
+            "warning": null
+          }
+        }
+      },
+      "binaryHex": ""
+    },
+    {
+      "name": "heartbeat",
+      "kind": 4,
+      "metadata": {},
+      "binaryHex": ""
+    }
+  ],
+  "invalidMetadata": [
+    {
+      "name": "unknown-operation",
+      "kind": 2,
+      "metadata": { "requestId": "request-unknown", "operation": "model.download" },
+      "binaryHex": ""
+    },
+    {
+      "name": "unknown-field",
+      "kind": 2,
+      "metadata": { "requestId": "request-models", "operation": "models.list", "extra": true },
+      "binaryHex": ""
+    },
+    {
+      "name": "segment-binary-length-mismatch",
+      "kind": 2,
+      "metadata": {
+        "requestId": "request-segment-short",
+        "operation": "segment.transcribe",
+        "sessionId": "session-opaque",
+        "runId": "run-opaque",
+        "jobId": "job-opaque",
+        "segmentIndex": 0,
+        "startSample": 0,
+        "endSample": 2,
+        "sampleRate": 16000,
+        "splitReason": "silence",
+        "language": "Japanese",
+        "vad": { "meanProbability": 0.5, "peakProbability": 0.9, "speechRatio": 0.5 },
+        "options": {
+          "generationTokensPerSecond": 20.0,
+          "minGenerationTokens": 64,
+          "maxGenerationTokens": 2048,
+          "temperature": 0.0,
+          "repetitionPenalty": null
+        }
+      },
+      "binaryHex": "00000000"
+    }
+  ]
+}

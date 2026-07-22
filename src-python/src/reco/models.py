@@ -4,8 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
-from reco.audio import FloatArray, SourceMetadata
+import numpy as np
+from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+  from reco.audio import SourceMetadata
+
+FloatArray = NDArray[np.float32]
 
 
 class SplitReason(StrEnum):
