@@ -116,7 +116,7 @@ fallback は行わない。
   export_start, export_cancel, host_resolve_close
   ```
 
-- `queue_add_files` と `export_start` は Rust 内で native dialog を開く。React へ path/token を返さず、FileTokenStore や
+- `queue_add_files` と `export_start` は Rust 内で native dialog を開く。React へ path/token を返さず、path-token cache や
   generic command/allowlist、`serde_json::Value` payload、`Raw*` 型、`unknown` payload、手動 status cast は残さない。
 - UI event channel は `app://event` 一つに統合し、discriminated union の event として publish する。React は event 購読を
   開始してから snapshot を取得し、snapshot より新しい buffer だけを適用する。sequence gap 時は snapshot を再取得する。

@@ -68,7 +68,7 @@ RecoGUI/
 ├── src-tauri/
 │   ├── src/                     # domain, store, media, core, supervisor, commands
 │   └── resources/models/silero_vad.onnx
-├── protocol/fixtures/            # cross-language RASR v1 fixtures
+├── fixtures/rasr-v1/             # cross-language RASR v1 fixtures
 └── docs/
 ```
 
@@ -158,7 +158,7 @@ worker shutdown の完了後に native close を許可する。sleep は active 
 history query/get/rename/delete/render、export start/cancel、`host_resolve_close` だけとする。queue_add_files と export_start の native dialog は Rust 内で開く。
 
 `tauri-specta 2.0.0-rc.25`、`specta 2.0.0-rc.25`、`specta-typescript 0.0.12` で bindings を生成し、write mode と `--check` mode を分離する。起動時生成はしない。
-`engine_request`、generic allowlist、`serde_json::Value` payload、`Raw*` 型、`unknown` payload、manual status cast、FileTokenStore は削除する。
+旧来の汎用 dispatcher、command allowlist、動的 JSON payload、手書き wire DTO、unknown payload、manual status cast、path-token cache は削除する。
 
 event channel は `app://event` 一つとし、`session.upserted`、`segment.committed`、`session.progress`、`sessions.deleted`、`queue.changed`、`model.changed`、
 `export.progress`、`export.finished`、close events、`notification.error` の discriminated union を送る。React は購読を開始して snapshot を取得し、snapshot より新しい
@@ -172,5 +172,5 @@ cancel/error 時は staging のみ削除する。既存 destination は成功し
 ## 設計変更の gate
 
 protocol、schema、media format、lifecycle、event/command DTO の変更は、requirements、実装、cross-language fixture、validation を同じ変更境界で更新する。
-旧 protocol の互換経路、Python/Rust 共有 DB、dual write、runtime feature flag を追加してはならない。完了時に旧名称と責務（`RecoEngine`、`RecordingRepository`、`SidecarServer`、
-`HostPcmBroker`、`engine_request`）が検索結果に残っていないことを確認する。
+旧 protocol の互換経路、Python/Rust 共有 DB、dual write、runtime feature flag を追加してはならない。完了時には旧 engine、repository、sidecar、host PCM broker、
+汎用 command dispatcher の名称と責務が検索結果に残っていないことを確認する。

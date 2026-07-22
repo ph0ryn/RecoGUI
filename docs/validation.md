@@ -22,7 +22,7 @@ pnpm format
 pnpm lint
 pnpm typecheck
 pnpm test
-pnpm check:protocol
+pnpm check:bindings
 ```
 
 Python 固有の task は `src-python/pyproject.toml`、Rust の対象は `src-tauri/Cargo.toml` を正本とする。Markdown は package に専用設定がない場合、
@@ -70,7 +70,7 @@ Python 固有の task は `src-python/pyproject.toml`、Rust の対象は `src-t
 ## Typed frontend contract
 
 - `tauri-specta 2.0.0-rc.25`、`specta 2.0.0-rc.25`、`specta-typescript 0.0.12` の生成結果と `--check` が一致することを確認する。
-- 公開 command が allowlist に列挙したものだけであること、`engine_request`、`Raw*`、`payload: unknown`、manual status cast、FileTokenStore、path token が無いことを検索する。
+- 公開 command が allowlist に列挙したものだけであること、旧汎用 dispatcher、手書き wire DTO、unknown payload、manual status cast、path-token cache が無いことを検索する。
 - `app://event` の discriminated union（session.upserted、segment.committed、session.progress、sessions.deleted、queue.changed、model.changed、export.progress、
   export.finished、close events、notification.error）を型検査する。React は購読→snapshot→buffer 適用の順序を守り、sequence gap で再取得する。
 - `rowVersion`、queue revision、event sequence が decimal string、UI timestamp が milliseconds であることを確認する。source badge、履歴 filter/search、keyboard、focus、reduced motion を確認する。
@@ -93,21 +93,7 @@ Python 固有の task は `src-python/pyproject.toml`、Rust の対象は `src-t
 
 ## 完了時の検索 gate
 
-次の文字列が実装・fixture・bundle metadata に残っていないことを確認する。
-
-```text
-RecoEngine
-RecordingRepository
-SidecarServer
-HostPcmBroker
-engine_request
-payload: unknown
-reco-engine.pyz
-audio.captureRequested
-audio.captureStopRequested
-session.cancel
---audio-fd
-sqlite/soundfile/soxr/onnxruntime (Python direct imports)
-```
+旧 engine/repository/sidecar/host PCM broker、汎用 command dispatcher、動的 payload、旧 archive 名、旧 capture event、旧 CLI audio FD、
+および Python の DB/audio decode/resample/VAD runtime 直接 import が、実装・fixture・bundle metadata に残っていないことを検索で確認する。
 
 最後に `git status --short --branch` を実行し、作業ツリーを clean にする。merge、push、PR、公開は別途承認を得るまで行わない。
