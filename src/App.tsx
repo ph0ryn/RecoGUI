@@ -1,5 +1,4 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-/* oxlint-disable no-ternary, no-nested-ternary, curly, init-declarations, arrow-body-style, @stylistic/padding-line-between-statements */
 import {
   type CSSProperties,
   type KeyboardEvent,
@@ -12,20 +11,23 @@ import {
   useState,
 } from "react";
 
+/* oxlint-disable no-ternary, no-nested-ternary, curly, init-declarations, arrow-body-style, @stylistic/padding-line-between-statements */
+import packageMetadata from "../package.json";
 import "./App.css";
 import { loadAppPreferences, saveAppPreferences } from "./appPreferences";
 import { recoBridge } from "./bridge";
+import { newestRevisionedValue } from "./eventSequence";
 import { initialSessionState, sessionStateReducer, type SessionEntity } from "./sessionState";
-import { useEngineEvents } from "./useEngineEvents";
+import { useApplicationCore } from "./useApplicationCore";
 
 import type {
+  ApplicationEvent,
   AudioInput,
   CachedModelRevision,
-  EngineEvent,
+  EngineSnapshot,
   ExportFormat,
   InputKind,
   ModelState,
-  PersistedSegmentReceipt,
   QueueSnapshot,
   SessionStatus,
   QueueItem,
@@ -65,7 +67,11 @@ const exportFormats: ExportFormat[] = ["timestampedTxt", "txt", "markdown", "jso
 const terminalStatuses: SessionStatus[] = ["completed", "stopped", "failed", "abandoned"];
 const deletableStatuses: SessionStatus[] = [...terminalStatuses, "paused"];
 const pausableStatuses: SessionStatus[] = ["preparing", "running", "pausing"];
-const emptyQueue: QueueSnapshot = { autoAdvanceEnabled: false, items: [], revision: 0 };
+const emptyQueue: QueueSnapshot = { autoAdvanceEnabled: false, items: [], revision: "0" };
+const applicationCoreSubscriptions = {
+  getSnapshot: () => recoBridge.getSnapshot(),
+  subscribe: (handler: (event: ApplicationEvent) => void) => recoBridge.onApplicationEvent(handler),
+};
 
 function inputKindLabel(inputKind: InputKind): string {
   const labels: Record<InputKind, string> = {
@@ -165,6 +171,7 @@ function getSnippet(session: SessionEntity, query: string): string | undefined {
 
 function modelStatusText(model: ModelState): string {
   const labels: Record<ModelState["status"], string> = {
+    checking: "Python環境とモデルを確認しています。",
     error: "モデルを確認できませんでした。",
     ready: "利用可能",
     unavailable: "選択したモデルがHFキャッシュにありません。",
@@ -277,49 +284,17 @@ function App() {
     [activeSession, displayGroups, orderedSessions],
   );
 
-  useEffect(() => {
-    let alive = true;
-
-    void Promise.all([recoBridge.getSnapshot(), recoBridge.getQueueState()])
-      .then(([snapshot, queueSnapshot]) => {
-        if (!alive) return;
-        setQueue(queueSnapshot);
-        dispatchSessions({
-          activeSessionId: snapshot.activeSessionId,
-          sessions: snapshot.sessions,
-          type: "bootstrap",
-        });
-        setModel(snapshot.model);
-        setNextCursor(snapshot.nextCursor);
-        const savedId = localStorage.getItem("reco.lastSessionId");
-        const initialId = snapshot.sessions.some(({ id }) => id === savedId)
-          ? savedId
-          : (snapshot.activeSessionId ?? snapshot.sessions[0]?.id);
-
-        if (initialId) setSelectedIds(new Set([initialId]));
-      })
-      .catch(() => setFatalError("エンジンに接続できませんでした。アプリを再起動してください。"))
-      .finally(() => setIsLoading(false));
-
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  useEngineEvents({
-    onCloseForceRequired: ({ error, sessionId }) => {
-      setCloseRequest({ error, sessionId: sessionId ?? undefined });
-      setDialog("forceClose");
+  useApplicationCore(
+    {
+      onError: () => {
+        setIsLoading(false);
+        setFatalError("ApplicationCoreとの同期に失敗しました。アプリを再起動してください。");
+      },
+      onEvent: handleApplicationEvent,
+      onSnapshot: handleApplicationSnapshot,
     },
-    onCloseRequested: ({ sessionId }) => {
-      setCloseRequest({ sessionId });
-      setDialog("close");
-    },
-    onEngineEvent: handleEngineEvent,
-    onSubscriptionError: () => {
-      setFatalError("エンジンのイベント購読に失敗しました。アプリを再起動してください。");
-    },
-  });
+    applicationCoreSubscriptions,
+  );
   const selectedAudioInput = selectedDeviceId
     ? audioInputs.find(({ id }) => id === selectedDeviceId)
     : audioInputs.find(({ isDefault }) => isDefault);
@@ -545,207 +520,108 @@ function App() {
     };
   }, [isFilterMenuOpen]);
 
-  function handleEngineEvent(message: EngineEvent): void {
-    if (message.event === "queue.changed") {
-      setQueue(message.payload as QueueSnapshot);
-    }
-    if (message.event === "engine.snapshot") {
-      const snapshot = message.payload as {
-        activeSessionId?: string;
-        model: ModelState;
-        sessions: SessionEntity[];
-      };
+  function handleApplicationSnapshot(snapshot: EngineSnapshot): void {
+    setQueue((current) => newestRevisionedValue(current, snapshot.queue));
+    dispatchSessions({
+      activeSessionId: snapshot.activeSessionId,
+      sessions: snapshot.sessions,
+      type: "bootstrap",
+    });
+    setModel(snapshot.model);
+    setNextCursor(snapshot.nextCursor);
+    setIsLoading(false);
+    const savedId = localStorage.getItem("reco.lastSessionId");
+    const initialId = snapshot.sessions.some(({ id }) => id === savedId)
+      ? savedId
+      : (snapshot.activeSessionId ?? snapshot.sessions[0]?.id);
 
-      dispatchSessions({
-        activeSessionId: snapshot.activeSessionId,
-        sessions: snapshot.sessions,
-        type: "bootstrap",
-      });
-      setModel(snapshot.model);
-    }
-    if (message.event === "segment.persisted") {
-      const payload = message.payload as Omit<PersistedSegmentReceipt, "sessionId"> & {
-        sessionId?: string;
-      };
-      const sessionId = payload.sessionId ?? message.sessionId;
+    if (initialId && selectedIds.size === 0) setSelectedIds(new Set([initialId]));
+  }
 
-      if (!sessionId) {
+  function handleApplicationEvent(message: ApplicationEvent): void {
+    switch (message.type) {
+      case "session.upserted":
+        dispatchSessions({ sessions: [message.session], type: "historyPageLoaded" });
+        dispatchSessions({
+          characterCount: message.session.characterCount,
+          durationMs: message.session.durationMs,
+          endedAt: message.session.endedAt,
+          errorCode: message.session.errorCode,
+          errorMessage: message.session.errorMessage,
+          rowVersion: message.session.rowVersion,
+          segmentCount: message.session.segmentCount,
+          sessionId: message.session.id,
+          status: message.session.status,
+          type: "statusChanged",
+        });
         return;
-      }
-
-      if (!sessionState.sessionsById[sessionId]) {
-        void recoBridge
-          .getSession(sessionId)
-          .then((detail) => dispatchSessions({ session: detail, type: "detailLoaded" }))
-          .catch(() => undefined);
-      }
-
-      dispatchSessions({ receipt: { ...payload, sessionId }, type: "segmentPersisted" });
-    }
-    if (message.event === "session.progress") {
-      const payload = message.payload as { processedAudioMs?: number; totalAudioMs?: number };
-
-      if (message.sessionId && payload.processedAudioMs !== undefined && payload.totalAudioMs) {
-        const sessionId = message.sessionId;
-        const progress = Math.min(1, Math.max(0, payload.processedAudioMs / payload.totalAudioMs));
-
-        setSessionProgress((current) => ({ ...current, [sessionId]: progress }));
-      }
-    }
-    if (message.event === "session.stateChanged") {
-      const payload = message.payload as {
-        characters?: number;
-        endedAt?: string;
-        errorCode?: string;
-        errorMessage?: string;
-        mediaDurationMs?: number;
-        rowVersion?: number;
-        state?: SessionStatus;
-        totalSegments?: number;
-      };
-
-      if (message.sessionId && payload.state && payload.rowVersion !== undefined) {
-        if (!sessionState.sessionsById[message.sessionId]) {
+      case "segment.committed":
+        if (!sessionState.sessionsById[message.receipt.sessionId]) {
           void recoBridge
-            .getSession(message.sessionId)
+            .getSession(message.receipt.sessionId)
             .then((detail) => dispatchSessions({ session: detail, type: "detailLoaded" }))
             .catch(() => undefined);
         }
-        dispatchSessions({
-          characterCount: payload.characters,
-          durationMs: payload.mediaDurationMs,
-          endedAt: payload.endedAt,
-          errorCode: payload.errorCode,
-          errorMessage: payload.errorMessage,
-          rowVersion: payload.rowVersion,
-          segmentCount: payload.totalSegments,
-          sessionId: message.sessionId,
-          status: payload.state,
-          type: "statusChanged",
-        });
-        if (payload.state === "paused" && payload.errorMessage) {
-          setToast(`再開できませんでした: ${payload.errorMessage}`);
+        dispatchSessions({ receipt: message.receipt, type: "segmentPersisted" });
+        return;
+      case "session.progress":
+        if (message.totalAudioMs) {
+          const progress = Math.min(
+            1,
+            Math.max(0, message.processedAudioMs / message.totalAudioMs),
+          );
+
+          setSessionProgress((current) => ({ ...current, [message.sessionId]: progress }));
         }
-      }
-    }
-    if (message.event === "session.completed") {
-      const payload = message.payload as {
-        characters?: number;
-        endedAt?: string;
-        mediaDurationMs?: number;
-        rowVersion?: number;
-        state?: SessionStatus;
-        totalSegments?: number;
-      };
-
-      if (message.sessionId && payload.rowVersion !== undefined) {
-        dispatchSessions({
-          characterCount: payload.characters,
-          durationMs: payload.mediaDurationMs,
-          endedAt: payload.endedAt,
-          rowVersion: payload.rowVersion,
-          segmentCount: payload.totalSegments,
-          sessionId: message.sessionId,
-          status: payload.state ?? "completed",
-          type: "statusChanged",
-        });
-      }
-    }
-    if (message.event === "session.failed") {
-      const payload = message.payload as {
-        characters?: number;
-        code?: string;
-        endedAt?: string;
-        mediaDurationMs?: number;
-        message?: string;
-        rowVersion?: number;
-        totalSegments?: number;
-      };
-
-      if (message.sessionId && payload.rowVersion !== undefined) {
-        dispatchSessions({
-          characterCount: payload.characters,
-          durationMs: payload.mediaDurationMs,
-          endedAt: payload.endedAt,
-          errorCode: payload.code,
-          errorMessage: payload.message,
-          rowVersion: payload.rowVersion,
-          segmentCount: payload.totalSegments,
-          sessionId: message.sessionId,
-          status: "failed",
-          type: "statusChanged",
-        });
-      }
-    }
-    if (message.event === "history.changed" && message.sessionId) {
-      void recoBridge
-        .getSession(message.sessionId)
-        .then((detail) => dispatchSessions({ session: detail, type: "canonicalReconciled" }))
-        .catch(() => undefined);
-    }
-    if (message.event === "export.progress") {
-      const payload = message.payload as {
-        completedItems?: number;
-        completed?: number;
-        operationId?: string;
-        progress?: number;
-        totalItems?: number;
-        total?: number;
-      };
-      const progress =
-        payload.progress ??
-        ((payload.completedItems ?? payload.completed) !== undefined &&
-        (payload.totalItems ?? payload.total)
-          ? (payload.completedItems ?? payload.completed ?? 0) /
-            (payload.totalItems ?? payload.total ?? 1)
-          : undefined);
-
-      setExportOperation((current) =>
-        current
-          ? {
-              ...current,
-              operationId: payload.operationId ?? current.operationId,
-              progress: progress ?? current.progress,
-              state: "running",
-            }
-          : current,
-      );
-    }
-    if (message.event === "export.completed") {
-      const payload = message.payload as {
-        failures?: { sessionId: string }[];
-        failedSessionIds?: string[];
-        operationId?: string;
-        status?: string;
-      };
-      const failedSessionIds =
-        payload.failedSessionIds ?? payload.failures?.map(({ sessionId }) => sessionId) ?? [];
-
-      setExportOperation((current) =>
-        current
-          ? {
-              ...current,
-              failedSessionIds,
-              operationId: payload.operationId ?? current.operationId,
-              progress: 1,
-              state:
-                payload.status === "cancelled"
+        return;
+      case "sessions.deleted":
+        dispatchSessions({ sessionIds: message.sessionIds, type: "sessionsDeleted" });
+        return;
+      case "queue.changed":
+        setQueue((current) => newestRevisionedValue(current, message.queue));
+        return;
+      case "model.changed":
+        setModel(message.model);
+        return;
+      case "export.progress":
+        setExportOperation((current) =>
+          current
+            ? {
+                ...current,
+                operationId: message.operationId,
+                progress: message.totalItems ? message.completedItems / message.totalItems : 0,
+                state: "running",
+              }
+            : current,
+        );
+        return;
+      case "export.finished":
+        setExportOperation((current) =>
+          current
+            ? {
+                ...current,
+                failedSessionIds: message.failedSessionIds,
+                operationId: message.operationId,
+                progress: 1,
+                state: message.canceled
                   ? "canceled"
-                  : failedSessionIds.length
+                  : message.failedSessionIds.length
                     ? "failed"
                     : "completed",
-            }
-          : current,
-      );
-    }
-    if (message.event === "operation.failed") {
-      const payload = message.payload as { message?: string; operation?: string };
-
-      if (payload.operation?.startsWith("history.export")) {
-        setExportOperation((current) => (current ? { ...current, state: "failed" } : current));
-      }
-
-      setToast(payload.message ?? "操作を完了できませんでした。");
+              }
+            : current,
+        );
+        return;
+      case "close.confirmationRequired":
+        setCloseRequest({ sessionId: message.sessionId });
+        setDialog("close");
+        return;
+      case "close.forceRequired":
+        setCloseRequest({ error: message.error, sessionId: message.sessionId });
+        setDialog("forceClose");
+        return;
+      case "notification.error":
+        setToast(message.message);
     }
   }
 
@@ -848,12 +724,12 @@ function App() {
     setIsWorking(true);
     try {
       if (inputKind === "file") {
-        const files = await recoBridge.pickAudioFiles();
+        const result = await recoBridge.addFiles(selectedLanguage);
 
-        if (!files?.length) return;
-        setQueue(await recoBridge.enqueueFiles(files, selectedLanguage));
+        if (result.canceled) return;
+        setQueue((current) => newestRevisionedValue(current, result.queue));
         setDialog(null);
-        setToast(`${files.length}件の音声ファイルを受け付けました。`);
+        setToast("音声ファイルを処理キューへ追加しました。");
         return;
       }
       const input: {
@@ -868,32 +744,11 @@ function App() {
         language: selectedLanguage,
       };
 
-      const { rowVersion, sessionId } = await recoBridge.startSession(input);
-      const startedAt = new Date().toISOString();
-      const optimisticSession: SessionEntity = {
-        characterCount: 0,
-        durationMs: 0,
-        id: sessionId,
-        inputKind,
-        inputName:
-          input.inputName ??
-          (inputKind === "systemAudio" ? "デスクトップ音声" : "システムの既定マイク"),
-        language: selectedLanguage ?? "自動",
-        model: "Qwen3-ASR 1.7B JA",
-        rowVersion,
-        segmentCount: 0,
-        segments: [],
-        segmentsLoaded: true,
-        startedAt,
-        status: "preparing",
-        title:
-          input.inputName ??
-          `${inputKind === "systemAudio" ? "デスクトップ音声" : "録音"} ${new Intl.DateTimeFormat("ja-JP", { dateStyle: "short", timeStyle: "short" }).format(new Date())}`,
-      };
+      const session = await recoBridge.startSession(input);
 
       setDialog(null);
-      dispatchSessions({ session: optimisticSession, type: "sessionStarted" });
-      setSelectedIds(new Set([sessionId]));
+      dispatchSessions({ session, type: "sessionStarted" });
+      setSelectedIds(new Set([session.id]));
       setToast("録音を開始しました。");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -910,7 +765,9 @@ function App() {
     setIsWorking(true);
     try {
       if (session?.inputKind === "file") {
-        setQueue(await recoBridge.pauseQueue());
+        const snapshot = await recoBridge.pauseQueue();
+
+        setQueue((current) => newestRevisionedValue(current, snapshot));
       }
       await recoBridge.pauseSession(sessionId);
       setToast("処理待ちを完了して一時停止します。");
@@ -953,10 +810,14 @@ function App() {
   ): Promise<void> {
     setIsQueueWorking(true);
     try {
-      setQueue(await action());
+      const snapshot = await action();
+
+      setQueue((current) => newestRevisionedValue(current, snapshot));
     } catch {
       try {
-        setQueue(await recoBridge.getQueueState());
+        const snapshot = await recoBridge.getQueueState();
+
+        setQueue((current) => newestRevisionedValue(current, snapshot));
       } catch {
         // The event stream may still reconcile the canonical queue state.
       }
@@ -1019,18 +880,30 @@ function App() {
         setExportOperation(undefined);
         return;
       }
-      setExportOperation((current) => ({
-        failedSessionIds: result.failedSessionIds ?? [],
-        format,
-        operationId: result.operationId ?? current?.operationId,
-        progress: result.completed ? 1 : (current?.progress ?? 0),
-        sessionIds,
-        state: result.failedSessionIds?.length
-          ? "failed"
-          : result.completed
-            ? "completed"
-            : "running",
-      }));
+      setExportOperation((current) => {
+        const operationId = result.operationId ?? current?.operationId;
+
+        if (
+          operationId &&
+          current?.operationId === operationId &&
+          ["canceled", "completed", "failed"].includes(current.state)
+        ) {
+          return current;
+        }
+
+        return {
+          failedSessionIds: result.failedSessionIds ?? [],
+          format,
+          operationId,
+          progress: result.completed ? 1 : (current?.progress ?? 0),
+          sessionIds,
+          state: result.failedSessionIds?.length
+            ? "failed"
+            : result.completed
+              ? "completed"
+              : "running",
+        };
+      });
     } catch {
       setExportOperation((current) => (current ? { ...current, state: "failed" } : current));
       setToast("書き出しを開始できませんでした。");
@@ -1154,7 +1027,10 @@ function App() {
             hasActiveSession={activeSessionId !== undefined}
             queue={queue}
             onClear={() =>
-              void updateQueue(() => recoBridge.clearQueue(), "キューをクリアできませんでした。")
+              void updateQueue(
+                () => recoBridge.clearQueue(queue.revision),
+                "キューをクリアできませんでした。",
+              )
             }
             onMove={(itemId, offset) => reorderQueueItem(itemId, offset)}
             onPause={() =>
@@ -1162,13 +1038,13 @@ function App() {
             }
             onRemove={(itemId) =>
               void updateQueue(
-                () => recoBridge.removeQueueItem(itemId),
+                () => recoBridge.removeQueueItem(itemId, queue.revision),
                 "キューから削除できませんでした。",
               )
             }
             onStart={() =>
               void updateQueue(
-                () => recoBridge.startQueue(selectedLanguage),
+                () => recoBridge.startQueue(selectedLanguage, queue.revision),
                 "キューを開始できませんでした。",
               )
             }
@@ -2530,7 +2406,7 @@ function SettingsDialog({
         <dl>
           <div>
             <dt>RecoGUI</dt>
-            <dd>0.1.0</dd>
+            <dd>{packageMetadata.version}</dd>
           </div>
         </dl>
       </div>

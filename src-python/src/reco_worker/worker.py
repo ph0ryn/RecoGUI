@@ -17,12 +17,12 @@ from typing import BinaryIO, Protocol, cast
 
 import numpy as np
 
-from reco.config import DEFAULT_TRANSCRIPTION_CONFIG, TranscriptionConfig
-from reco.errors import RecoError
-from reco.model_manager import ModelManager, ModelReference, ModelState
-from reco.models import SpeechSegment, TranscriptionDiagnostics, TranscriptionResult
-from reco.transcription import LocalAsrTranscriptionService
+from reco_worker.config import DEFAULT_TRANSCRIPTION_CONFIG, TranscriptionConfig
+from reco_worker.errors import AsrRuntimeError
+from reco_worker.model_catalog import ModelCatalog, ModelReference
+from reco_worker.models import SpeechSegment, TranscriptionDiagnostics, TranscriptionResult
 from reco_worker.protocol import AsrProtocolError, Frame, FrameKind, FrameWriter, read_frame
+from reco_worker.transcription import LocalAsrTranscriptionService
 
 CAPABILITIES = (
   "models.list",
@@ -126,11 +126,11 @@ class WorkerDispatcher:
   def __init__(
     self,
     *,
-    model_manager: ModelManager | None = None,
+    model_catalog: ModelCatalog | None = None,
     service_factory: AsrServiceFactory = LocalAsrTranscriptionService,
     cache_clearer: Callable[[], None] | None = None,
   ) -> None:
-    self._model_manager = model_manager or ModelManager()
+    self._model_catalog = model_catalog or ModelCatalog()
     self._service_factory = service_factory
     self._cache_clearer = cache_clearer or _clear_mlx_cache
     self._loaded: LoadedModel | None = None
@@ -166,12 +166,11 @@ class WorkerDispatcher:
 
   def _list_models(self, metadata: Mapping[str, object]) -> dict[str, object]:
     del metadata
-    public_models = self._model_manager.list_models()
-    snapshot = self._model_manager.snapshot()
-    if snapshot.state is ModelState.ERROR:
+    public_models = self._model_catalog.refresh()
+    if self._model_catalog.error is not None:
       raise WorkerRequestError(
         "modelScanFailed",
-        snapshot.error or "Could not scan the Hugging Face model cache",
+        self._model_catalog.error,
         recoverable=True,
       )
     models: list[dict[str, object]] = []
@@ -179,7 +178,7 @@ class WorkerDispatcher:
       repository_id = _require_string(public_model, "repoId")
       revision = _require_string(public_model, "revision")
       reference = ModelReference(repository_id, revision)
-      resolved = self._model_manager.resolve(reference)
+      resolved = self._model_catalog.resolve(reference)
       if resolved is None:
         raise WorkerRequestError(
           "modelScanFailed",
@@ -193,16 +192,15 @@ class WorkerDispatcher:
     repository_id = _require_string(metadata, "repoId")
     revision = _require_string(metadata, "revision")
 
-    self._model_manager.list_models()
-    snapshot = self._model_manager.snapshot()
-    if snapshot.state is ModelState.ERROR:
+    self._model_catalog.refresh()
+    if self._model_catalog.error is not None:
       raise WorkerRequestError(
         "modelScanFailed",
-        snapshot.error or "Could not scan the Hugging Face model cache",
+        self._model_catalog.error,
         recoverable=True,
       )
     reference = ModelReference(repository_id, revision)
-    resolved = self._model_manager.resolve(reference)
+    resolved = self._model_catalog.resolve(reference)
     if resolved is None:
       raise WorkerRequestError(
         "modelUnavailable",
@@ -219,7 +217,7 @@ class WorkerDispatcher:
     try:
       service = self._service_factory(resolved, language=None)
       runtime = service.load_model()
-    except (OSError, RecoError, RuntimeError, ValueError) as exc:
+    except (OSError, AsrRuntimeError, RuntimeError, ValueError) as exc:
       raise WorkerRequestError("modelLoadFailed", str(exc), recoverable=True) from exc
     loaded = LoadedModel(reference, resolved, runtime, service.model_load_ms)
     self._loaded = loaded
@@ -274,7 +272,7 @@ class WorkerDispatcher:
         config=config,
       )
       result = service.transcribe(segment)
-    except (OSError, RecoError, RuntimeError, ValueError) as exc:
+    except (OSError, AsrRuntimeError, RuntimeError, ValueError) as exc:
       raise WorkerRequestError("transcriptionFailed", str(exc), recoverable=True) from exc
     return {
       "sessionId": session_id,

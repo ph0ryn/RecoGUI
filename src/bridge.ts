@@ -1,13 +1,22 @@
-/* oxlint-disable no-ternary, curly, @stylistic/padding-line-between-statements */
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
+import {
+  commands,
+  events,
+  type AppEvent,
+  type AppSnapshot,
+  type LiveSource,
+  type ModelState as ContractModelState,
+  type QueueSnapshot as ContractQueueSnapshot,
+  type SessionDetail as ContractSessionDetail,
+  type SessionSummary as ContractSessionSummary,
+  type TranscriptSegment as ContractTranscriptSegment,
+} from "./generated/bindings";
 import { mockSnapshot } from "./mockData";
 
 import type {
+  ApplicationEvent,
   AudioInput,
-  EngineEvent,
   EngineSnapshot,
   ExportFormat,
   ExportResult,
@@ -17,17 +26,15 @@ import type {
   ModelReference,
   ModelState,
   QueueSnapshot,
-  SelectedAudioFile,
   SessionDetail,
-  SessionSummary,
   SessionStatus,
+  SessionSummary,
   TranscriptSegment,
 } from "./types";
 
 interface StartSessionInput {
   deviceId?: string;
   inputKind: InputKind;
-  inputToken?: string;
   inputName?: string;
   language: string | null;
 }
@@ -40,173 +47,252 @@ interface HistoryQuery {
   status?: SessionStatus;
 }
 
-interface EngineRequest<T> {
-  command: string;
-  payload?: T;
-}
-
-interface RawEngineState {
-  activeSession: string | null;
-}
-
-interface RawHistoryPage {
-  items: RawSession[];
-  nextCursor: string | null;
-}
-
-interface RawSession {
-  sessionId: string;
-  state: string;
-  title: string;
-  sourceKind: string;
-  sourceDisplayName: string;
-  model: string;
-  language: string;
-  detectedLanguages: string[];
-  rowVersion: number;
-  startedAt: string;
-  endedAt?: string | null;
-  mediaDurationMs?: number;
-  totalSegments?: number;
-  characters?: number;
-  snippet?: string | null;
-  errorCode?: string | null;
-  errorMessage?: string | null;
-  segments?: RawSegment[];
-  nextSegmentOffset?: number | null;
-}
-
-interface RawSegment {
-  segmentIndex: number;
-  startSample: number;
-  endSample: number;
-  language: string;
-  text: string;
-}
-
-interface RawQueueItem {
-  itemId: string;
-  displayName: string;
-  state: "pending" | "invalid";
-  addedAt: string;
-  updatedAt: string;
-  errorCode?: string | null;
-  errorMessage?: string | null;
-}
-
-interface RawQueueSnapshot {
-  revision: number;
-  autoAdvanceEnabled: boolean;
-  items: RawQueueItem[];
-}
-
-class SessionSnapshotChangedError extends Error {
-  constructor() {
-    super("Session changed while its transcript was being loaded");
-    this.name = "SessionSnapshotChangedError";
-  }
-}
-
 function hasTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
-async function request<Result, Payload = unknown>(
-  command: string,
-  payload?: Payload,
-): Promise<Result> {
-  return invoke<Result>("engine_request", {
-    ...({ command, payload: payload ?? ({} as Payload) } satisfies EngineRequest<Payload>),
-  });
-}
-
-function mapSegment(sessionId: string, segment: RawSegment): TranscriptSegment {
-  const sequence = segment.segmentIndex;
-
+function mapSegment(sessionId: string, value: ContractTranscriptSegment): TranscriptSegment {
   return {
-    endMs: Math.round(segment.endSample / 16),
-    id: `${sessionId}:${sequence}`,
-    language: segment.language,
-    sequence,
-    startMs: Math.round(segment.startSample / 16),
-    text: segment.text,
+    endMs: value.endMs ?? 0,
+    id: `${sessionId}:${value.index}`,
+    language: value.language,
+    sequence: value.index,
+    startMs: value.startMs ?? 0,
+    text: value.text,
   };
 }
 
-function mapSessionLanguage(value: RawSession): string {
-  if (value.language !== "Auto") return value.language;
-  if (value.detectedLanguages.length === 0) return "自動";
+function language(value: ContractSessionSummary): string {
+  if (value.requestedLanguage) {
+    return value.requestedLanguage;
+  }
+
+  if (value.detectedLanguages.length === 0) {
+    return "自動";
+  }
+
   return `自動 (${value.detectedLanguages.join(", ")})`;
 }
 
-function mapInputKind(value: string): InputKind {
-  if (value === "file" || value === "microphone" || value === "systemAudio") return value;
-  throw new Error(`Unsupported input kind: ${value}`);
-}
-
-function mapSessionSummary(value: RawSession): SessionSummary {
+function mapSummary(value: ContractSessionSummary): SessionSummary {
   return {
-    characterCount: value.characters ?? 0,
-    durationMs: value.mediaDurationMs ?? 0,
+    characterCount: value.characterCount,
+    durationMs: value.durationMs ?? 0,
     endedAt: value.endedAt ?? undefined,
-    errorCode: value.errorCode ?? undefined,
-    errorMessage: value.errorMessage ?? undefined,
-    id: value.sessionId,
-    inputKind: mapInputKind(value.sourceKind),
-    inputName: value.sourceDisplayName,
-    language: mapSessionLanguage(value),
-    model: value.model,
+    errorCode: value.error?.code,
+    errorMessage: value.error?.message,
+    id: value.id,
+    inputKind: value.inputKind,
+    inputName: value.inputName,
+    language: language(value),
+    model: value.model.repoId,
     rowVersion: value.rowVersion,
-    segmentCount: value.totalSegments ?? 0,
+    segmentCount: value.segmentCount,
     snippet: value.snippet ?? undefined,
     startedAt: value.startedAt,
-    status: value.state as SessionStatus,
+    status: value.status,
     title: value.title,
   };
 }
 
-function mapSessionDetail(value: RawSession): SessionDetail {
+function mapDetail(value: ContractSessionDetail): SessionDetail {
   return {
-    ...mapSessionSummary(value),
-    segments: (value.segments ?? []).map((segment) => mapSegment(value.sessionId, segment)),
+    ...mapSummary(value),
+    segments: value.segments.map((segment) => mapSegment(value.id, segment)),
     segmentsLoaded: true,
   };
 }
 
-function mapQueueSnapshot(value: RawQueueSnapshot): QueueSnapshot {
+function mapModel(value: ContractModelState): ModelState {
+  return {
+    errorCode: value.error?.code,
+    errorMessage: value.error?.message,
+    selected: value.selected,
+    status: value.status,
+  };
+}
+
+function mapQueue(value: ContractQueueSnapshot): QueueSnapshot {
   return {
     autoAdvanceEnabled: value.autoAdvanceEnabled,
     items: value.items.map((item) => ({
       addedAt: item.addedAt,
       displayName: item.displayName,
-      errorCode: item.errorCode ?? undefined,
-      errorMessage: item.errorMessage ?? undefined,
-      id: item.itemId,
-      status: item.state,
+      errorCode: item.error?.code,
+      errorMessage: item.error?.message,
+      id: item.id,
+      status: item.status,
       updatedAt: item.updatedAt,
     })),
     revision: value.revision,
   };
 }
 
+function mapSnapshot(value: AppSnapshot): EngineSnapshot {
+  const history = value.history.items.map(mapSummary);
+  let active: SessionDetail | undefined = undefined;
+
+  if (value.activeSession !== null) {
+    active = mapDetail(value.activeSession);
+  }
+
+  const sessions: (SessionSummary | SessionDetail)[] = [...history];
+
+  if (active) {
+    const index = sessions.findIndex(({ id }) => id === active.id);
+
+    if (index === -1) {
+      sessions.unshift(active);
+    } else {
+      sessions[index] = active;
+    }
+  }
+
+  return {
+    activeSessionId: active?.id,
+    model: mapModel(value.model),
+    nextCursor: value.history.nextCursor ?? undefined,
+    queue: mapQueue(value.queue),
+    sequence: value.sequence,
+    sessions,
+  };
+}
+
+function mapEvent(event: AppEvent): ApplicationEvent {
+  switch (event.type) {
+    case "session.upserted":
+      return { sequence: event.sequence, session: mapSummary(event.session), type: event.type };
+    case "segment.committed":
+      return {
+        receipt: {
+          characters: event.characterCount,
+          mediaDurationMs: event.durationMs ?? 0,
+          recognizedSegments: event.recognizedSegmentCount,
+          rowVersion: event.rowVersion,
+          segment: mapSegment(event.sessionId, event.segment),
+          sessionId: event.sessionId,
+          totalSegments: event.segmentCount,
+        },
+        sequence: event.sequence,
+        type: event.type,
+      };
+    case "session.progress":
+      return {
+        processedAudioMs: event.processedAudioMs ?? 0,
+        sequence: event.sequence,
+        sessionId: event.sessionId,
+        totalAudioMs: event.totalAudioMs ?? undefined,
+        type: event.type,
+      };
+    case "sessions.deleted":
+      return { sequence: event.sequence, sessionIds: event.sessionIds, type: event.type };
+    case "queue.changed":
+      return { queue: mapQueue(event.queue), sequence: event.sequence, type: event.type };
+    case "model.changed":
+      return { model: mapModel(event.model), sequence: event.sequence, type: event.type };
+    case "export.progress":
+      return {
+        completedItems: event.progress.completedItems,
+        operationId: event.progress.operationId,
+        sequence: event.sequence,
+        totalItems: event.progress.totalItems,
+        type: event.type,
+      };
+    case "export.finished":
+      return {
+        canceled: event.result.canceled,
+        failedSessionIds: event.result.failures.map(({ sessionId }) => sessionId).filter(Boolean),
+        operationId: event.result.operationId,
+        sequence: event.sequence,
+        type: event.type,
+      };
+    case "close.confirmationRequired":
+      return {
+        sequence: event.sequence,
+        sessionId: event.activeSessionId ?? undefined,
+        type: event.type,
+      };
+    case "close.forceRequired":
+      return {
+        error: event.error.message,
+        sequence: event.sequence,
+        sessionId: event.activeSessionId ?? undefined,
+        type: event.type,
+      };
+    case "notification.error":
+      return { message: event.error.message, sequence: event.sequence, type: event.type };
+  }
+}
+
+function historyInput(query: HistoryQuery) {
+  const inputKinds: InputKind[] = [];
+
+  if (query.inputKind) {
+    inputKinds.push(query.inputKind);
+  }
+
+  const statuses: SessionStatus[] = [];
+
+  if (query.status) {
+    statuses.push(query.status);
+  }
+
+  return {
+    cursor: query.cursor ?? null,
+    inputKinds,
+    limit: query.limit ?? 50,
+    query: query.query?.trim() || null,
+    sort: "newest" as const,
+    statuses,
+  };
+}
+
+async function currentSession(sessionId: string): Promise<SessionDetail> {
+  return recoBridge.getSession(sessionId);
+}
+
 const mockQueueSnapshot: QueueSnapshot = {
   autoAdvanceEnabled: false,
   items: [],
-  revision: 0,
+  revision: "0",
 };
 
 export const recoBridge = {
-  async cancelExport(operationId: string): Promise<void> {
-    if (hasTauriRuntime()) await request("history.cancelExport", { operationId });
+  async addFiles(language: string | null): Promise<{ canceled: boolean; queue: QueueSnapshot }> {
+    if (!hasTauriRuntime()) {
+      mockQueueSnapshot.items.push({
+        addedAt: new Date().toISOString(),
+        displayName: "選択した音声.wav",
+        id: crypto.randomUUID(),
+        status: "pending",
+        updatedAt: new Date().toISOString(),
+      });
+
+      mockQueueSnapshot.revision = incrementMockRevision(mockQueueSnapshot.revision);
+
+      return { canceled: false, queue: structuredClone(mockQueueSnapshot) };
+    }
+
+    const result = await commands.queueAddFiles({ language });
+
+    return { canceled: result.canceled, queue: mapQueue(result.queue) };
   },
 
-  async clearQueue(): Promise<QueueSnapshot> {
+  async cancelExport(operationId: string): Promise<void> {
+    if (hasTauriRuntime()) {
+      await commands.exportCancel({ operationId });
+    }
+  },
+
+  async clearQueue(revision: string): Promise<QueueSnapshot> {
     if (!hasTauriRuntime()) {
       mockQueueSnapshot.items = [];
-      mockQueueSnapshot.revision += 1;
+      mockQueueSnapshot.revision = incrementMockRevision(mockQueueSnapshot.revision);
+
       return structuredClone(mockQueueSnapshot);
     }
-    return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.clear"));
+
+    return mapQueue(await commands.queueClear({ expectedRevision: revision }));
   },
 
   async copySessions(sessionIds: string[], format: ExportFormat): Promise<void> {
@@ -214,162 +300,101 @@ export const recoBridge = {
 
     if (hasTauriRuntime()) {
       await writeText(content);
-      return;
+    } else {
+      await navigator.clipboard.writeText(content);
     }
-    await navigator.clipboard.writeText(content);
   },
 
   async deleteSessions(sessionIds: string[]): Promise<void> {
-    if (hasTauriRuntime()) {
-      await request(
-        sessionIds.length === 1 ? "history.delete" : "history.deleteMany",
-        sessionIds.length === 1 ? { sessionId: sessionIds[0] } : { sessionIds },
-      );
-    }
-  },
-
-  async enqueueFiles(files: SelectedAudioFile[], language: string | null): Promise<QueueSnapshot> {
     if (!hasTauriRuntime()) {
-      mockQueueSnapshot.items.push(
-        ...files.map((file) => ({
-          addedAt: new Date().toISOString(),
-          displayName: file.displayName,
-          id: crypto.randomUUID(),
-          status: "pending" as const,
-          updatedAt: new Date().toISOString(),
-        })),
-      );
-      mockQueueSnapshot.revision += 1;
-      return structuredClone(mockQueueSnapshot);
+      return;
     }
-    return mapQueueSnapshot(
-      await request<RawQueueSnapshot>("queue.enqueueFiles", { files, language }),
-    );
+
+    const sessions = await Promise.all(sessionIds.map(currentSession));
+
+    await commands.historyDelete({
+      sessions: sessions.map(({ id, rowVersion }) => ({
+        expectedRowVersion: rowVersion,
+        sessionId: id,
+      })),
+    });
   },
 
   async exportSessions(
     sessionIds: string[],
     format: ExportFormat,
-    sessionTitle: string,
+    _sessionTitle: string,
   ): Promise<ExportResult> {
     if (!hasTauriRuntime()) {
       return { canceled: false, completed: true, operationId: crypto.randomUUID() };
     }
 
-    let extension: string = format;
+    const result = await commands.exportStart({ format, sessionIds });
 
-    if (format === "markdown") {
-      extension = "md";
-    } else if (format === "timestampedTxt") {
-      extension = "txt";
-    }
-
-    const destination = await invoke<{ displayName: string; token: string } | null>(
-      "select_export_destination",
-      {
-        extension,
-        suggestedName: sessionTitle.replace(/[\\/]/g, "-"),
-      },
-    );
-
-    if (!destination) {
-      return { canceled: true };
-    }
-
-    const result = await request<Omit<ExportResult, "canceled">>(
-      sessionIds.length === 1 ? "history.export" : "history.exportMany",
-      {
-        destinationToken: destination.token,
-        format,
-        overwrite: true,
-        sessionIds,
-      },
-    );
-
-    return { ...result, canceled: false };
+    return {
+      canceled: result.canceled,
+      completed: false,
+      operationId: result.operationId ?? undefined,
+    };
   },
 
   async getModelState(): Promise<ModelState> {
-    if (!hasTauriRuntime()) return structuredClone(mockSnapshot.model);
-    return request<ModelState>("model.getState");
+    if (!hasTauriRuntime()) {
+      return structuredClone(mockSnapshot.model);
+    }
+
+    return mapModel((await commands.appGetSnapshot()).model);
   },
 
   async getQueueState(): Promise<QueueSnapshot> {
-    if (!hasTauriRuntime()) return structuredClone(mockQueueSnapshot);
-    return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.getState"));
+    if (!hasTauriRuntime()) {
+      return structuredClone(mockQueueSnapshot);
+    }
+
+    return mapQueue(await commands.queueGet());
   },
 
   async getSession(sessionId: string): Promise<SessionDetail> {
     if (!hasTauriRuntime()) {
       const session = mockSnapshot.sessions.find(({ id }) => id === sessionId);
 
-      if (!session) throw new Error(`Unknown session: ${sessionId}`);
-      if (!("segments" in session)) throw new Error(`Session detail is unavailable: ${sessionId}`);
+      if (!session || !("segments" in session)) {
+        throw new Error(`Unknown session: ${sessionId}`);
+      }
 
       return structuredClone(session);
     }
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const first = await request<
-        RawSession,
-        { segmentLimit: number; segmentOffset: number; sessionId: string }
-      >("history.get", { segmentLimit: 500, segmentOffset: 0, sessionId });
-      const segments = [...(first.segments ?? [])];
-      let nextOffset = first.nextSegmentOffset;
-      let consistent = true;
+    const first = await commands.historyGet({
+      expectedRowVersion: null,
+      segmentLimit: 500,
+      segmentOffset: 0,
+      sessionId,
+    });
+    const segments = [...first.segments];
+    let nextOffset = first.nextSegmentOffset;
 
-      while (nextOffset !== null && nextOffset !== undefined) {
-        const page = await request<
-          RawSession,
-          { segmentLimit: number; segmentOffset: number; sessionId: string }
-        >("history.get", { segmentLimit: 500, segmentOffset: nextOffset, sessionId });
+    while (nextOffset !== null) {
+      const page = await commands.historyGet({
+        expectedRowVersion: first.rowVersion,
+        segmentLimit: 500,
+        segmentOffset: nextOffset,
+        sessionId,
+      });
 
-        if (page.rowVersion !== first.rowVersion) {
-          consistent = false;
-          break;
-        }
-
-        segments.push(...(page.segments ?? []));
-        nextOffset = page.nextSegmentOffset;
-      }
-
-      if (consistent) return mapSessionDetail({ ...first, segments });
+      segments.push(...page.segments);
+      nextOffset = page.nextSegmentOffset;
     }
 
-    throw new SessionSnapshotChangedError();
+    return mapDetail({ ...first, nextSegmentOffset: null, segments });
   },
 
   async getSnapshot(): Promise<EngineSnapshot> {
-    if (!hasTauriRuntime()) return structuredClone(mockSnapshot);
-
-    const [engine, history, model] = await Promise.all([
-      request<RawEngineState>("engine.getState"),
-      request<RawHistoryPage, { limit: number }>("history.list", { limit: 100 }),
-      request<ModelState>("model.getState"),
-    ]);
-    const sessions: (SessionSummary | SessionDetail)[] = history.items.map(mapSessionSummary);
-
-    if (engine.activeSession) {
-      try {
-        const active = await recoBridge.getSession(engine.activeSession);
-        const index = sessions.findIndex(({ id }) => id === active.id);
-
-        if (index >= 0) {
-          sessions[index] = active;
-        } else {
-          sessions.unshift(active);
-        }
-      } catch (error) {
-        if (!(error instanceof SessionSnapshotChangedError)) throw error;
-      }
+    if (!hasTauriRuntime()) {
+      return { ...structuredClone(mockSnapshot), sequence: "0" };
     }
 
-    return {
-      activeSessionId: engine.activeSession ?? undefined,
-      model,
-      nextCursor: history.nextCursor ?? undefined,
-      sessions,
-    };
+    return mapSnapshot(await commands.appGetSnapshot());
   },
 
   async listAudioInputs(): Promise<AudioInput[]> {
@@ -380,267 +405,170 @@ export const recoBridge = {
       ];
     }
 
-    const result = await invoke<{
-      inputs: { channels: number; id: number | string; isDefault: boolean; name: string }[];
-    }>("audio_list_inputs");
-
-    return result.inputs.map((input) => ({ ...input, id: String(input.id) }));
+    return commands.audioListInputs();
   },
 
   async listHistory(query: HistoryQuery = {}): Promise<HistoryPage> {
     if (!hasTauriRuntime()) {
-      const items = mockSnapshot.sessions.filter(
-        (session) =>
-          (!query.status || session.status === query.status) &&
-          (!query.inputKind || session.inputKind === query.inputKind),
-      );
-
-      return { items: structuredClone(items) };
+      return { items: structuredClone(mockSnapshot.sessions) };
     }
 
-    const result = await request<RawHistoryPage>("history.list", {
-      cursor: query.cursor,
-      limit: query.limit ?? 50,
-      sourceKind: query.inputKind,
-      states: query.status ? [query.status] : [],
-    });
+    const result = await commands.historyQuery(historyInput(query));
 
-    return {
-      items: result.items.map(mapSessionSummary),
-      nextCursor: result.nextCursor ?? undefined,
-    };
+    return { items: result.items.map(mapSummary), nextCursor: result.nextCursor ?? undefined };
   },
 
   async listModels(): Promise<ModelList> {
     if (!hasTauriRuntime()) {
-      const selected = mockSnapshot.model.selected;
-
-      return {
-        models: selected
-          ? [
-              {
-                ...selected,
-                lastModified: "2 months ago",
-                refs: ["main"],
-                size: "2.5G",
-                supportedLanguages: ["Japanese", "English"],
-              },
-            ]
-          : [],
-        state: structuredClone(mockSnapshot.model),
-      };
+      return { models: [], state: structuredClone(mockSnapshot.model) };
     }
-    return request<ModelList>("model.list");
+
+    const result = await commands.modelList();
+
+    return { models: result.models, state: mapModel(result.state) };
   },
 
-  async onCloseForceRequired(
-    handler: (payload: { error: string; sessionId: string | null }) => void,
-  ): Promise<UnlistenFn> {
-    if (!hasTauriRuntime()) return () => undefined;
+  async onApplicationEvent(handler: (event: ApplicationEvent) => void): Promise<() => void> {
+    if (!hasTauriRuntime()) {
+      return () => undefined;
+    }
 
-    return listen<{ error: string; sessionId: string | null }>(
-      "host://close-force-required",
-      ({ payload }) => handler(payload),
-    );
-  },
-
-  async onCloseRequested(handler: (payload: { sessionId: string }) => void): Promise<UnlistenFn> {
-    if (!hasTauriRuntime()) return () => undefined;
-
-    return listen<{ sessionId: string }>("host://close-requested", ({ payload }) =>
-      handler(payload),
-    );
-  },
-
-  async onEngineEvent(handler: (event: EngineEvent) => void): Promise<UnlistenFn> {
-    if (!hasTauriRuntime()) return () => undefined;
-
-    return listen<EngineEvent>("engine://event", ({ payload }) => {
-      if (payload.event === "queue.changed") {
-        handler({
-          ...payload,
-          payload: mapQueueSnapshot(payload.payload as RawQueueSnapshot),
-        });
-
-        return;
-      }
-      if (payload.event !== "segment.persisted") {
-        handler(payload);
-
-        return;
-      }
-
-      const eventPayload = payload.payload as { segment?: RawSegment };
-
-      if (!payload.sessionId || !eventPayload.segment) {
-        handler(payload);
-
-        return;
-      }
-
-      handler({
-        ...payload,
-        payload: {
-          ...eventPayload,
-          segment: mapSegment(payload.sessionId, eventPayload.segment),
-        },
-      });
-    });
+    return events.appEvent.listen(({ payload }) => handler(mapEvent(payload)));
   },
 
   async pauseQueue(): Promise<QueueSnapshot> {
     if (!hasTauriRuntime()) {
       mockQueueSnapshot.autoAdvanceEnabled = false;
+
       return structuredClone(mockQueueSnapshot);
     }
-    return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.pause"));
+
+    return mapQueue(await commands.queuePause());
   },
 
   async pauseSession(sessionId: string): Promise<void> {
-    if (hasTauriRuntime()) await request("session.pause", { sessionId });
-  },
-
-  async pickAudioFiles(): Promise<SelectedAudioFile[] | null> {
     if (!hasTauriRuntime()) {
-      return [{ displayName: "選択した音声.wav", sourceToken: "mock-file-token" }];
+      return;
     }
 
-    const selected = await invoke<{ displayName: string; token: string }[] | null>(
-      "select_audio_files",
-    );
+    const session = await currentSession(sessionId);
 
-    return selected?.map(({ displayName, token }) => ({ displayName, sourceToken: token })) ?? null;
+    await commands.sessionPause({ expectedRowVersion: session.rowVersion, sessionId });
   },
 
-  async removeQueueItem(itemId: string): Promise<QueueSnapshot> {
+  async removeQueueItem(itemId: string, revision: string): Promise<QueueSnapshot> {
     if (!hasTauriRuntime()) {
-      mockQueueSnapshot.items = mockQueueSnapshot.items.filter(({ id }) => id !== itemId);
-      mockQueueSnapshot.revision += 1;
       return structuredClone(mockQueueSnapshot);
     }
-    return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.remove", { itemId }));
+
+    return mapQueue(await commands.queueRemove({ expectedRevision: revision, itemId }));
   },
 
   async renameSession(
     sessionId: string,
     title: string,
-  ): Promise<{ rowVersion: number; sessionId: string; title: string }> {
+  ): Promise<{ rowVersion: string; sessionId: string; title: string }> {
     if (!hasTauriRuntime()) {
-      return { rowVersion: 1, sessionId, title: title.trim() };
+      return { rowVersion: "1", sessionId, title: title.trim() };
     }
 
-    return request("history.rename", { sessionId, title });
+    const session = await currentSession(sessionId);
+    const renamed = await commands.historyRename({
+      expectedRowVersion: session.rowVersion,
+      sessionId,
+      title,
+    });
+
+    return { rowVersion: renamed.rowVersion, sessionId: renamed.id, title: renamed.title };
   },
 
   async renderSessions(sessionIds: string[], format: ExportFormat): Promise<string> {
     if (!hasTauriRuntime()) {
-      return mockSnapshot.sessions
-        .filter(({ id }) => sessionIds.includes(id))
-        .flatMap((session) =>
-          "segments" in session ? session.segments.map(({ text }) => text) : [],
-        )
-        .join("\n");
+      return "";
     }
 
-    const result = await request<{ content: string }>("history.render", {
-      format,
-      sessionIds,
-    });
-
-    return result.content;
+    return commands.historyRender({ format, sessionIds });
   },
 
-  async reorderQueue(revision: number, itemIds: string[]): Promise<QueueSnapshot> {
+  async reorderQueue(revision: string, itemIds: string[]): Promise<QueueSnapshot> {
     if (!hasTauriRuntime()) {
-      if (revision !== mockQueueSnapshot.revision) throw new Error("Stale queue revision");
-      const itemsById = new Map(mockQueueSnapshot.items.map((item) => [item.id, item]));
-
-      mockQueueSnapshot.items = itemIds.flatMap((id) => {
-        const item = itemsById.get(id);
-
-        return item ? [item] : [];
-      });
-      mockQueueSnapshot.revision += 1;
       return structuredClone(mockQueueSnapshot);
     }
-    return mapQueueSnapshot(
-      await request<RawQueueSnapshot>("queue.reorder", { itemIds, revision }),
-    );
+
+    return mapQueue(await commands.queueReorder({ expectedRevision: revision, itemIds }));
   },
 
   async resolveClose(resolution: "cancel" | "stopAndQuit" | "forceQuit"): Promise<void> {
     if (hasTauriRuntime()) {
-      await invoke("host_resolve_close_request", { input: { resolution } });
+      await commands.hostResolveClose(resolution);
     }
   },
 
   async resumeSession(sessionId: string): Promise<void> {
-    if (hasTauriRuntime()) await request("session.resume", { sessionId });
+    if (!hasTauriRuntime()) {
+      return;
+    }
+
+    const session = await currentSession(sessionId);
+
+    await commands.sessionResume({ expectedRowVersion: session.rowVersion, sessionId });
   },
 
   async searchHistory(query: HistoryQuery): Promise<HistoryPage> {
-    if (!query.query?.trim()) return this.listHistory(query);
-
-    if (!hasTauriRuntime()) {
-      const normalizedQuery = query.query.trim().toLocaleLowerCase("ja-JP");
-      const items = mockSnapshot.sessions.filter((session) => {
-        const texts = "segments" in session ? session.segments.map(({ text }) => text) : [];
-        const textMatches = [session.title, ...texts].some((value) =>
-          value.toLocaleLowerCase("ja-JP").includes(normalizedQuery),
-        );
-
-        return (
-          textMatches &&
-          (!query.status || session.status === query.status) &&
-          (!query.inputKind || session.inputKind === query.inputKind)
-        );
-      });
-
-      return { items: structuredClone(items) };
-    }
-
-    const result = await request<RawHistoryPage>("history.search", {
-      cursor: query.cursor,
-      limit: query.limit ?? 50,
-      query: query.query,
-      source: query.inputKind,
-      status: query.status,
-    });
-
-    return {
-      items: result.items.map(mapSessionSummary),
-      nextCursor: result.nextCursor ?? undefined,
-    };
+    return this.listHistory(query);
   },
 
   async selectModel(model: ModelReference): Promise<ModelState> {
-    if (!hasTauriRuntime()) return { selected: model, status: "ready" };
-    return request<ModelState, ModelReference>("model.select", model);
+    if (!hasTauriRuntime()) {
+      return { selected: model, status: "ready" };
+    }
+
+    return mapModel(await commands.modelSelect(model));
   },
 
-  async startQueue(language: string | null): Promise<QueueSnapshot> {
+  async startQueue(language: string | null, revision: string): Promise<QueueSnapshot> {
     if (!hasTauriRuntime()) {
-      mockQueueSnapshot.autoAdvanceEnabled = mockQueueSnapshot.items.length > 0;
       return structuredClone(mockQueueSnapshot);
     }
-    return mapQueueSnapshot(await request<RawQueueSnapshot>("queue.start", { language }));
+
+    return mapQueue(await commands.queueStart({ expectedRevision: revision, language }));
   },
 
-  async startSession(input: StartSessionInput): Promise<{ rowVersion: number; sessionId: string }> {
-    if (!hasTauriRuntime()) return { rowVersion: 1, sessionId: crypto.randomUUID() };
-
+  async startSession(input: StartSessionInput): Promise<SessionDetail> {
     if (input.inputKind === "file") {
-      throw new Error("File sources must be added through the processing queue");
+      throw new Error("Files must be added through the queue");
     }
-    const source =
-      input.inputKind === "microphone"
-        ? { deviceId: input.deviceId, type: "microphone" }
-        : { type: "systemAudio" };
 
-    return request("session.start", { language: input.language, source, title: input.inputName });
+    if (!hasTauriRuntime()) {
+      throw new Error("Live recording requires the Tauri runtime");
+    }
+
+    let source: LiveSource = { type: "systemAudio" };
+
+    if (input.inputKind === "microphone") {
+      source = { deviceId: input.deviceId ?? null, type: "microphone" };
+    }
+
+    return mapDetail(
+      await commands.sessionStart({
+        language: input.language,
+        source,
+        title: input.inputName ?? null,
+      }),
+    );
   },
 
   async stopSession(sessionId: string): Promise<void> {
-    if (hasTauriRuntime()) await request("session.stop", { sessionId });
+    if (!hasTauriRuntime()) {
+      return;
+    }
+
+    const session = await currentSession(sessionId);
+
+    await commands.sessionStop({ expectedRowVersion: session.rowVersion, sessionId });
   },
 };
+
+function incrementMockRevision(value: string): string {
+  return (BigInt(value) + 1n).toString();
+}

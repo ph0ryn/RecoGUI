@@ -3,51 +3,77 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { recoBridge } from "./bridge";
 
-import type { EngineEvent } from "./types";
+import type { AppEvent, SessionDetail } from "./generated/bindings";
 
 const tauriMocks = vi.hoisted(() => ({
   invoke: vi.fn(),
-  listener: undefined as ((event: { payload: EngineEvent }) => void) | undefined,
+  listener: undefined as ((event: { payload: AppEvent }) => void) | undefined,
   unlisten: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: tauriMocks.invoke }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn((_name: string, listener: (event: { payload: EngineEvent }) => void) => {
+  listen: vi.fn((name: string, listener: (event: { payload: AppEvent }) => void) => {
+    expect(name).toBe("app://event");
     tauriMocks.listener = listener;
 
     return Promise.resolve(tauriMocks.unlisten);
   }),
 }));
 
-function rawSession(rowVersion: number, segmentIndex: number, nextSegmentOffset: number | null) {
+function sessionDetail(
+  rowVersion = "1",
+  segmentIndex = 0,
+  nextSegmentOffset: number | null = null,
+): SessionDetail {
   return {
-    characters: segmentIndex + 1,
+    characterCount: segmentIndex + 1,
     detectedLanguages: ["Japanese"],
-    language: "Japanese",
-    mediaDurationMs: (segmentIndex + 1) * 1_000,
-    model: "model",
+    durationMs: (segmentIndex + 1) * 1_000,
+    endedAt: null,
+    error: null,
+    id: "session-1",
+    inputKind: "file",
+    inputName: "audio.wav",
+    model: { repoId: "owner/model", revision: "revision" },
     nextSegmentOffset,
+    recognizedSegmentCount: segmentIndex + 1,
+    requestedLanguage: null,
+    resumeMode: "none",
     rowVersion,
+    segmentCount: segmentIndex + 1,
     segments: [
       {
-        endSample: (segmentIndex + 1) * 16_000,
+        endMs: (segmentIndex + 1) * 1_000,
+        index: segmentIndex,
         language: "Japanese",
-        segmentIndex,
-        startSample: segmentIndex * 16_000,
+        splitReason: "silence",
+        startMs: segmentIndex * 1_000,
         text: `segment-${segmentIndex}`,
       },
     ],
-    sessionId: "session-1",
-    sourceDisplayName: "audio.wav",
-    sourceKind: "file",
+    snippet: `segment-${segmentIndex}`,
     startedAt: "2026-07-21T00:00:00.000Z",
-    state: "running",
+    status: "running",
     title: "Audio",
-    totalSegments: segmentIndex + 1,
   };
 }
+
+const queue = {
+  autoAdvanceEnabled: false,
+  items: [
+    {
+      addedAt: "2026-07-21T00:00:00Z",
+      displayName: "audio.wav",
+      error: null,
+      id: "queue-1",
+      status: "pending" as const,
+      updatedAt: "2026-07-21T00:00:00Z",
+    },
+  ],
+  revision: "4",
+};
 
 beforeEach(() => {
   Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
@@ -57,24 +83,20 @@ beforeEach(() => {
 });
 
 describe("recoBridge", () => {
-  it("lists microphone inputs through the native Tauri command", async () => {
-    tauriMocks.invoke.mockResolvedValue({
-      inputs: [
-        { channels: 1, id: "builtin-uid", isDefault: true, name: "MacBookのマイク" },
-        { channels: 2, id: 42, isDefault: false, name: "USBマイク" },
-      ],
-    });
+  it("lists microphone inputs through the typed native command", async () => {
+    tauriMocks.invoke.mockResolvedValue([
+      { channels: 1, id: "builtin-uid", isDefault: true, name: "MacBookのマイク" },
+    ]);
 
     await expect(recoBridge.listAudioInputs()).resolves.toEqual([
       { channels: 1, id: "builtin-uid", isDefault: true, name: "MacBookのマイク" },
-      { channels: 2, id: "42", isDefault: false, name: "USBマイク" },
     ]);
 
     expect(tauriMocks.invoke).toHaveBeenCalledWith("audio_list_inputs");
   });
 
-  it("starts microphone and desktop audio with distinct engine sources", async () => {
-    tauriMocks.invoke.mockResolvedValue({ rowVersion: 1, sessionId: "session-live" });
+  it("starts microphone and system audio with distinct live sources", async () => {
+    tauriMocks.invoke.mockResolvedValue({ ...sessionDetail(), inputKind: "microphone" });
 
     await recoBridge.startSession({
       deviceId: "builtin-uid",
@@ -84,205 +106,175 @@ describe("recoBridge", () => {
 
     await recoBridge.startSession({ inputKind: "systemAudio", language: null });
 
-    expect(tauriMocks.invoke).toHaveBeenNthCalledWith(1, "engine_request", {
-      command: "session.start",
-      payload: {
+    expect(tauriMocks.invoke).toHaveBeenNthCalledWith(1, "session_start", {
+      input: {
         language: "Japanese",
         source: { deviceId: "builtin-uid", type: "microphone" },
-        title: undefined,
+        title: null,
       },
     });
 
-    expect(tauriMocks.invoke).toHaveBeenNthCalledWith(2, "engine_request", {
-      command: "session.start",
-      payload: { language: null, source: { type: "systemAudio" }, title: undefined },
+    expect(tauriMocks.invoke).toHaveBeenNthCalledWith(2, "session_start", {
+      input: { language: null, source: { type: "systemAudio" }, title: null },
     });
   });
 
-  it("rejects an unknown history source instead of mapping it to microphone", async () => {
-    tauriMocks.invoke.mockResolvedValue({
-      items: [{ ...rawSession(1, 0, null), sourceKind: "futureAudioSource" }],
-      nextCursor: null,
-    });
-
-    await expect(recoBridge.listHistory()).rejects.toThrow(
-      "Unsupported input kind: futureAudioSource",
+  it("rejects file sessions before invoking the native core", async () => {
+    await expect(recoBridge.startSession({ inputKind: "file", language: null })).rejects.toThrow(
+      "Files must be added through the queue",
     );
+
+    expect(tauriMocks.invoke).not.toHaveBeenCalled();
   });
 
-  it("lists cached models through the fixed model command", async () => {
-    tauriMocks.invoke.mockResolvedValue({
+  it("lists and selects cached models through dedicated commands", async () => {
+    tauriMocks.invoke.mockResolvedValueOnce({
       models: [
         {
-          lastModified: "2 months ago",
+          lastModified: "2026-07-01T00:00:00Z",
           refs: ["main"],
           repoId: "owner/model",
           revision: "revision",
-          size: "2.5G",
+          size: "2500000000",
+          supportedLanguages: ["Japanese"],
         },
       ],
-      state: { selected: null, status: "unselected" },
+      state: { error: null, selected: null, status: "unselected" },
     });
 
     await expect(recoBridge.listModels()).resolves.toMatchObject({
       models: [{ repoId: "owner/model", revision: "revision" }],
     });
 
-    expect(tauriMocks.invoke).toHaveBeenCalledWith("engine_request", {
-      command: "model.list",
-      payload: {},
-    });
-  });
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("model_list");
 
-  it("selects a cached model by repository and revision only", async () => {
-    tauriMocks.invoke.mockResolvedValue({
+    tauriMocks.invoke.mockResolvedValueOnce({
+      error: null,
       selected: { repoId: "owner/model", revision: "revision" },
       status: "ready",
     });
 
     await recoBridge.selectModel({ repoId: "owner/model", revision: "revision" });
 
-    expect(tauriMocks.invoke).toHaveBeenCalledWith("engine_request", {
-      command: "model.select",
-      payload: { repoId: "owner/model", revision: "revision" },
+    expect(tauriMocks.invoke).toHaveBeenLastCalledWith("model_select", {
+      input: { repoId: "owner/model", revision: "revision" },
     });
   });
 
-  it("enqueues selected file tokens and maps the canonical queue snapshot", async () => {
-    tauriMocks.invoke.mockResolvedValue({
-      autoAdvanceEnabled: false,
-      items: [
-        {
-          addedAt: "2026-07-21T00:00:00Z",
-          displayName: "audio.wav",
-          errorCode: null,
-          errorMessage: null,
-          itemId: "queue-1",
-          state: "pending",
-          updatedAt: "2026-07-21T00:00:00Z",
-        },
-      ],
-      revision: 4,
+  it("opens the native file dialog and maps the canonical queue snapshot", async () => {
+    tauriMocks.invoke.mockResolvedValue({ canceled: false, queue });
+
+    await expect(recoBridge.addFiles(null)).resolves.toEqual({
+      canceled: false,
+      queue: expect.objectContaining({ revision: "4" }),
     });
 
-    const snapshot = await recoBridge.enqueueFiles(
-      [{ displayName: "audio.wav", sourceToken: "token-1" }],
-      null,
-    );
-
-    expect(tauriMocks.invoke).toHaveBeenCalledWith("engine_request", {
-      command: "queue.enqueueFiles",
-      payload: {
-        files: [{ displayName: "audio.wav", sourceToken: "token-1" }],
-        language: null,
-      },
-    });
-
-    expect(snapshot).toEqual({
-      autoAdvanceEnabled: false,
-      items: [
-        expect.objectContaining({ displayName: "audio.wav", id: "queue-1", status: "pending" }),
-      ],
-      revision: 4,
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("queue_add_files", {
+      input: { language: null },
     });
   });
 
-  it("sends a revision with the complete queue order", async () => {
-    tauriMocks.invoke.mockResolvedValue({
-      autoAdvanceEnabled: false,
-      items: [],
-      revision: 8,
+  it("keeps an accepted export running until the finished event arrives", async () => {
+    tauriMocks.invoke.mockResolvedValue({ canceled: false, operationId: "export-1" });
+
+    await expect(recoBridge.exportSessions(["session-1"], "txt", "Audio")).resolves.toEqual({
+      canceled: false,
+      completed: false,
+      operationId: "export-1",
     });
 
-    await recoBridge.reorderQueue(7, ["queue-2", "queue-1"]);
-
-    expect(tauriMocks.invoke).toHaveBeenCalledWith("engine_request", {
-      command: "queue.reorder",
-      payload: { itemIds: ["queue-2", "queue-1"], revision: 7 },
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("export_start", {
+      input: { format: "txt", sessionIds: ["session-1"] },
     });
   });
 
-  it("restarts paginated detail loading when the database revision changes", async () => {
+  it("sends a decimal revision with the complete queue order", async () => {
+    tauriMocks.invoke.mockResolvedValue({ ...queue, items: [], revision: "8" });
+
+    await recoBridge.reorderQueue("7", ["queue-2", "queue-1"]);
+
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("queue_reorder", {
+      input: { expectedRevision: "7", itemIds: ["queue-2", "queue-1"] },
+    });
+  });
+
+  it("loads all detail pages against one row version", async () => {
     tauriMocks.invoke
-      .mockResolvedValueOnce(rawSession(1, 0, 500))
-      .mockResolvedValueOnce(rawSession(2, 1, null))
-      .mockResolvedValueOnce(rawSession(2, 0, 500))
-      .mockResolvedValueOnce(rawSession(2, 1, null));
+      .mockResolvedValueOnce(sessionDetail("2", 0, 500))
+      .mockResolvedValueOnce(sessionDetail("2", 1, null));
 
     const session = await recoBridge.getSession("session-1");
 
-    expect(session.rowVersion).toBe(2);
+    expect(session.rowVersion).toBe("2");
     expect(session.segments.map(({ sequence }) => sequence)).toEqual([0, 1]);
 
-    expect(tauriMocks.invoke.mock.calls.map(([, input]) => input.payload.segmentOffset)).toEqual([
-      0, 500, 0, 500,
-    ]);
+    expect(tauriMocks.invoke).toHaveBeenNthCalledWith(2, "history_get", {
+      input: {
+        expectedRowVersion: "2",
+        segmentLimit: 500,
+        segmentOffset: 500,
+        sessionId: "session-1",
+      },
+    });
   });
 
-  it("preserves the envelope sequence and receipt aggregates while mapping a segment", async () => {
+  it("maps the unified typed event without losing decimal sequence values", async () => {
     const handler = vi.fn();
 
-    await recoBridge.onEngineEvent(handler);
+    await recoBridge.onApplicationEvent(handler);
 
     tauriMocks.listener?.({
       payload: {
-        event: "segment.persisted",
-        payload: {
-          characters: 4,
-          mediaDurationMs: 1_000,
-          recognizedSegments: 1,
-          rowVersion: 3,
-          segment: {
-            endSample: 16_000,
-            segmentIndex: 0,
-            startSample: 0,
-            text: "test",
-          },
-          totalSegments: 1,
+        characterCount: 4,
+        durationMs: 1_000,
+        recognizedSegmentCount: 1,
+        rowVersion: "3",
+        segment: {
+          endMs: 1_000,
+          index: 0,
+          language: "Japanese",
+          splitReason: "silence",
+          startMs: 0,
+          text: "test",
         },
-        sequence: 9,
+        segmentCount: 1,
+        sequence: "9007199254740993",
         sessionId: "session-1",
-      } as unknown as EngineEvent,
+        type: "segment.committed",
+      },
     });
 
     expect(handler).toHaveBeenCalledWith({
-      event: "segment.persisted",
-      payload: expect.objectContaining({
-        characters: 4,
-        rowVersion: 3,
+      receipt: expect.objectContaining({
+        rowVersion: "3",
         segment: expect.objectContaining({ id: "session-1:0", sequence: 0 }),
-        totalSegments: 1,
       }),
-      sequence: 9,
-      sessionId: "session-1",
+      sequence: "9007199254740993",
+      type: "segment.committed",
     });
   });
 
-  it("keeps a growing active session as a summary when detail retries stay inconsistent", async () => {
-    const history = { items: [rawSession(7, 6, null)], nextCursor: null };
-
-    tauriMocks.invoke
-      .mockResolvedValueOnce({ activeSession: "session-1" })
-      .mockResolvedValueOnce(history)
-      .mockResolvedValueOnce({
+  it("maps snapshot history, active detail, queue, and event sequence atomically", async () => {
+    tauriMocks.invoke.mockResolvedValue({
+      activeSession: sessionDetail("7", 1),
+      history: { items: [sessionDetail("7", 1)], nextCursor: "cursor" },
+      model: {
+        error: null,
         selected: { repoId: "owner/model", revision: "revision" },
         status: "ready",
-      })
-      .mockResolvedValueOnce(rawSession(1, 0, 500))
-      .mockResolvedValueOnce(rawSession(2, 1, null))
-      .mockResolvedValueOnce(rawSession(3, 0, 500))
-      .mockResolvedValueOnce(rawSession(4, 1, null))
-      .mockResolvedValueOnce(rawSession(5, 0, 500))
-      .mockResolvedValueOnce(rawSession(6, 1, null));
+      },
+      queue,
+      sequence: "42",
+    });
 
-    const snapshot = await recoBridge.getSnapshot();
-
-    expect(snapshot.activeSessionId).toBe("session-1");
-
-    expect(snapshot.sessions).toEqual([
-      expect.objectContaining({ id: "session-1", rowVersion: 7 }),
-    ]);
-
-    expect(snapshot.sessions[0]).not.toHaveProperty("segments");
+    await expect(recoBridge.getSnapshot()).resolves.toMatchObject({
+      activeSessionId: "session-1",
+      nextCursor: "cursor",
+      queue: { revision: "4" },
+      sequence: "42",
+      sessions: [
+        expect.objectContaining({ id: "session-1", rowVersion: "7", segmentsLoaded: true }),
+      ],
+    });
   });
 });

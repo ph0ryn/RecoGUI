@@ -1,8 +1,0 @@
-{
-  "protocolVersion": 2,
-  "type": "request",
-  "sessionId": null,
-  "sequence": 1,
-  "command": "engine.getState",
-  "payload": {}
-}

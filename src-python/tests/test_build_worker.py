@@ -31,19 +31,9 @@ def test_worker_archive_contains_only_asr_runtime_modules(tmp_path: Path) -> Non
   assert "__main__.py" in names
   assert "reco_worker/worker.py" in names
   assert "reco_worker/protocol.py" in names
-  assert "reco/model_manager.py" in names
-  assert "reco/transcription.py" in names
-  assert not names & {
-    "reco/audio.py",
-    "reco/engine.py",
-    "reco/host_pcm.py",
-    "reco/pipeline.py",
-    "reco/protocol.py",
-    "reco/recording.py",
-    "reco/repository.py",
-    "reco/sidecar.py",
-    "reco/vad.py",
-  }
+  assert "reco_worker/model_catalog.py" in names
+  assert "reco_worker/transcription.py" in names
+  assert not any(name.startswith("reco/") for name in names)
   assert not any(name.endswith((".md", ".onnx", ".pyc", ".pyo")) for name in names)
   assert not any("__pycache__" in name or name.startswith("tests/") for name in names)
 
@@ -74,14 +64,14 @@ def test_worker_archive_build_is_reproducible(tmp_path: Path) -> None:
   assert first.read_bytes() == second.read_bytes()
 
 
-def test_importing_worker_does_not_reach_retired_python_responsibilities() -> None:
+def test_importing_worker_loads_only_the_asr_worker_package() -> None:
   probe = subprocess.run(
     [
       sys.executable,
       "-c",
       (
         "import json, sys; import reco_worker.worker; "
-        "print(json.dumps(sorted(name for name in sys.modules if name.startswith('reco.'))))"
+        "print(json.dumps(sorted(name for name in sys.modules if name == 'reco' or name.startswith('reco.'))))"
       ),
     ],
     cwd=PROJECT_ROOT,
@@ -91,15 +81,4 @@ def test_importing_worker_does_not_reach_retired_python_responsibilities() -> No
   )
 
   assert probe.returncode == 0, probe.stderr
-  imported = set(json.loads(probe.stdout))
-  assert not imported & {
-    "reco.audio",
-    "reco.engine",
-    "reco.host_pcm",
-    "reco.pipeline",
-    "reco.protocol",
-    "reco.recording",
-    "reco.repository",
-    "reco.sidecar",
-    "reco.vad",
-  }
+  assert json.loads(probe.stdout) == []

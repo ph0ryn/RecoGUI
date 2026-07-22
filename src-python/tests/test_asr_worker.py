@@ -11,9 +11,9 @@ from typing import BinaryIO, cast
 import numpy as np
 import pytest
 
-from reco.config import DEFAULT_TRANSCRIPTION_CONFIG, TranscriptionConfig
-from reco.model_manager import ModelManager
-from reco.models import SpeechSegment, TranscriptionDiagnostics, TranscriptionResult
+from reco_worker.config import DEFAULT_TRANSCRIPTION_CONFIG, TranscriptionConfig
+from reco_worker.model_catalog import ModelCatalog
+from reco_worker.models import SpeechSegment, TranscriptionDiagnostics, TranscriptionResult
 from reco_worker.protocol import AsrProtocolError, FrameKind, FrameWriter, read_frame
 from reco_worker.worker import AsrWorkerServer, WorkerDispatcher, WorkerRequestError
 
@@ -95,7 +95,7 @@ def dispatcher_with_model(tmp_path: Path) -> tuple[WorkerDispatcher, FakeService
   (snapshot / "config.json").write_text('{"support_languages":["Japanese"]}')
   factory = FakeServiceFactory()
   dispatcher = WorkerDispatcher(
-    model_manager=ModelManager(cache_scanner=lambda: cache_info(snapshot)),
+    model_catalog=ModelCatalog(cache_scanner=lambda: cache_info(snapshot)),
     service_factory=factory,
     cache_clearer=lambda: None,
   )
@@ -145,7 +145,7 @@ def test_models_list_exposes_public_cache_fields_without_snapshot_paths(tmp_path
   snapshot.mkdir()
   (snapshot / "config.json").write_text('{"support_languages":["Japanese"]}')
   dispatcher = WorkerDispatcher(
-    model_manager=ModelManager(cache_scanner=lambda: cache_info(snapshot)),
+    model_catalog=ModelCatalog(cache_scanner=lambda: cache_info(snapshot)),
     cache_clearer=lambda: None,
   )
 
@@ -175,7 +175,7 @@ def test_model_load_resolves_the_cache_path_internally_and_reuses_one_lease(tmp_
   snapshot.mkdir()
   factory = FakeServiceFactory()
   dispatcher = WorkerDispatcher(
-    model_manager=ModelManager(cache_scanner=lambda: cache_info(snapshot)),
+    model_catalog=ModelCatalog(cache_scanner=lambda: cache_info(snapshot)),
     service_factory=factory,
     cache_clearer=lambda: None,
   )
@@ -301,7 +301,7 @@ def test_model_unload_and_shutdown_have_minimal_results(tmp_path: Path) -> None:
 
 
 def test_server_sends_exact_hello_accepts_heartbeat_and_responds_before_shutdown() -> None:
-  dispatcher = WorkerDispatcher(model_manager=ModelManager(cache_scanner=lambda: SimpleNamespace(repos=())))
+  dispatcher = WorkerDispatcher(model_catalog=ModelCatalog(cache_scanner=lambda: SimpleNamespace(repos=())))
   server = AsrWorkerServer(dispatcher=dispatcher, heartbeat_interval_seconds=None)
   server_socket, client_socket = socket.socketpair()
   outcome: list[int] = []
@@ -341,7 +341,7 @@ def test_server_sends_exact_hello_accepts_heartbeat_and_responds_before_shutdown
 
 def test_duplicate_request_id_is_connection_fatal() -> None:
   dispatcher = WorkerDispatcher(
-    model_manager=ModelManager(cache_scanner=lambda: SimpleNamespace(repos=())),
+    model_catalog=ModelCatalog(cache_scanner=lambda: SimpleNamespace(repos=())),
     cache_clearer=lambda: None,
   )
   server = AsrWorkerServer(dispatcher=dispatcher, heartbeat_interval_seconds=None)
@@ -370,7 +370,7 @@ def test_duplicate_request_id_is_connection_fatal() -> None:
 
 
 def test_valid_request_errors_echo_operation_and_keep_the_connection_alive() -> None:
-  dispatcher = WorkerDispatcher(model_manager=ModelManager(cache_scanner=lambda: SimpleNamespace(repos=())))
+  dispatcher = WorkerDispatcher(model_catalog=ModelCatalog(cache_scanner=lambda: SimpleNamespace(repos=())))
   server = AsrWorkerServer(dispatcher=dispatcher, heartbeat_interval_seconds=None)
   server_socket, client_socket = socket.socketpair()
   outcome: list[int] = []
@@ -420,7 +420,7 @@ def test_shared_rasr_v1_request_fixtures_are_accepted_in_sequence(tmp_path: Path
   snapshot.mkdir()
   factory = FakeServiceFactory()
   dispatcher = WorkerDispatcher(
-    model_manager=ModelManager(
+    model_catalog=ModelCatalog(
       cache_scanner=lambda: cache_info(snapshot, "0123456789abcdef"),
     ),
     service_factory=factory,

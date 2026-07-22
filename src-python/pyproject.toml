@@ -17,13 +17,9 @@ dependencies = [
   "huggingface-hub>=1.0",
   "mlx-audio[stt]>=0.4.3",
   "numpy>=2.4.5",
-  "onnxruntime>=1.23.2",
-  "soundfile>=0.13.1",
-  "soxr>=1.1.0",
 ]
 [project.scripts]
 reco-asr-worker = "reco_worker.worker:main"
-reco-engine = "reco.sidecar:main"
 
 [dependency-groups]
 dev = [
@@ -37,10 +33,10 @@ dev = [
 
 [tool.hatch.build.targets]
 [tool.hatch.build.targets.wheel]
-packages = [ "src/reco", "src/reco_worker" ]
+packages = [ "src/reco_worker" ]
 [tool.hatch.build.targets.wheel.force-include]
-"SOURCE.md" = "reco/SOURCE.md"
-"THIRD_PARTY_NOTICES.md" = "reco/THIRD_PARTY_NOTICES.md"
+"SOURCE.md" = "reco_worker/SOURCE.md"
+"THIRD_PARTY_NOTICES.md" = "reco_worker/THIRD_PARTY_NOTICES.md"
 
 [tool.ruff]
 target-version = "py312"
@@ -76,10 +72,6 @@ format = "uv run ruff format ."
 typecheck = "uv run ty check"
 test = "uv run pytest"
 build = "uv build"
-bundle = "python build_sidecar.py"
 bundle-worker = "python build_worker.py"
-verify = """\
-  uv run task lint && uv run task typecheck && uv run task test && uv run task build && uv run task bundle && uv run \
-  task bundle-worker\
-  """
+verify = "uv run task lint && uv run task typecheck && uv run task test && uv run task build && uv run task bundle-worker"
 fix = "uv run task lint --fix --unsafe-fixes && uv run task format && uv run task typecheck"

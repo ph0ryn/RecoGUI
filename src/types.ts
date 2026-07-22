@@ -31,7 +31,7 @@ export interface SessionSummary {
   inputName: string;
   language: string;
   model: string;
-  rowVersion: number;
+  rowVersion: string;
   segmentCount: number;
   characterCount: number;
   snippet?: string;
@@ -59,7 +59,7 @@ export interface CachedModelRevision extends ModelReference {
 }
 
 export interface ModelState {
-  status: "unselected" | "unavailable" | "ready" | "error";
+  status: "checking" | "unselected" | "unavailable" | "ready" | "error";
   selected: ModelReference | null;
   errorCode?: string;
   errorMessage?: string;
@@ -90,8 +90,10 @@ export interface ExportResult {
 }
 
 export interface EngineSnapshot {
+  sequence: string;
   sessions: (SessionSummary | SessionDetail)[];
   model: ModelState;
+  queue: QueueSnapshot;
   activeSessionId?: string;
   nextCursor?: string;
 }
@@ -109,28 +111,60 @@ export interface QueueItem {
 }
 
 export interface QueueSnapshot {
-  revision: number;
+  revision: string;
   autoAdvanceEnabled: boolean;
   items: QueueItem[];
 }
 
-export interface SelectedAudioFile {
-  displayName: string;
-  sourceToken: string;
-}
-
-export interface EngineEvent {
-  event: string;
-  payload: unknown;
-  sequence: number;
-  sessionId?: string;
-}
+export type ApplicationEvent =
+  | { type: "session.upserted"; sequence: string; session: SessionSummary }
+  | {
+      type: "segment.committed";
+      sequence: string;
+      receipt: PersistedSegmentReceipt;
+    }
+  | {
+      type: "session.progress";
+      sequence: string;
+      sessionId: string;
+      processedAudioMs: number;
+      totalAudioMs?: number;
+    }
+  | { type: "sessions.deleted"; sequence: string; sessionIds: string[] }
+  | { type: "queue.changed"; sequence: string; queue: QueueSnapshot }
+  | { type: "model.changed"; sequence: string; model: ModelState }
+  | {
+      type: "export.progress";
+      sequence: string;
+      operationId: string;
+      completedItems: number;
+      totalItems: number;
+    }
+  | {
+      type: "export.finished";
+      sequence: string;
+      operationId: string;
+      canceled: boolean;
+      failedSessionIds: string[];
+    }
+  | {
+      type: "close.confirmationRequired";
+      sequence: string;
+      sessionId?: string;
+    }
+  | {
+      type: "close.forceRequired";
+      sequence: string;
+      sessionId?: string;
+      error: string;
+    }
+  | { type: "notification.error"; sequence: string; message: string };
 
 export interface PersistedSegmentReceipt {
   characters: number;
   mediaDurationMs: number;
   recognizedSegments: number;
-  rowVersion: number;
+  rowVersion: string;
   segment: TranscriptSegment;
   sessionId: string;
   totalSegments: number;

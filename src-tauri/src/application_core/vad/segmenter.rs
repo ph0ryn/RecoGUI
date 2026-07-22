@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use serde::{Deserialize, Serialize};
+
 use crate::application_core::{
     domain::{AudioFrame, NORMALIZED_SAMPLE_RATE, SplitReason, VAD_FRAME_SAMPLES, VadDiagnostics},
     error::CoreError,
@@ -10,7 +12,8 @@ pub trait ProbabilityModel {
     fn probability(&mut self, samples: &[f32; VAD_FRAME_SAMPLES]) -> Result<f32, CoreError>;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct VadConfig {
     pub start_threshold: f32,
     pub end_threshold: f32,

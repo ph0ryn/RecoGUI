@@ -1,3 +1,5 @@
+import { compareDecimalStrings } from "./eventSequence";
+
 /* oxlint-disable no-ternary */
 import type {
   PersistedSegmentReceipt,
@@ -28,7 +30,7 @@ export type SessionAction =
   | { session: SessionDetail; type: "detailLoaded" }
   | { session: SessionDetail; type: "canonicalReconciled" }
   | { receipt: PersistedSegmentReceipt; type: "segmentPersisted" }
-  | { rowVersion: number; sessionId: string; title: string; type: "sessionRenamed" }
+  | { rowVersion: string; sessionId: string; title: string; type: "sessionRenamed" }
   | { active?: boolean; session: SessionSummary | SessionDetail; type: "sessionStarted" }
   | {
       endedAt?: string;
@@ -36,7 +38,7 @@ export type SessionAction =
       durationMs?: number;
       errorCode?: string;
       errorMessage?: string;
-      rowVersion: number;
+      rowVersion: string;
       segmentCount?: number;
       sessionId: string;
       status: SessionStatus;
@@ -83,7 +85,7 @@ function mergeSummary(current: SessionEntity | undefined, incoming: SessionSumma
     return toEntity(incoming);
   }
 
-  if (incoming.rowVersion < current.rowVersion) {
+  if (compareDecimalStrings(incoming.rowVersion, current.rowVersion) < 0) {
     return current;
   }
 
@@ -100,7 +102,7 @@ function mergeDetail(current: SessionEntity | undefined, incoming: SessionDetail
     return toEntity(incoming);
   }
 
-  if (incoming.rowVersion < current.rowVersion) {
+  if (compareDecimalStrings(incoming.rowVersion, current.rowVersion) < 0) {
     return {
       ...current,
       segments: mergeSegments(current.segments, incoming.segments),
@@ -123,7 +125,7 @@ function reconcileDetail(
   current: SessionEntity | undefined,
   incoming: SessionDetail,
 ): SessionEntity {
-  if (current && incoming.rowVersion < current.rowVersion) {
+  if (current && compareDecimalStrings(incoming.rowVersion, current.rowVersion) < 0) {
     return current;
   }
 
@@ -231,7 +233,7 @@ export function sessionStateReducer(state: SessionState, action: SessionAction):
         return state;
       }
 
-      if (receipt.rowVersion < current.rowVersion) {
+      if (compareDecimalStrings(receipt.rowVersion, current.rowVersion) < 0) {
         return {
           ...state,
           sessionsById: {
@@ -262,7 +264,7 @@ export function sessionStateReducer(state: SessionState, action: SessionAction):
     case "sessionRenamed": {
       const current = state.sessionsById[action.sessionId];
 
-      if (!current || action.rowVersion < current.rowVersion) {
+      if (!current || compareDecimalStrings(action.rowVersion, current.rowVersion) < 0) {
         return state;
       }
 
@@ -299,7 +301,7 @@ export function sessionStateReducer(state: SessionState, action: SessionAction):
     case "statusChanged": {
       const current = state.sessionsById[action.sessionId];
 
-      if (!current || action.rowVersion < current.rowVersion) {
+      if (!current || compareDecimalStrings(action.rowVersion, current.rowVersion) < 0) {
         return state;
       }
 

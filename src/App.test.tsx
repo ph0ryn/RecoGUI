@@ -8,20 +8,16 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import App from "./App";
 import { mockSnapshot } from "./mockData";
 
-import type { EngineEvent } from "./types";
+import type { ApplicationEvent } from "./types";
 
 const scrollToMock = vi.fn();
 const bridgeMocks = vi.hoisted(() => ({
+  addFiles: vi.fn(),
   cancelExport: vi.fn(),
   clearQueue: vi.fn(),
-  closeForceHandler: undefined as
-    | ((payload: { error: string; sessionId: string | null }) => void)
-    | undefined,
-  closeHandler: undefined as ((payload: { sessionId: string }) => void) | undefined,
   copySessions: vi.fn(),
   deleteSessions: vi.fn(),
-  enqueueFiles: vi.fn(),
-  eventHandler: undefined as ((event: EngineEvent) => void) | undefined,
+  eventHandler: undefined as ((event: ApplicationEvent) => void) | undefined,
   exportSessions: vi.fn().mockResolvedValue({ canceled: false, completed: true }),
   getModelState: vi.fn(),
   getQueueState: vi.fn(),
@@ -32,12 +28,9 @@ const bridgeMocks = vi.hoisted(() => ({
     .mockResolvedValue([{ channels: 1, id: "7", isDefault: true, name: "テストマイク" }]),
   listHistory: vi.fn(),
   listModels: vi.fn(),
-  onCloseForceRequired: vi.fn(),
-  onCloseRequested: vi.fn(),
-  onEngineEvent: vi.fn(),
+  onApplicationEvent: vi.fn(),
   pauseQueue: vi.fn(),
   pauseSession: vi.fn(),
-  pickAudioFiles: vi.fn().mockResolvedValue([{ displayName: "test.wav", sourceToken: "token" }]),
   removeQueueItem: vi.fn(),
   renameSession: vi.fn(),
   reorderQueue: vi.fn(),
@@ -46,7 +39,7 @@ const bridgeMocks = vi.hoisted(() => ({
   searchHistory: vi.fn(),
   selectModel: vi.fn(),
   startQueue: vi.fn(),
-  startSession: vi.fn().mockResolvedValue({ sessionId: "new-session" }),
+  startSession: vi.fn(),
   stopSession: vi.fn(),
 }));
 
@@ -115,18 +108,17 @@ beforeEach(() => {
     state: structuredClone(mockSnapshot.model),
   });
   bridgeMocks.selectModel.mockResolvedValue(structuredClone(mockSnapshot.model));
-  const queue = { autoAdvanceEnabled: false, items: [], revision: 0 };
+  const queue = { autoAdvanceEnabled: false, items: [], revision: "0" };
 
   bridgeMocks.getQueueState.mockResolvedValue(structuredClone(queue));
-  bridgeMocks.enqueueFiles.mockResolvedValue({
-    autoAdvanceEnabled: true,
-    items: [],
-    revision: 1,
+  bridgeMocks.addFiles.mockResolvedValue({
+    canceled: false,
+    queue: { autoAdvanceEnabled: true, items: [], revision: "1" },
   });
   bridgeMocks.startQueue.mockResolvedValue({
     autoAdvanceEnabled: true,
     items: [],
-    revision: 2,
+    revision: "2",
   });
   bridgeMocks.pauseQueue.mockResolvedValue(structuredClone(queue));
   bridgeMocks.clearQueue.mockResolvedValue(structuredClone(queue));
@@ -134,21 +126,9 @@ beforeEach(() => {
   bridgeMocks.reorderQueue.mockResolvedValue(structuredClone(queue));
   bridgeMocks.listHistory.mockResolvedValue({ items: structuredClone(mockSnapshot.sessions) });
   bridgeMocks.searchHistory.mockResolvedValue({ items: structuredClone(mockSnapshot.sessions) });
-  bridgeMocks.onEngineEvent.mockImplementation((handler: (event: EngineEvent) => void) => {
-    bridgeMocks.eventHandler = handler;
-
-    return Promise.resolve(() => undefined);
-  });
-  bridgeMocks.onCloseRequested.mockImplementation(
-    (handler: (payload: { sessionId: string }) => void) => {
-      bridgeMocks.closeHandler = handler;
-
-      return Promise.resolve(() => undefined);
-    },
-  );
-  bridgeMocks.onCloseForceRequired.mockImplementation(
-    (handler: (payload: { error: string; sessionId: string | null }) => void) => {
-      bridgeMocks.closeForceHandler = handler;
+  bridgeMocks.onApplicationEvent.mockImplementation(
+    (handler: (event: ApplicationEvent) => void) => {
+      bridgeMocks.eventHandler = handler;
 
       return Promise.resolve(() => undefined);
     },
@@ -159,12 +139,18 @@ beforeEach(() => {
   bridgeMocks.pauseSession.mockClear();
   bridgeMocks.pauseQueue.mockClear();
   bridgeMocks.resumeSession.mockClear();
-  bridgeMocks.startSession.mockClear();
+  bridgeMocks.startSession.mockReset();
+  bridgeMocks.startSession.mockResolvedValue({
+    ...structuredClone(mockSnapshot.sessions[0]),
+    id: "new-session",
+    status: "running",
+    title: "新しい録音",
+  });
   bridgeMocks.stopSession.mockClear();
   bridgeMocks.renameSession.mockImplementation((sessionId: string, title: string) =>
-    Promise.resolve({ rowVersion: 7, sessionId, title }),
+    Promise.resolve({ rowVersion: "7", sessionId, title }),
   );
-  bridgeMocks.enqueueFiles.mockClear();
+  bridgeMocks.addFiles.mockClear();
   scrollToMock.mockClear();
 });
 
@@ -204,6 +190,7 @@ describe("RecoGUI", () => {
     expect(screen.getByRole("heading", { name: "エンジンを準備しています" })).toBeInTheDocument();
     expect(screen.getByText("初回起動時は依存関係の準備に時間がかかります。")).toBeInTheDocument();
 
+    await waitFor(() => expect(bridgeMocks.getSnapshot).toHaveBeenCalled());
     resolveSnapshot(structuredClone(mockSnapshot));
 
     expect(await screen.findByText("ENGINE READY")).toBeInTheDocument();
@@ -290,11 +277,7 @@ describe("RecoGUI", () => {
     await renderLoadedApp();
 
     await user.keyboard("{Meta>}{Shift>}n{/Shift}{/Meta}");
-    await waitFor(() => expect(bridgeMocks.pickAudioFiles).toHaveBeenCalled());
-    expect(bridgeMocks.enqueueFiles).toHaveBeenCalledWith(
-      [{ displayName: "test.wav", sourceToken: "token" }],
-      null,
-    );
+    await waitFor(() => expect(bridgeMocks.addFiles).toHaveBeenCalledWith(null));
   });
 
   it("keeps the selected history session when a live segment arrives", async () => {
@@ -305,23 +288,24 @@ describe("RecoGUI", () => {
     expect(screen.getByRole("heading", { name: "プロジェクト定例" })).toBeInTheDocument();
 
     bridgeMocks.eventHandler?.({
-      event: "segment.persisted",
-      payload: {
+      receipt: {
         characters: 242,
         mediaDurationMs: 92_000,
         recognizedSegments: 4,
-        rowVersion: 6,
+        rowVersion: "6",
         segment: {
           endMs: 92_000,
           id: "new-segment",
+          language: "Japanese",
           sequence: 4,
           startMs: 88_000,
           text: "新しい発言",
         },
+        sessionId: "session-live",
         totalSegments: 4,
       },
-      sequence: 10,
-      sessionId: "session-live",
+      sequence: "1",
+      type: "segment.committed",
     });
 
     expect(screen.getByRole("heading", { name: "プロジェクト定例" })).toBeInTheDocument();
@@ -330,28 +314,29 @@ describe("RecoGUI", () => {
 
   it("renders a duplicated persisted segment exactly once", async () => {
     await renderLoadedApp();
-    const event: EngineEvent = {
-      event: "segment.persisted",
-      payload: {
+    const event: ApplicationEvent = {
+      receipt: {
         characters: 242,
         mediaDurationMs: 92_000,
         recognizedSegments: 4,
-        rowVersion: 6,
+        rowVersion: "6",
         segment: {
           endMs: 92_000,
           id: "session-live:4",
+          language: "Japanese",
           sequence: 4,
           startMs: 88_000,
           text: "重複しない確定文",
         },
+        sessionId: "session-live",
         totalSegments: 4,
       },
-      sequence: 20,
-      sessionId: "session-live",
+      sequence: "1",
+      type: "segment.committed",
     };
 
     bridgeMocks.eventHandler?.(event);
-    bridgeMocks.eventHandler?.({ ...event, sequence: 21 });
+    bridgeMocks.eventHandler?.(event);
 
     expect(await screen.findByText("重複しない確定文")).toBeInTheDocument();
     expect(screen.getAllByText("重複しない確定文")).toHaveLength(1);
@@ -370,10 +355,11 @@ describe("RecoGUI", () => {
     await renderLoadedApp();
 
     bridgeMocks.eventHandler?.({
-      event: "session.progress",
-      payload: { processedAudioMs: 15_000, totalAudioMs: 60_000 },
-      sequence: 22,
+      processedAudioMs: 15_000,
+      sequence: "1",
       sessionId: "session-live",
+      totalAudioMs: 60_000,
+      type: "session.progress",
     });
 
     expect(await screen.findByText("25%")).toBeInTheDocument();
@@ -501,24 +487,24 @@ describe("RecoGUI", () => {
     expect(screen.queryByRole("button", { name: "文字起こしを再試行" })).not.toBeInTheDocument();
   });
 
-  it("keeps a failed resume paused and shows the model error", async () => {
+  it("keeps a resume failure paused and displays its persisted error", async () => {
     useInactiveSnapshot();
     await renderLoadedApp();
 
     bridgeMocks.eventHandler?.({
-      event: "session.stateChanged",
-      payload: {
+      sequence: "1",
+      session: {
+        ...structuredClone(mockSnapshot.sessions[0]),
         errorCode: "model_unavailable",
         errorMessage: "The session model revision is unavailable",
-        rowVersion: 99,
-        state: "paused",
+        rowVersion: "99",
+        status: "paused",
       },
-      sequence: 22,
-      sessionId: "session-live",
+      type: "session.upserted",
     });
 
     expect(
-      await screen.findByText("再開できませんでした: The session model revision is unavailable"),
+      await screen.findByText("The session model revision is unavailable"),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "文字起こしを再開" })).toBeInTheDocument();
   });
@@ -531,12 +517,7 @@ describe("RecoGUI", () => {
     await user.click(screen.getByRole("button", { name: /新規文字起こし/ }));
     await user.click(screen.getByRole("button", { name: /音声ファイルを選択/ }));
 
-    await waitFor(() =>
-      expect(bridgeMocks.enqueueFiles).toHaveBeenCalledWith(
-        [{ displayName: "test.wav", sourceToken: "token" }],
-        null,
-      ),
-    );
+    await waitFor(() => expect(bridgeMocks.addFiles).toHaveBeenCalledWith(null));
     expect(bridgeMocks.startSession).not.toHaveBeenCalledWith(
       expect.objectContaining({ inputKind: "file" }),
     );
@@ -557,8 +538,7 @@ describe("RecoGUI", () => {
     await renderLoadedApp();
 
     bridgeMocks.eventHandler?.({
-      event: "queue.changed",
-      payload: {
+      queue: {
         autoAdvanceEnabled: false,
         items: [
           {
@@ -570,9 +550,10 @@ describe("RecoGUI", () => {
             updatedAt: "2026-07-21T00:00:00.000Z",
           },
         ],
-        revision: 3,
+        revision: "3",
       },
-      sequence: 30,
+      sequence: "1",
+      type: "queue.changed",
     });
 
     expect(await screen.findByText("missing.wav")).toBeInTheDocument();
@@ -655,6 +636,46 @@ describe("RecoGUI", () => {
     );
   });
 
+  it("preserves a fast export completion that arrives before the start response", async () => {
+    interface ExportStartResponse {
+      canceled: boolean;
+      completed: boolean;
+      failedSessionIds: string[];
+      operationId: string;
+    }
+    let resolveExport: (value: ExportStartResponse) => void = () => undefined;
+    const response = new Promise<ExportStartResponse>((resolve) => {
+      resolveExport = resolve;
+    });
+
+    bridgeMocks.exportSessions.mockImplementationOnce(() => response);
+    const user = userEvent.setup();
+
+    await renderLoadedApp();
+    await user.click(screen.getByRole("option", { name: /プロジェクト定例/ }));
+    await user.click(screen.getByRole("button", { name: /Export/ }));
+    await user.click(screen.getByRole("button", { name: "保存先を選択…" }));
+    await waitFor(() => expect(bridgeMocks.exportSessions).toHaveBeenCalled());
+    bridgeMocks.eventHandler?.({
+      canceled: false,
+      failedSessionIds: [],
+      operationId: "export-fast",
+      sequence: "1",
+      type: "export.finished",
+    });
+    expect(await screen.findByText("Exportが完了しました")).toBeInTheDocument();
+
+    resolveExport({
+      canceled: false,
+      completed: false,
+      failedSessionIds: [],
+      operationId: "export-fast",
+    });
+
+    await waitFor(() => expect(screen.getByText("Exportが完了しました")).toBeInTheDocument());
+    expect(screen.queryByText("Exportしています")).not.toBeInTheDocument();
+  });
+
   it("copies a selected session in the chosen format", async () => {
     const user = userEvent.setup();
 
@@ -716,23 +737,24 @@ describe("RecoGUI", () => {
     scrollToMock.mockClear();
 
     bridgeMocks.eventHandler?.({
-      event: "segment.persisted",
-      payload: {
+      receipt: {
         characters: 250,
         mediaDurationMs: 100_000,
         recognizedSegments: 4,
-        rowVersion: 6,
+        rowVersion: "6",
         segment: {
           endMs: 100_000,
           id: "followed-segment",
+          language: "Japanese",
           sequence: 4,
           startMs: 95_000,
           text: "末尾では追従する発言",
         },
+        sessionId: "session-live",
         totalSegments: 4,
       },
-      sequence: 40,
-      sessionId: "session-live",
+      sequence: "1",
+      type: "segment.committed",
     });
 
     await waitFor(() =>
@@ -743,23 +765,24 @@ describe("RecoGUI", () => {
     fireEvent.scroll(transcript!);
     scrollToMock.mockClear();
     bridgeMocks.eventHandler?.({
-      event: "segment.persisted",
-      payload: {
+      receipt: {
         characters: 260,
         mediaDurationMs: 110_000,
         recognizedSegments: 5,
-        rowVersion: 7,
+        rowVersion: "7",
         segment: {
           endMs: 110_000,
           id: "unfollowed-segment",
+          language: "Japanese",
           sequence: 5,
           startMs: 105_000,
           text: "上では位置を保つ発言",
         },
+        sessionId: "session-live",
         totalSegments: 5,
       },
-      sequence: 41,
-      sessionId: "session-live",
+      sequence: "2",
+      type: "segment.committed",
     });
 
     expect(await screen.findByText("上では位置を保つ発言")).toBeInTheDocument();
@@ -908,16 +931,22 @@ describe("RecoGUI", () => {
     const user = userEvent.setup();
 
     await renderLoadedApp();
-    bridgeMocks.closeHandler?.({ sessionId: "session-live" });
+    bridgeMocks.eventHandler?.({
+      sequence: "1",
+      sessionId: "session-live",
+      type: "close.confirmationRequired",
+    });
     expect(
       await screen.findByRole("heading", { name: "録音を停止して終了しますか？" }),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "停止して終了" }));
     expect(bridgeMocks.resolveClose).toHaveBeenCalledWith("stopAndQuit");
 
-    bridgeMocks.closeForceHandler?.({
+    bridgeMocks.eventHandler?.({
       error: "停止がタイムアウトしました",
+      sequence: "2",
       sessionId: "session-live",
+      type: "close.forceRequired",
     });
     expect(
       await screen.findByRole("heading", { name: "正常に停止できませんでした" }),
@@ -951,16 +980,20 @@ describe("RecoGUI", () => {
     await user.click(screen.getByRole("button", { name: /Export/ }));
     await user.click(screen.getByRole("button", { name: "保存先を選択…" }));
     bridgeMocks.eventHandler?.({
-      event: "export.progress",
-      payload: { operationId: "export-1", progress: 0.5 },
-      sequence: 11,
+      completedItems: 1,
+      operationId: "export-1",
+      sequence: "1",
+      totalItems: 2,
+      type: "export.progress",
     });
 
     expect(await screen.findByRole("progressbar", { name: "Exportの進捗" })).toHaveValue(0.5);
     bridgeMocks.eventHandler?.({
-      event: "export.completed",
-      payload: { failedSessionIds: ["session-1"], operationId: "export-1" },
-      sequence: 12,
+      canceled: false,
+      failedSessionIds: ["session-1"],
+      operationId: "export-1",
+      sequence: "2",
+      type: "export.finished",
     });
 
     expect(await screen.findByRole("button", { name: "失敗した1件を再試行" })).toBeInTheDocument();

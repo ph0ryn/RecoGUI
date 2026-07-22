@@ -1,6 +1,4 @@
 mod microphone;
-mod normalize;
-pub mod wire;
 
 #[cfg(target_os = "macos")]
 mod process_tap;
@@ -20,10 +18,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-use normalize::PcmNormalizer;
+use crate::application_core::{domain::AudioFrame, media::PcmNormalizer};
 
-pub const OUTPUT_SAMPLE_RATE: u32 = 16_000;
-pub const OUTPUT_FRAME_SAMPLES: usize = 512;
 const RING_SECONDS: usize = 5;
 const WORKER_READ_FRAMES: usize = 2_048;
 const EVENT_CHANNEL_CAPACITY: usize = 64;
@@ -49,12 +45,6 @@ pub struct AudioInputDevice {
 pub struct NativeFormat {
     pub sample_rate: u32,
     pub channels: u16,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct AudioFrame {
-    pub start_sample: u64,
-    pub samples: Vec<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -98,8 +88,6 @@ pub enum AudioCaptureError {
     Resampler(String),
     #[error("audio capture thread terminated before startup")]
     StartupTerminated,
-    #[error("invalid audio capture protocol request: {0}")]
-    Protocol(String),
 }
 
 pub fn list_input_devices() -> Result<Vec<AudioInputDevice>, AudioCaptureError> {
@@ -154,13 +142,22 @@ impl Default for AudioCaptureManager {
 }
 
 impl AudioCaptureManager {
-    pub fn preflight(&self, source: &CaptureSource) -> Result<(), AudioCaptureError> {
+    pub fn resolve_source(
+        &self,
+        source: &CaptureSource,
+    ) -> Result<CaptureSource, AudioCaptureError> {
         match source {
-            CaptureSource::Microphone { device_id } => microphone::preflight(device_id.as_deref()),
+            CaptureSource::Microphone { device_id } => {
+                microphone::resolve_device_id(device_id.as_deref()).map(|device_id| {
+                    CaptureSource::Microphone {
+                        device_id: Some(device_id),
+                    }
+                })
+            }
             CaptureSource::SystemAudio => {
                 #[cfg(target_os = "macos")]
                 {
-                    process_tap::probe()
+                    process_tap::probe().map(|()| CaptureSource::SystemAudio)
                 }
                 #[cfg(not(target_os = "macos"))]
                 {
@@ -286,6 +283,21 @@ impl AudioCaptureManager {
         }
     }
 
+    pub fn cancel_reserved(&self, token: &CaptureStartToken) {
+        token.stop.store(true, Ordering::Release);
+        let mut state = self.state.lock().expect("audio capture mutex poisoned");
+        let matches_reservation = matches!(
+            &*state,
+            ManagerState::Starting { stop, completion }
+                if Arc::ptr_eq(stop, &token.stop)
+                    && Arc::ptr_eq(completion, &token.completion)
+        );
+        if matches_reservation {
+            token.completion.complete();
+            *state = ManagerState::Idle;
+        }
+    }
+
     pub fn request_stop(&self) {
         let mut state = self.state.lock().expect("audio capture mutex poisoned");
         let replacement = match &*state {
@@ -324,7 +336,8 @@ impl AudioCaptureManager {
         }
     }
 
-    pub fn is_active(&self) -> bool {
+    #[cfg(test)]
+    fn is_active(&self) -> bool {
         !matches!(
             *self.state.lock().expect("audio capture mutex poisoned"),
             ManagerState::Idle
@@ -494,7 +507,9 @@ pub(crate) fn run_worker(mut consumer: Consumer<f32>, context: WorkerContext) ->
                 match PcmNormalizer::new(format.sample_rate, format.channels, start_sample) {
                     Ok(normalizer) => normalizer,
                     Err(error) => {
-                        let _ = events.blocking_send(CaptureEvent::Error(error));
+                        let _ = events.blocking_send(CaptureEvent::Error(
+                            AudioCaptureError::Resampler(error.to_string()),
+                        ));
                         stop.store(true, Ordering::Release);
                         return;
                     }
@@ -542,7 +557,9 @@ pub(crate) fn run_worker(mut consumer: Consumer<f32>, context: WorkerContext) ->
                             }
                         }
                         Err(error) => {
-                            let _ = events.blocking_send(CaptureEvent::Error(error));
+                            let _ = events.blocking_send(CaptureEvent::Error(
+                                AudioCaptureError::Resampler(error.to_string()),
+                            ));
                             stop.store(true, Ordering::Release);
                             return;
                         }
@@ -570,7 +587,9 @@ pub(crate) fn run_worker(mut consumer: Consumer<f32>, context: WorkerContext) ->
                             let _ = events.blocking_send(CaptureEvent::Ended);
                         }
                         Err(error) => {
-                            let _ = events.blocking_send(CaptureEvent::Error(error));
+                            let _ = events.blocking_send(CaptureEvent::Error(
+                                AudioCaptureError::Resampler(error.to_string()),
+                            ));
                         }
                     }
                     return;

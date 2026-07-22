@@ -11,6 +11,12 @@ export const mockSnapshot: EngineSnapshot = {
     },
     status: "ready",
   },
+  queue: {
+    autoAdvanceEnabled: false,
+    items: [],
+    revision: "0",
+  },
+  sequence: "0",
   sessions: [
     {
       characterCount: 238,
@@ -20,7 +26,7 @@ export const mockSnapshot: EngineSnapshot = {
       inputName: "MacBookのマイク",
       language: "日本語",
       model: "Qwen3-ASR 1.7B JA",
-      rowVersion: 5,
+      rowVersion: "5",
       segmentCount: 3,
       segments: [
         {
@@ -62,7 +68,7 @@ export const mockSnapshot: EngineSnapshot = {
       inputName: "プロジェクト定例.wav",
       language: "日本語",
       model: "Qwen3-ASR 1.7B JA",
-      rowVersion: 6,
+      rowVersion: "6",
       segmentCount: 4,
       segments: [
         {
@@ -112,7 +118,7 @@ export const mockSnapshot: EngineSnapshot = {
       inputName: "外部マイク",
       language: "日本語",
       model: "Qwen3-ASR 1.7B JA",
-      rowVersion: 4,
+      rowVersion: "4",
       segmentCount: 2,
       segments: [
         {
@@ -148,7 +154,7 @@ export const mockSnapshot: EngineSnapshot = {
       inputName: "講義録音.m4a",
       language: "日本語",
       model: "Qwen3-ASR 1.7B JA",
-      rowVersion: 3,
+      rowVersion: "3",
       segmentCount: 1,
       segments: [
         {

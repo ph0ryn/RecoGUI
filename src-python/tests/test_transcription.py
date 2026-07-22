@@ -8,10 +8,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from reco.config import TranscriptionConfig
-from reco.errors import RecoError
-from reco.models import SpeechSegment, TranscriptionDiagnostics
-from reco.transcription import LocalAsrTranscriptionService, _load_mlx_audio_model, calculate_max_tokens
+from reco_worker.config import TranscriptionConfig
+from reco_worker.errors import AsrRuntimeError
+from reco_worker.models import SpeechSegment, TranscriptionDiagnostics
+from reco_worker.transcription import LocalAsrTranscriptionService, _load_mlx_audio_model, calculate_max_tokens
 
 
 class FakeMlxModel:
@@ -283,7 +283,7 @@ def test_internal_type_error_is_reported_without_repeating_inference(tmp_path: P
   model = FailingModel()
   service = LocalAsrTranscriptionService(model_path=str(tmp_path), language="Japanese", model=model)
 
-  with pytest.raises(RecoError, match="internal model failure"):
+  with pytest.raises(AsrRuntimeError, match="internal model failure"):
     service.transcribe(segment())
   assert model.calls == 1
 

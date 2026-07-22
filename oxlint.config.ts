@@ -17,7 +17,7 @@ export default defineConfig({
     browser: true,
     node: true,
   },
-  ignorePatterns: ["src-tauri/**"],
+  ignorePatterns: ["src-tauri/**", "src/generated/**"],
   jsPlugins: [
     {
       name: "@stylistic",

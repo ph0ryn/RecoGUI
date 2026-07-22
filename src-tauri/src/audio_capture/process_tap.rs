@@ -28,7 +28,8 @@ use objc2_core_audio::{
     kAudioSubTapUIDKey, kAudioTapPropertyFormat,
 };
 use objc2_core_audio_types::{
-    AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp, kAudioFormatFlagIsFloat,
+    AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp, kAudioFormatFlagIsBigEndian,
+    kAudioFormatFlagIsNonInterleaved, kAudioFormatFlagsNativeFloatPacked, kAudioFormatLinearPCM,
 };
 use objc2_core_foundation::CFDictionary;
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSObject, NSString};
@@ -164,6 +165,7 @@ impl PreparedTap {
     ) -> Result<RunningTap, AudioCaptureError> {
         let stopped = Arc::new(AtomicBool::new(false));
         let callback_stopped = stopped.clone();
+        let expected_channels = usize::from(self.format.channels);
         let sink = RefCell::new(sink);
         let block = RcBlock::new(
             move |_now: NonNull<AudioTimeStamp>,
@@ -176,7 +178,11 @@ impl PreparedTap {
                         return;
                     }
                     if let Ok(mut sink) = sink.try_borrow_mut() {
-                        unsafe { copy_audio_buffer_list(input.as_ptr(), &mut sink) };
+                        if !unsafe {
+                            copy_audio_buffer_list(input.as_ptr(), expected_channels, &mut sink)
+                        } {
+                            callback_failed.store(true, Ordering::Release);
+                        }
                     } else {
                         callback_failed.store(true, Ordering::Release);
                     }
@@ -267,49 +273,72 @@ impl Drop for RunningTap {
     }
 }
 
-unsafe fn copy_audio_buffer_list(list: *const AudioBufferList, sink: &mut RealtimeSink) {
+unsafe fn copy_audio_buffer_list(
+    list: *const AudioBufferList,
+    expected_channels: usize,
+    sink: &mut RealtimeSink,
+) -> bool {
     if list.is_null() {
-        return;
+        return false;
     }
     let count = unsafe { (*list).mNumberBuffers as usize };
-    if count == 0 {
-        return;
+    if count == 0 || expected_channels == 0 {
+        return false;
     }
     let buffers = unsafe { std::slice::from_raw_parts((*list).mBuffers.as_ptr(), count) };
-    if count == 1 {
-        let buffer = &buffers[0];
-        if buffer.mData.is_null() {
-            return;
-        }
-        let sample_count = buffer.mDataByteSize as usize / size_of::<f32>();
-        let samples =
-            unsafe { std::slice::from_raw_parts(buffer.mData.cast::<f32>(), sample_count) };
-        sink.push(samples);
-        return;
+    let actual_channels = buffers
+        .iter()
+        .map(|buffer| buffer.mNumberChannels as usize)
+        .sum::<usize>();
+    if actual_channels != expected_channels
+        || buffers
+            .iter()
+            .any(|buffer| buffer.mData.is_null() || buffer.mNumberChannels == 0)
+    {
+        return false;
     }
 
-    let frame_count = buffers
-        .iter()
-        .map(|buffer| buffer.mDataByteSize as usize / size_of::<f32>())
-        .min()
-        .unwrap_or(0);
-    let total = frame_count.saturating_mul(count);
-    if total == 0 || buffers.iter().any(|buffer| buffer.mData.is_null()) {
-        return;
+    let mut frame_count = usize::MAX;
+    for buffer in buffers {
+        let channels = buffer.mNumberChannels as usize;
+        let bytes_per_frame = size_of::<f32>().saturating_mul(channels);
+        let byte_count = buffer.mDataByteSize as usize;
+        if !byte_count.is_multiple_of(bytes_per_frame) {
+            return false;
+        }
+        frame_count = frame_count.min(byte_count / bytes_per_frame);
+    }
+    let total = frame_count.saturating_mul(actual_channels);
+    if total == 0 {
+        return true;
     }
     if sink.available() < total {
         sink.mark_overflow();
-        return;
+        return true;
+    }
+    if count == 1 {
+        let samples = unsafe { std::slice::from_raw_parts(buffers[0].mData.cast::<f32>(), total) };
+        sink.push(samples);
+        return true;
     }
     for frame in 0..frame_count {
         for buffer in buffers {
-            let samples =
-                unsafe { std::slice::from_raw_parts(buffer.mData.cast::<f32>(), frame_count) };
-            if !sink.push_sample(samples[frame]) {
-                return;
+            let channels = buffer.mNumberChannels as usize;
+            let samples = unsafe {
+                std::slice::from_raw_parts(
+                    buffer.mData.cast::<f32>(),
+                    frame_count.saturating_mul(channels),
+                )
+            };
+            let start = frame.saturating_mul(channels);
+            for &sample in &samples[start..start + channels] {
+                if !sink.push_sample(sample) {
+                    return true;
+                }
             }
         }
     }
+    true
 }
 
 fn translate_pid_to_audio_object(pid: i32) -> Result<AudioObjectID, AudioCaptureError> {
@@ -355,9 +384,22 @@ fn read_tap_format(tap_id: AudioObjectID) -> Result<NativeFormat, AudioCaptureEr
         )
     };
     check_status("read process tap format", status)?;
-    if format.mFormatFlags & kAudioFormatFlagIsFloat == 0 {
+    let native_float = format.mFormatFlags & kAudioFormatFlagsNativeFloatPacked
+        == kAudioFormatFlagsNativeFloatPacked;
+    let native_endian = format.mFormatFlags & kAudioFormatFlagIsBigEndian == 0;
+    let bytes_per_frame = if format.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0 {
+        size_of::<f32>() as u32
+    } else {
+        (size_of::<f32>() as u32).saturating_mul(format.mChannelsPerFrame)
+    };
+    if format.mFormatID != kAudioFormatLinearPCM
+        || !native_float
+        || !native_endian
+        || format.mBitsPerChannel != (size_of::<f32>() * u8::BITS as usize) as u32
+        || format.mBytesPerFrame != bytes_per_frame
+    {
         return Err(AudioCaptureError::CoreAudio(
-            "process tap did not provide floating-point PCM".into(),
+            "process tap did not provide native packed f32 PCM".into(),
         ));
     }
     let native = NativeFormat {

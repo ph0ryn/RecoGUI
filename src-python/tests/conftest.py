@@ -9,4 +9,4 @@ import pytest
 def isolate_hugging_face_cache(monkeypatch: pytest.MonkeyPatch) -> None:
   """Keep tests independent from the machine's shared Hugging Face cache."""
 
-  monkeypatch.setattr("reco.model_manager.scan_cache_dir", lambda: SimpleNamespace(repos=()))
+  monkeypatch.setattr("reco_worker.model_catalog.scan_cache_dir", lambda: SimpleNamespace(repos=()))

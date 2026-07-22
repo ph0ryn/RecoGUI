@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Native host for RecoGUI"
 authors = ["ph0ryn"]
 edition = "2024"
+default-run = "reco-gui"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -23,6 +24,9 @@ tauri-plugin-clipboard-manager = "2.3.2"
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+specta-typescript = "=0.0.12"
+tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 command-fds = { version = "0.3.3", features = ["tokio"] }
@@ -36,6 +40,7 @@ sha2 = "0.10.9"
 symphonia = { version = "0.6.0", default-features = false, features = ["aac", "adpcm", "aiff", "alac", "all-meta", "caf", "flac", "isomp4", "mp3", "ogg", "opt-simd-neon", "pcm", "vorbis", "wav"] }
 ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-native", "api-24"] }
 time = { version = "0.3.53", features = ["formatting", "macros"] }
+zip = "=8.6.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"

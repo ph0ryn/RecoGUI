@@ -289,6 +289,7 @@ pub struct ResumeContext {
     pub model: String,
     pub model_revision: Option<String>,
     pub language: String,
+    pub config: Value,
     pub resume_sample: u64,
     pub next_segment_index: u32,
     pub row_version: u64,
@@ -352,6 +353,17 @@ pub struct QueueItem {
 pub struct QueueSnapshot {
     pub revision: u64,
     pub items: Vec<QueueItem>,
+}
+
+/// Private queue metadata used only by the Rust application core.
+///
+/// Filesystem paths and fingerprints intentionally never cross the Tauri contract.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingQueueSource {
+    pub item_id: String,
+    pub display_name: String,
+    pub source_path: String,
+    pub source_fingerprint: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]

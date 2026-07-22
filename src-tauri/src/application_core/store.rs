@@ -15,10 +15,10 @@ use tokio::sync::{mpsc, oneshot};
 use super::{
     domain::{
         DeleteSession, HistoryCursor, HistoryPage, HistoryQuery, HistorySort, LifecycleStopReason,
-        NORMALIZED_SAMPLE_RATE, NewQueueItem, NewSegment, NewSession, QueueItem, QueueItemState,
-        QueueSnapshot, ResumeContext, SegmentMutationReceipt, SegmentRecord, SelectedModel,
-        SessionMutationReceipt, SessionSnapshot, SessionState, SessionSummary, SourceKind,
-        SplitReason,
+        NORMALIZED_SAMPLE_RATE, NewQueueItem, NewSegment, NewSession, PendingQueueSource,
+        QueueItem, QueueItemState, QueueSnapshot, ResumeContext, SegmentMutationReceipt,
+        SegmentRecord, SelectedModel, SessionMutationReceipt, SessionSnapshot, SessionState,
+        SessionSummary, SourceKind, SplitReason,
     },
     error::CoreError,
 };
@@ -33,6 +33,7 @@ enum SessionOperation {
     BeginPause,
     CommitPaused { resume_sample: u64 },
     BeginStop,
+    BeginStopPreparing,
     CompleteRunning,
     CompleteStopping,
     StopPaused,
@@ -363,6 +364,19 @@ impl Store {
         .await
     }
 
+    pub async fn begin_stop_preparing(
+        &self,
+        session_id: impl Into<String>,
+        expected_row_version: u64,
+    ) -> Result<SessionMutationReceipt, CoreError> {
+        self.session_operation(
+            session_id,
+            expected_row_version,
+            SessionOperation::BeginStopPreparing,
+        )
+        .await
+    }
+
     pub async fn complete_running(
         &self,
         session_id: impl Into<String>,
@@ -625,6 +639,13 @@ impl Store {
         .map_err(|error| CoreError::BlockingTask(error.to_string()))?
     }
 
+    pub async fn next_pending_queue_source(&self) -> Result<Option<PendingQueueSource>, CoreError> {
+        let path = self.database_path.as_ref().clone();
+        tokio::task::spawn_blocking(move || read_next_pending_queue_source(&path))
+            .await
+            .map_err(|error| CoreError::BlockingTask(error.to_string()))?
+    }
+
     pub async fn resume_context(
         &self,
         session_id: impl Into<String>,
@@ -792,7 +813,6 @@ fn validate_existing_schema(connection: &Connection) -> Result<(), CoreError> {
             "model",
             "model_revision",
             "language",
-            "detected_languages_json",
             "sample_rate",
             "config_json",
             "started_at",
@@ -806,6 +826,7 @@ fn validate_existing_schema(connection: &Connection) -> Result<(), CoreError> {
             "error_message",
             "resume_sample",
             "row_version",
+            "detected_languages_json",
         ],
     )?;
     validate_columns(
@@ -819,8 +840,8 @@ fn validate_existing_schema(connection: &Connection) -> Result<(), CoreError> {
             "split_reason",
             "text",
             "raw_text",
-            "language",
             "diagnostics_json",
+            "language",
         ],
     )?;
     validate_columns(
@@ -1127,6 +1148,14 @@ fn apply_session_operation(
             ),
             SessionOperation::BeginStop => (
                 vec![SessionState::Running],
+                SessionState::Stopping,
+                None,
+                None,
+                None,
+                None,
+            ),
+            SessionOperation::BeginStopPreparing => (
+                vec![SessionState::Preparing],
                 SessionState::Stopping,
                 None,
                 None,
@@ -1492,6 +1521,31 @@ fn queue_snapshot_from(connection: &Connection) -> Result<QueueSnapshot, CoreErr
         });
     }
     Ok(QueueSnapshot { revision, items })
+}
+
+fn read_next_pending_queue_source(path: &Path) -> Result<Option<PendingQueueSource>, CoreError> {
+    let connection = open_reader(path)?;
+    connection
+        .query_row(
+            r#"
+            SELECT item_id, display_name, source_path, source_fingerprint
+            FROM app_queue_items
+            WHERE state = 'pending'
+            ORDER BY position, item_id
+            LIMIT 1
+            "#,
+            [],
+            |row| {
+                Ok(PendingQueueSource {
+                    item_id: row.get(0)?,
+                    display_name: row.get(1)?,
+                    source_path: row.get(2)?,
+                    source_fingerprint: row.get(3)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(CoreError::from)
 }
 
 fn enqueue(
@@ -1974,7 +2028,8 @@ fn read_resume_context(path: &Path, session_id: &str) -> Result<ResumeContext, C
         .query_row(
             r#"
             SELECT state, source_kind, source_path, source_device_id, source_fingerprint,
-              model, model_revision, language, resume_sample, total_segments, row_version
+              model, model_revision, language, config_json, resume_sample, total_segments,
+              row_version
             FROM app_sessions WHERE session_id = ?1
             "#,
             [session_id],
@@ -1988,9 +2043,10 @@ fn read_resume_context(path: &Path, session_id: &str) -> Result<ResumeContext, C
                     row.get::<_, String>(5)?,
                     row.get::<_, Option<String>>(6)?,
                     row.get::<_, String>(7)?,
-                    row.get::<_, i64>(8)?,
-                    row.get::<_, u32>(9)?,
-                    row.get::<_, i64>(10)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, i64>(9)?,
+                    row.get::<_, u32>(10)?,
+                    row.get::<_, i64>(11)?,
                 ))
             },
         )
@@ -2020,9 +2076,12 @@ fn read_resume_context(path: &Path, session_id: &str) -> Result<ResumeContext, C
         model: raw.5,
         model_revision: raw.6,
         language: raw.7,
-        resume_sample: from_sql_u64(raw.8)?,
-        next_segment_index: raw.9,
-        row_version: from_sql_u64(raw.10)?,
+        config: serde_json::from_str(&raw.8).map_err(|error| {
+            CoreError::InvalidDatabase(format!("session {session_id} config is invalid: {error}"))
+        })?,
+        resume_sample: from_sql_u64(raw.9)?,
+        next_segment_index: raw.10,
+        row_version: from_sql_u64(raw.11)?,
     })
 }
 
@@ -2159,7 +2218,7 @@ fn read_history(path: &Path, query: &HistoryQuery) -> Result<HistoryPage, CoreEr
         ORDER BY {order} LIMIT ?
         "#
     );
-    struct RawHistoryRow {
+    struct HistoryRowData {
         session_id: String,
         state: String,
         title: String,
@@ -2184,7 +2243,7 @@ fn read_history(path: &Path, query: &HistoryQuery) -> Result<HistoryPage, CoreEr
     }
     let mut statement = connection.prepare(&sql)?;
     let rows = statement.query_map(rusqlite::params_from_iter(parameters), |row| {
-        Ok(RawHistoryRow {
+        Ok(HistoryRowData {
             session_id: row.get(0)?,
             state: row.get(1)?,
             title: row.get(2)?,
@@ -2445,7 +2504,6 @@ CREATE TABLE IF NOT EXISTS app_sessions (
   model TEXT NOT NULL,
   model_revision TEXT,
   language TEXT NOT NULL,
-  detected_languages_json TEXT NOT NULL DEFAULT '[]',
   sample_rate INTEGER NOT NULL CHECK (sample_rate > 0),
   config_json TEXT NOT NULL DEFAULT '{}',
   started_at TEXT NOT NULL,
@@ -2458,7 +2516,8 @@ CREATE TABLE IF NOT EXISTS app_sessions (
   error_code TEXT,
   error_message TEXT,
   resume_sample INTEGER NOT NULL DEFAULT 0 CHECK (resume_sample >= 0),
-  row_version INTEGER NOT NULL DEFAULT 1
+  row_version INTEGER NOT NULL DEFAULT 1,
+  detected_languages_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS app_sessions_started_at ON app_sessions(started_at DESC, session_id DESC);
 CREATE TABLE IF NOT EXISTS app_segments (
@@ -2469,8 +2528,8 @@ CREATE TABLE IF NOT EXISTS app_segments (
   split_reason TEXT NOT NULL,
   text TEXT NOT NULL,
   raw_text TEXT,
-  language TEXT NOT NULL,
   diagnostics_json TEXT NOT NULL DEFAULT '{}',
+  language TEXT NOT NULL,
   PRIMARY KEY (session_id, segment_index)
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS app_session_search USING fts5(
@@ -2863,6 +2922,32 @@ mod tests {
                 "paused",
                 paused.row_version,
                 LifecycleStopReason::SystemSleep,
+            )
+            .await
+            .unwrap();
+        assert_eq!(stopped.state, SessionState::Stopped);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn lifecycle_stop_can_claim_a_preparing_session_without_starting_it() {
+        let directory = tempdir().unwrap();
+        let store = Store::open(directory.path().join("reco.sqlite3")).unwrap();
+        let prepared = store
+            .create_session(new_session("preparing"))
+            .await
+            .unwrap();
+
+        let stopping = store
+            .begin_stop_preparing("preparing", prepared.row_version)
+            .await
+            .unwrap();
+        assert_eq!(stopping.state, SessionState::Stopping);
+
+        let stopped = store
+            .complete_lifecycle_stop(
+                "preparing",
+                stopping.row_version,
+                LifecycleStopReason::AppQuit,
             )
             .await
             .unwrap();

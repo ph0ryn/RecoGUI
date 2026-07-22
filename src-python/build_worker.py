@@ -13,14 +13,6 @@ SOURCE_DIRECTORY = PROJECT_ROOT / "src"
 DEFAULT_OUTPUT = PROJECT_ROOT / "dist" / "reco-asr-worker.pyz"
 
 _WORKER_MAIN = b"from reco_worker.worker import main\n\nraise SystemExit(main())\n"
-_SHARED_ASR_MODULES = (
-  Path("reco/__init__.py"),
-  Path("reco/config.py"),
-  Path("reco/errors.py"),
-  Path("reco/model_manager.py"),
-  Path("reco/models.py"),
-  Path("reco/transcription.py"),
-)
 
 
 def build_worker(output: Path = DEFAULT_OUTPUT) -> Path:
@@ -42,7 +34,6 @@ def build_worker(output: Path = DEFAULT_OUTPUT) -> Path:
 
 
 def _runtime_files() -> Iterator[Path]:
-  yield from _SHARED_ASR_MODULES
   yield from sorted(
     path.relative_to(SOURCE_DIRECTORY)
     for path in (SOURCE_DIRECTORY / "reco_worker").rglob("*.py")

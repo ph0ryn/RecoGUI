@@ -18,7 +18,7 @@ function summary(overrides: Partial<SessionSummary> = {}): SessionSummary {
     inputName: "audio.wav",
     language: "ja",
     model: "model",
-    rowVersion: 1,
+    rowVersion: "1",
     segmentCount: 1,
     startedAt: "2026-07-21T00:00:00.000Z",
     status: "running",
@@ -52,7 +52,7 @@ function receipt(overrides: Partial<PersistedSegmentReceipt> = {}): PersistedSeg
     characters: 9,
     mediaDurationMs: 2_000,
     recognizedSegments: 2,
-    rowVersion: 2,
+    rowVersion: "2",
     segment: segment(2),
     sessionId: "session-1",
     totalSegments: 2,
@@ -68,17 +68,17 @@ describe("sessionStateReducer", () => {
     });
 
     state = sessionStateReducer(state, {
-      receipt: receipt({ rowVersion: 3, segment: segment(3), totalSegments: 3 }),
+      receipt: receipt({ rowVersion: "3", segment: segment(3), totalSegments: 3 }),
       type: "segmentPersisted",
     });
 
     state = sessionStateReducer(state, {
-      receipt: receipt({ rowVersion: 2, segment: segment(2), totalSegments: 2 }),
+      receipt: receipt({ rowVersion: "2", segment: segment(2), totalSegments: 2 }),
       type: "segmentPersisted",
     });
 
     state = sessionStateReducer(state, {
-      receipt: receipt({ rowVersion: 3, segment: segment(2, "corrected"), totalSegments: 3 }),
+      receipt: receipt({ rowVersion: "3", segment: segment(2, "corrected"), totalSegments: 3 }),
       type: "segmentPersisted",
     });
 
@@ -97,16 +97,16 @@ describe("sessionStateReducer", () => {
     });
 
     state = sessionStateReducer(state, {
-      receipt: receipt({ rowVersion: 3, segment: segment(3), totalSegments: 3 }),
+      receipt: receipt({ rowVersion: "3", segment: segment(3), totalSegments: 3 }),
       type: "segmentPersisted",
     });
 
     state = sessionStateReducer(state, {
-      session: detail({ rowVersion: 2, segments: [segment(1), segment(2)] }),
+      session: detail({ rowVersion: "2", segments: [segment(1), segment(2)] }),
       type: "detailLoaded",
     });
 
-    expect(state.sessionsById["session-1"]!.rowVersion).toBe(3);
+    expect(state.sessionsById["session-1"]!.rowVersion).toBe("3");
 
     expect(state.sessionsById["session-1"]!.segments.map(({ sequence }) => sequence)).toEqual([
       1, 2, 3,
@@ -144,13 +144,13 @@ describe("sessionStateReducer", () => {
         type: "bootstrap",
       }),
       {
-        sessions: [summary({ rowVersion: 2, title: "Renamed" })],
+        sessions: [summary({ rowVersion: "2", title: "Renamed" })],
         type: "historyPageLoaded",
       },
     );
 
     expect(state.sessionsById["session-1"]).toMatchObject({
-      rowVersion: 2,
+      rowVersion: "2",
       segments: [segment(1)],
       segmentsLoaded: true,
       title: "Renamed",
@@ -164,7 +164,7 @@ describe("sessionStateReducer", () => {
         type: "bootstrap",
       }),
       {
-        rowVersion: 2,
+        rowVersion: "2",
         sessionId: "session-1",
         title: "Renamed",
         type: "sessionRenamed",
@@ -172,7 +172,7 @@ describe("sessionStateReducer", () => {
     );
 
     expect(state.sessionsById["session-1"]).toMatchObject({
-      rowVersion: 2,
+      rowVersion: "2",
       segments: [segment(1)],
       title: "Renamed",
     });
@@ -180,12 +180,12 @@ describe("sessionStateReducer", () => {
 
   it("replaces optimistic detail during canonical reconciliation", () => {
     let state = sessionStateReducer(initialSessionState, {
-      sessions: [detail({ rowVersion: 3, segments: [segment(1), segment(2), segment(3)] })],
+      sessions: [detail({ rowVersion: "3", segments: [segment(1), segment(2), segment(3)] })],
       type: "bootstrap",
     });
 
     state = sessionStateReducer(state, {
-      session: detail({ rowVersion: 3, segmentCount: 2, segments: [segment(1), segment(2)] }),
+      session: detail({ rowVersion: "3", segmentCount: 2, segments: [segment(1), segment(2)] }),
       type: "canonicalReconciled",
     });
 
@@ -202,7 +202,7 @@ describe("sessionStateReducer", () => {
     });
 
     state = sessionStateReducer(state, {
-      rowVersion: 2,
+      rowVersion: "2",
       sessionId: "session-1",
       status: "stopping",
       type: "statusChanged",
@@ -211,7 +211,7 @@ describe("sessionStateReducer", () => {
     expect(state.activeSessionId).toBe("session-1");
 
     state = sessionStateReducer(state, {
-      rowVersion: 3,
+      rowVersion: "3",
       sessionId: "session-1",
       status: "stopped",
       type: "statusChanged",
@@ -228,7 +228,7 @@ describe("sessionStateReducer", () => {
     });
 
     state = sessionStateReducer(state, {
-      rowVersion: 2,
+      rowVersion: "2",
       sessionId: "session-1",
       status: "paused",
       type: "statusChanged",
@@ -237,7 +237,7 @@ describe("sessionStateReducer", () => {
     expect(state.activeSessionId).toBeUndefined();
 
     state = sessionStateReducer(state, {
-      rowVersion: 3,
+      rowVersion: "3",
       sessionId: "session-1",
       status: "preparing",
       type: "statusChanged",

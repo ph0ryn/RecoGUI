@@ -20,7 +20,6 @@ CREATE TABLE app_sessions (
   model TEXT NOT NULL,
   model_revision TEXT,
   language TEXT NOT NULL,
-  detected_languages_json TEXT NOT NULL DEFAULT '[]',
   sample_rate INTEGER NOT NULL CHECK (sample_rate > 0),
   config_json TEXT NOT NULL DEFAULT '{}',
   started_at TEXT NOT NULL,
@@ -33,7 +32,8 @@ CREATE TABLE app_sessions (
   error_code TEXT,
   error_message TEXT,
   resume_sample INTEGER NOT NULL DEFAULT 0 CHECK (resume_sample >= 0),
-  row_version INTEGER NOT NULL DEFAULT 1
+  row_version INTEGER NOT NULL DEFAULT 1,
+  detected_languages_json TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX app_sessions_started_at
@@ -47,8 +47,8 @@ CREATE TABLE app_segments (
   split_reason TEXT NOT NULL,
   text TEXT NOT NULL,
   raw_text TEXT,
-  language TEXT NOT NULL,
   diagnostics_json TEXT NOT NULL DEFAULT '{}',
+  language TEXT NOT NULL,
   PRIMARY KEY (session_id, segment_index)
 );
 
@@ -92,7 +92,7 @@ INSERT INTO app_sessions(
     'fixture.wav', 'sha256:fixture-file', 'fixtures/input/fixture.wav', NULL,
     'mlx-community/whisper-large-v3-mlx', '0123456789abcdef', 'Auto',
     '["Japanese"]', 16000,
-    '{"asr":{"temperature":0.0},"vad":{"startThreshold":0.5}}',
+    '{"vad":{"start_threshold":0.5,"end_threshold":0.35,"min_speech_duration_ms":160,"min_silence_duration_ms":800,"speech_pad_ms":160,"target_segment_duration_ms":30000,"max_segment_duration_ms":60000},"transcription":{"generation_tokens_per_sec":20.0,"max_generation_tokens":2048,"min_generation_tokens":64,"temperature":0.0,"repetition_penalty":null,"max_transcription_queue_size":2,"interrupted_worker_shutdown_timeout_seconds":30.0,"failed_worker_shutdown_timeout_seconds":2.0}}',
     '2026-01-02T03:04:05.000000+00:00',
     '2026-01-02T03:04:07.000000+00:00',
     '2026-01-02T03:04:07.000000+00:00', 2000, 2, 2, 10, NULL, NULL,
@@ -104,7 +104,7 @@ INSERT INTO app_sessions(
     'AppleUSBAudioEngine:fixture-uid',
     'mlx-community/whisper-large-v3-mlx', '0123456789abcdef', 'Japanese',
     '["Japanese"]', 16000,
-    '{"asr":{"temperature":0.0},"vad":{"startThreshold":0.5}}',
+    '{"vad":{"start_threshold":0.5,"end_threshold":0.35,"min_speech_duration_ms":160,"min_silence_duration_ms":800,"speech_pad_ms":160,"target_segment_duration_ms":30000,"max_segment_duration_ms":60000},"transcription":{"generation_tokens_per_sec":20.0,"max_generation_tokens":2048,"min_generation_tokens":64,"temperature":0.0,"repetition_penalty":null,"max_transcription_queue_size":2,"interrupted_worker_shutdown_timeout_seconds":30.0,"failed_worker_shutdown_timeout_seconds":2.0}}',
     '2026-01-03T03:04:05.000000+00:00', NULL,
     '2026-01-03T03:04:06.000000+00:00', 1000, 1, 1, 5, NULL, NULL,
     16000, 3

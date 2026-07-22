@@ -66,18 +66,25 @@ pub(super) fn list_input_devices() -> Result<Vec<AudioInputDevice>, AudioCapture
     Ok(result)
 }
 
-pub(super) fn preflight(device_id: Option<&str>) -> Result<(), AudioCaptureError> {
+pub(super) fn resolve_device_id(device_id: Option<&str>) -> Result<String, AudioCaptureError> {
     request_permission()?;
     let devices = list_input_devices()?;
     if devices.is_empty() {
         return Err(AudioCaptureError::NoInputDevice);
     }
-    if let Some(device_id) = device_id
-        && !devices.iter().any(|device| device.id == device_id)
-    {
-        return Err(AudioCaptureError::DeviceNotFound(device_id.to_owned()));
+    if let Some(device_id) = device_id {
+        return devices
+            .into_iter()
+            .find(|device| device.id == device_id)
+            .map(|device| device.id)
+            .ok_or_else(|| AudioCaptureError::DeviceNotFound(device_id.to_owned()));
     }
-    Ok(())
+    devices
+        .iter()
+        .find(|device| device.is_default)
+        .or_else(|| devices.first())
+        .map(|device| device.id.clone())
+        .ok_or(AudioCaptureError::NoInputDevice)
 }
 
 #[cfg(target_os = "macos")]
