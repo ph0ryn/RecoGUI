@@ -16,6 +16,7 @@ import packageMetadata from "../package.json";
 import "./App.css";
 import { loadAppPreferences, saveAppPreferences } from "./appPreferences";
 import { recoBridge } from "./bridge";
+import { messageFromUnknownError } from "./errorMessage";
 import { newestRevisionedValue } from "./eventSequence";
 import { initialSessionState, sessionStateReducer, type SessionEntity } from "./sessionState";
 import { useApplicationCore } from "./useApplicationCore";
@@ -751,9 +752,9 @@ function App() {
       setSelectedIds(new Set([session.id]));
       setToast("録音を開始しました。");
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = messageFromUnknownError(error, "文字起こしを開始できませんでした。");
 
-      setToast(message || "文字起こしを開始できませんでした。");
+      setToast(message);
     } finally {
       setIsWorking(false);
     }
@@ -796,7 +797,7 @@ function App() {
       await recoBridge.resumeSession(sessionId);
       setToast("文字起こしを再開します。");
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = messageFromUnknownError(error, "原因を確認できませんでした。");
 
       setToast(`再開できませんでした: ${message}`);
     } finally {
@@ -2279,7 +2280,7 @@ function SettingsDialog({
       setModels(result.models);
       onModelChange(result.state);
     } catch (error) {
-      setModelListError(error instanceof Error ? error.message : String(error));
+      setModelListError(messageFromUnknownError(error, "モデル一覧を取得できませんでした。"));
     } finally {
       setIsModelWorking(false);
     }
@@ -2300,7 +2301,7 @@ function SettingsDialog({
 
       onModelChange(await recoBridge.selectModel(reference));
     } catch (error) {
-      setModelListError(error instanceof Error ? error.message : String(error));
+      setModelListError(messageFromUnknownError(error, "モデルを選択できませんでした。"));
       onModelChange(await recoBridge.getModelState());
     } finally {
       setIsModelWorking(false);

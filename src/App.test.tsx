@@ -231,6 +231,22 @@ describe("RecoGUI", () => {
     expect(screen.getByRole("dialog", { name: "設定" })).toBeInTheDocument();
   });
 
+  it("renders typed native command errors without object coercion", async () => {
+    bridgeMocks.listModels.mockRejectedValueOnce({
+      code: "workerUnavailable",
+      message: "Python workerを起動できませんでした。",
+      recoverable: true,
+    });
+
+    const user = userEvent.setup();
+
+    await renderLoadedApp();
+    await user.click(screen.getByRole("button", { name: "設定を開く" }));
+
+    expect(await screen.findByText("Python workerを起動できませんでした。")).toBeInTheDocument();
+    expect(screen.queryByText("[object Object]")).not.toBeInTheDocument();
+  });
+
   it("starts microphone transcription with Cmd+N", async () => {
     const user = userEvent.setup();
 

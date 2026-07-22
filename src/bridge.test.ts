@@ -161,6 +161,61 @@ describe("recoBridge", () => {
     });
   });
 
+  it("coalesces concurrent model catalog requests", async () => {
+    let resolveModelList: (value: {
+      models: never[];
+      state: { error: null; selected: null; status: "unselected" };
+    }) => void = () => undefined;
+    const response = {
+      models: [],
+      state: { error: null, selected: null, status: "unselected" as const },
+    };
+
+    tauriMocks.invoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveModelList = resolve;
+        }),
+    );
+
+    const first = recoBridge.listModels();
+    const second = recoBridge.listModels();
+
+    expect(tauriMocks.invoke).toHaveBeenCalledTimes(1);
+    resolveModelList(response);
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      {
+        models: [],
+        state: {
+          errorCode: undefined,
+          errorMessage: undefined,
+          selected: null,
+          status: "unselected",
+        },
+      },
+      {
+        models: [],
+        state: {
+          errorCode: undefined,
+          errorMessage: undefined,
+          selected: null,
+          status: "unselected",
+        },
+      },
+    ]);
+  });
+
+  it("turns typed native model errors into JavaScript errors", async () => {
+    tauriMocks.invoke.mockRejectedValueOnce({
+      code: "workerUnavailable",
+      message: "Python worker could not start.",
+      recoverable: true,
+    });
+
+    await expect(recoBridge.listModels()).rejects.toThrow("Python worker could not start.");
+  });
+
   it("opens the native file dialog and maps the canonical queue snapshot", async () => {
     tauriMocks.invoke.mockResolvedValue({ canceled: false, queue });
 

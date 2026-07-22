@@ -1,5 +1,6 @@
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
+import { messageFromUnknownError } from "./errorMessage";
 import {
   commands,
   events,
@@ -257,6 +258,20 @@ const mockQueueSnapshot: QueueSnapshot = {
   revision: "0",
 };
 
+let modelListRequest: Promise<ModelList> | undefined = undefined;
+
+async function nativeCommand<T>(request: Promise<T>): Promise<T> {
+  try {
+    return await request;
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      throw error;
+    }
+
+    throw new Error(messageFromUnknownError(error, "Native application command failed."));
+  }
+}
+
 export const recoBridge = {
   async addFiles(language: string | null): Promise<{ canceled: boolean; queue: QueueSnapshot }> {
     if (!hasTauriRuntime()) {
@@ -423,9 +438,15 @@ export const recoBridge = {
       return { models: [], state: structuredClone(mockSnapshot.model) };
     }
 
-    const result = await commands.modelList();
+    if (modelListRequest === undefined) {
+      modelListRequest = nativeCommand(commands.modelList())
+        .then((result) => ({ models: result.models, state: mapModel(result.state) }))
+        .finally(() => {
+          modelListRequest = undefined;
+        });
+    }
 
-    return { models: result.models, state: mapModel(result.state) };
+    return modelListRequest;
   },
 
   async onApplicationEvent(handler: (event: ApplicationEvent) => void): Promise<() => void> {
@@ -523,7 +544,7 @@ export const recoBridge = {
       return { selected: model, status: "ready" };
     }
 
-    return mapModel(await commands.modelSelect(model));
+    return mapModel(await nativeCommand(commands.modelSelect(model)));
   },
 
   async startQueue(language: string | null, revision: string): Promise<QueueSnapshot> {
