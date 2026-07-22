@@ -36,10 +36,7 @@
     "active": true,
     "targets": "all",
     "resources": {
-      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
       "../src-python/LICENSE": "src-python/LICENSE",
-      "../src-python/SOURCE.md": "src-python/SOURCE.md",
-      "../src-python/THIRD_PARTY_NOTICES.md": "src-python/THIRD_PARTY_NOTICES.md",
       "../src-python/pyproject.toml": "src-python/pyproject.toml",
       "../src-python/dist/reco-asr-worker.pyz": "src-python/reco-asr-worker.pyz",
       "resources/models/silero_vad.onnx": "models/silero_vad.onnx",

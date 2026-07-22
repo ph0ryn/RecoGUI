@@ -31,12 +31,8 @@ dev = [
   "ty>=0.0.35",
 ]
 
-[tool.hatch.build.targets]
 [tool.hatch.build.targets.wheel]
 packages = [ "src/reco_worker" ]
-[tool.hatch.build.targets.wheel.force-include]
-"SOURCE.md" = "reco_worker/SOURCE.md"
-"THIRD_PARTY_NOTICES.md" = "reco_worker/THIRD_PARTY_NOTICES.md"
 
 [tool.ruff]
 target-version = "py312"

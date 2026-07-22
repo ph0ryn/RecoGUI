@@ -167,7 +167,7 @@ buffer だけを適用する。sequence gap または rowVersion の逆行を検
 ## Export と resources
 
 Export は Rust の read-only snapshot から生成する。`zip 8.6.0` で複数 session の ZIP を作り、同一 directory の staging に書く。finish、flush、`sync_all` 後に atomic publish し、
-cancel/error 時は staging のみ削除する。既存 destination は成功した publish 以外では変更しない。Symphonia、ORT、rusqlite/SQLite、zip、Specta の license notice を bundle に含める。
+cancel/error 時は staging のみ削除する。既存 destination は成功した publish 以外では変更しない。
 
 ## 設計変更の gate
 

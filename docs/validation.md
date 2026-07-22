@@ -85,7 +85,7 @@ Python 固有の task は `src-python/pyproject.toml`、Rust の対象は `src-t
 ## Release / 実機確認
 
 1. `pnpm build` で `.app` を生成し、Finder 起動、macOS 14.2 以降、Apple Silicon で確認する。
-2. bundle に `reco-asr-worker.pyz`、ONNX asset、lockfile、license notice が含まれ、Python source/test/`.venv`、旧 archive、旧 protocol、旧 capture event が無いことを確認する。
+2. bundle に `reco-asr-worker.pyz`、ONNX asset、lockfile が含まれ、Python source/test/`.venv`、旧 archive、旧 protocol、旧 capture event が無いことを確認する。
 3. `otool -L` で非 system の ONNX runtime dylib が無いこと、Rust resource の SHA-256 が期待値と一致することを確認する。
 4. clean な PATH の `uv` で UI を表示したまま sync/run が進み、固定 startup timeout に頼らず ready/error が通知されることを確認する。
 5. 実機で file、microphone、Mac 全体の desktop audio、permission 拒否、device 切断、output device 変更、worker kill、sleep、quit、全 Export 形式を確認する。
