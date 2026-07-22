@@ -9,7 +9,7 @@ export type SessionStatus =
   | "failed"
   | "abandoned";
 
-export type InputKind = "microphone" | "file";
+export type InputKind = "file" | "microphone" | "systemAudio";
 
 export interface TranscriptSegment {
   id: string;

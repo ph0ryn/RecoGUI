@@ -10,13 +10,13 @@ describe("shared protocol fixtures", () => {
   it("loads the canonical request, response, and event fixtures in TypeScript", () => {
     expect(requestFixture).toMatchObject({
       command: "engine.getState",
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "request",
     });
 
     expect(responseFixture).toMatchObject({
       ok: true,
-      protocolVersion: 1,
+      protocolVersion: 2,
       type: "response",
     });
 
@@ -38,7 +38,7 @@ describe("shared protocol fixtures", () => {
         segment: { segmentIndex: 0 },
         totalSegments: 1,
       },
-      protocolVersion: 1,
+      protocolVersion: 2,
       sequence: 2,
       type: "event",
     });

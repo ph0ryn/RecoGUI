@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
@@ -115,7 +115,7 @@ mod tests {
         ))
         .unwrap();
 
-        assert_eq!(value["protocolVersion"], 1);
+        assert_eq!(value["protocolVersion"], 2);
         assert_eq!(value["type"], "request");
         assert_eq!(value["requestId"], "request-1");
         assert_eq!(value["sequence"], 7);
@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn incoming_event_deserializes() {
         let envelope: IncomingEnvelope = serde_json::from_value(serde_json::json!({
-            "protocolVersion": 1,
+            "protocolVersion": 2,
             "type": "event",
             "requestId": null,
             "sessionId": "session-1",

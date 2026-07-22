@@ -65,8 +65,27 @@ const exportFormats: ExportFormat[] = ["timestampedTxt", "txt", "markdown", "jso
 const terminalStatuses: SessionStatus[] = ["completed", "stopped", "failed", "abandoned"];
 const deletableStatuses: SessionStatus[] = [...terminalStatuses, "paused"];
 const pausableStatuses: SessionStatus[] = ["preparing", "running", "pausing"];
-const resumableStatuses: SessionStatus[] = ["paused", "failed"];
 const emptyQueue: QueueSnapshot = { autoAdvanceEnabled: false, items: [], revision: 0 };
+
+function inputKindLabel(inputKind: InputKind): string {
+  const labels: Record<InputKind, string> = {
+    file: "ファイル",
+    microphone: "マイク",
+    systemAudio: "デスクトップ音声",
+  };
+
+  return labels[inputKind];
+}
+
+function isLiveInput(inputKind: InputKind): boolean {
+  return inputKind === "microphone" || inputKind === "systemAudio";
+}
+
+function canResumeSession(session: SessionEntity): boolean {
+  return (
+    session.status === "paused" || (session.inputKind === "file" && session.status === "failed")
+  );
+}
 
 function formatDuration(milliseconds: number): string {
   const totalSeconds = Math.max(0, Math.round(milliseconds / 1_000));
@@ -856,7 +875,9 @@ function App() {
         durationMs: 0,
         id: sessionId,
         inputKind,
-        inputName: input.inputName ?? "システムの既定マイク",
+        inputName:
+          input.inputName ??
+          (inputKind === "systemAudio" ? "デスクトップ音声" : "システムの既定マイク"),
         language: selectedLanguage ?? "自動",
         model: "Qwen3-ASR 1.7B JA",
         rowVersion,
@@ -867,15 +888,17 @@ function App() {
         status: "preparing",
         title:
           input.inputName ??
-          `録音 ${new Intl.DateTimeFormat("ja-JP", { dateStyle: "short", timeStyle: "short" }).format(new Date())}`,
+          `${inputKind === "systemAudio" ? "デスクトップ音声" : "録音"} ${new Intl.DateTimeFormat("ja-JP", { dateStyle: "short", timeStyle: "short" }).format(new Date())}`,
       };
 
       setDialog(null);
       dispatchSessions({ session: optimisticSession, type: "sessionStarted" });
       setSelectedIds(new Set([sessionId]));
       setToast("録音を開始しました。");
-    } catch {
-      setToast("文字起こしを開始できませんでした。");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      setToast(message || "文字起こしを開始できませんでした。");
     } finally {
       setIsWorking(false);
     }
@@ -898,7 +921,7 @@ function App() {
     }
   }
 
-  async function completeMicrophoneSession(sessionId: string): Promise<void> {
+  async function completeLiveSession(sessionId: string): Promise<void> {
     setIsWorking(true);
     try {
       await recoBridge.stopSession(sessionId);
@@ -1219,6 +1242,7 @@ function App() {
                     >
                       <option value="all">すべての入力</option>
                       <option value="microphone">マイク</option>
+                      <option value="systemAudio">デスクトップ音声</option>
                       <option value="file">ファイル</option>
                     </select>
                   </label>
@@ -1366,7 +1390,7 @@ function App() {
               onPause={() => void pauseActive(selectedSession.id)}
               onQueryChange={setDetailQuery}
               onResume={() => void resumeSession(selectedSession.id)}
-              onStop={() => void completeMicrophoneSession(selectedSession.id)}
+              onStop={() => void completeLiveSession(selectedSession.id)}
               queueIsRunning={queue.autoAdvanceEnabled}
               progress={sessionProgress[selectedSession.id]}
               session={selectedSession}
@@ -1382,7 +1406,7 @@ function App() {
         ) : (
           <EmptyState
             actionLabel="新規文字起こし"
-            description="マイクで録音するか、音声ファイルを選んでください。"
+            description="マイクやデスクトップ音声を録音するか、音声ファイルを選んでください。"
             icon="◎"
             onAction={() => openDialog("new")}
             title="文字起こしを始めましょう"
@@ -1394,6 +1418,9 @@ function App() {
         <NewSessionDialog
           fileDisabled={isWorking || isQueueWorking}
           microphoneDisabled={
+            isWorking || activeSessionId !== undefined || queue.autoAdvanceEnabled
+          }
+          systemAudioDisabled={
             isWorking || activeSessionId !== undefined || queue.autoAdvanceEnabled
           }
           model={model}
@@ -1692,7 +1719,7 @@ function HistoryRow({ onContextMenu, onSelect, query, selected, session }: Histo
       </div>
       <div className="history-row-meta">
         <StatusBadge status={session.status} />
-        <span>{session.inputKind === "microphone" ? "マイク" : "ファイル"}</span>
+        <span>{inputKindLabel(session.inputKind)}</span>
         <span>{formatDuration(session.durationMs)}</span>
       </div>
       {snippet && <p className="history-snippet">{snippet}</p>}
@@ -1746,9 +1773,10 @@ function SessionHeader({
   queueIsRunning,
   session,
 }: SessionHeaderProps) {
-  const microphoneCanStop =
-    session.inputKind === "microphone" &&
+  const liveSessionCanStop =
+    isLiveInput(session.inputKind) &&
     ["preparing", "running", "pausing", "paused", "stopping"].includes(session.status);
+  const resumable = canResumeSession(session);
 
   return (
     <header className="session-header">
@@ -1757,10 +1785,9 @@ function SessionHeader({
           <h1>{session.title}</h1>
         </div>
         <div className="header-actions">
-          {(pausableStatuses.includes(session.status) ||
-            resumableStatuses.includes(session.status)) && (
+          {(pausableStatuses.includes(session.status) || resumable) && (
             <>
-              {resumableStatuses.includes(session.status) ? (
+              {resumable ? (
                 <button
                   aria-label={
                     session.status === "failed" ? "文字起こしを再試行" : "文字起こしを再開"
@@ -1793,7 +1820,7 @@ function SessionHeader({
               )}
             </>
           )}
-          {microphoneCanStop && (
+          {liveSessionCanStop && (
             <button
               aria-label="録音を完了"
               className="icon-button session-control-button stop-session-button"
@@ -1807,9 +1834,9 @@ function SessionHeader({
               </svg>
             </button>
           )}
-          {(pausableStatuses.includes(session.status) ||
-            resumableStatuses.includes(session.status) ||
-            microphoneCanStop) && <span aria-hidden="true" className="header-action-spacer" />}
+          {(pausableStatuses.includes(session.status) || resumable || liveSessionCanStop) && (
+            <span aria-hidden="true" className="header-action-spacer" />
+          )}
           <button className="secondary-button export-button" onClick={onExport} type="button">
             <span aria-hidden="true" className="export-icon">
               ⇧
@@ -2120,6 +2147,7 @@ function DialogActions({ children }: { children: React.ReactNode }) {
 function NewSessionDialog({
   fileDisabled,
   microphoneDisabled,
+  systemAudioDisabled,
   model,
   onClose,
   onOpenSettings,
@@ -2127,6 +2155,7 @@ function NewSessionDialog({
 }: {
   fileDisabled: boolean;
   microphoneDisabled: boolean;
+  systemAudioDisabled: boolean;
   model: ModelState;
   onClose: () => void;
   onOpenSettings: () => void;
@@ -2152,6 +2181,17 @@ function NewSessionDialog({
             <strong>マイクで録音</strong>
             <small>選択した入力から文字起こしします</small>
           </button>
+          <button
+            disabled={systemAudioDisabled}
+            onClick={() => onStart("systemAudio")}
+            type="button"
+          >
+            <span aria-hidden="true" className="source-icon">
+              ◉
+            </span>
+            <strong>デスクトップ音声を録音</strong>
+            <small>Macで再生されている音声を文字起こしします</small>
+          </button>
           <button disabled={fileDisabled} onClick={() => onStart("file")} type="button">
             <span aria-hidden="true" className="source-icon">
               ♪
@@ -2162,7 +2202,7 @@ function NewSessionDialog({
         </div>
       )}
       <p className="privacy-note">
-        マイクの元音声は保存しません。確定した文字起こしだけが履歴に残ります。
+        ライブ入力の元音声は保存しません。確定した文字起こしだけが履歴に残ります。
       </p>
     </DialogFrame>
   );

@@ -139,6 +139,11 @@ function mapSessionLanguage(value: RawSession): string {
   return `自動 (${value.detectedLanguages.join(", ")})`;
 }
 
+function mapInputKind(value: string): InputKind {
+  if (value === "file" || value === "microphone" || value === "systemAudio") return value;
+  throw new Error(`Unsupported input kind: ${value}`);
+}
+
 function mapSessionSummary(value: RawSession): SessionSummary {
   return {
     characterCount: value.characters ?? 0,
@@ -147,7 +152,7 @@ function mapSessionSummary(value: RawSession): SessionSummary {
     errorCode: value.errorCode ?? undefined,
     errorMessage: value.errorMessage ?? undefined,
     id: value.sessionId,
-    inputKind: value.sourceKind === "file" ? "file" : "microphone",
+    inputKind: mapInputKind(value.sourceKind),
     inputName: value.sourceDisplayName,
     language: mapSessionLanguage(value),
     model: value.model,
@@ -375,9 +380,9 @@ export const recoBridge = {
       ];
     }
 
-    const result = await request<{
+    const result = await invoke<{
       inputs: { channels: number; id: number | string; isDefault: boolean; name: string }[];
-    }>("audio.listInputs");
+    }>("audio_list_inputs");
 
     return result.inputs.map((input) => ({ ...input, id: String(input.id) }));
   },
@@ -624,10 +629,13 @@ export const recoBridge = {
   async startSession(input: StartSessionInput): Promise<{ rowVersion: number; sessionId: string }> {
     if (!hasTauriRuntime()) return { rowVersion: 1, sessionId: crypto.randomUUID() };
 
+    if (input.inputKind === "file") {
+      throw new Error("File sources must be added through the processing queue");
+    }
     const source =
       input.inputKind === "microphone"
         ? { deviceId: input.deviceId, type: "microphone" }
-        : { sourceToken: input.inputToken, type: "file" };
+        : { type: "systemAudio" };
 
     return request("session.start", { language: input.language, source, title: input.inputName });
   },

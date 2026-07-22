@@ -260,6 +260,30 @@ describe("RecoGUI", () => {
     );
   });
 
+  it("offers three sources and starts desktop audio with the systemAudio kind", async () => {
+    const user = userEvent.setup();
+
+    useInactiveSnapshot();
+    await renderLoadedApp();
+    await user.click(screen.getByRole("button", { name: /新規文字起こし/ }));
+
+    const dialog = screen.getByRole("dialog", { name: "新規文字起こし" });
+
+    expect(within(dialog).getByRole("button", { name: /マイクで録音/ })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: /デスクトップ音声を録音/ })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: /音声ファイルを選択/ })).toBeEnabled();
+
+    await user.click(within(dialog).getByRole("button", { name: /デスクトップ音声を録音/ }));
+
+    await waitFor(() =>
+      expect(bridgeMocks.startSession).toHaveBeenCalledWith({
+        deviceId: undefined,
+        inputKind: "systemAudio",
+        language: null,
+      }),
+    );
+  });
+
   it("opens file selection with Cmd+Shift+N while another session is active", async () => {
     const user = userEvent.setup();
 
@@ -426,7 +450,7 @@ describe("RecoGUI", () => {
     await waitFor(() => expect(bridgeMocks.resumeSession).toHaveBeenCalledWith("session-live"));
   });
 
-  it("retries a failed session from its saved checkpoint", async () => {
+  it("retries a failed file session from its saved checkpoint", async () => {
     const user = userEvent.setup();
 
     bridgeMocks.getSnapshot.mockResolvedValue({
@@ -438,6 +462,8 @@ describe("RecoGUI", () => {
               ...session,
               errorCode: "transcription_failed",
               errorMessage: "Broken pipe",
+              inputKind: "file" as const,
+              inputName: "recording.wav",
               status: "failed" as const,
             }
           : session,
@@ -449,6 +475,30 @@ describe("RecoGUI", () => {
     await user.click(screen.getByRole("button", { name: "文字起こしを再試行" }));
 
     await waitFor(() => expect(bridgeMocks.resumeSession).toHaveBeenCalledWith("session-live"));
+  });
+
+  it("does not offer resume or retry for a failed live session", async () => {
+    bridgeMocks.getSnapshot.mockResolvedValue({
+      ...structuredClone(mockSnapshot),
+      activeSessionId: undefined,
+      sessions: structuredClone(mockSnapshot.sessions).map((session) =>
+        session.id === "session-live"
+          ? {
+              ...session,
+              errorCode: "audio_stream_lost",
+              errorMessage: "Audio stream disconnected",
+              inputKind: "systemAudio" as const,
+              inputName: "デスクトップ音声",
+              status: "failed" as const,
+            }
+          : session,
+      ),
+    });
+    await renderLoadedApp();
+
+    expect(screen.getByText("Audio stream disconnected")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "文字起こしを再開" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "文字起こしを再試行" })).not.toBeInTheDocument();
   });
 
   it("keeps a failed resume paused and shows the model error", async () => {
@@ -738,14 +788,45 @@ describe("RecoGUI", () => {
     const filterButton = screen.getByRole("button", { name: "履歴のフィルタと並び替え" });
 
     await user.click(filterButton);
+    const inputFilter = screen.getByRole("combobox", { name: "入力元で絞り込み" });
+
+    expect(within(inputFilter).getByRole("option", { name: "マイク" })).toHaveValue("microphone");
+    expect(within(inputFilter).getByRole("option", { name: "デスクトップ音声" })).toHaveValue(
+      "systemAudio",
+    );
+    expect(within(inputFilter).getByRole("option", { name: "ファイル" })).toHaveValue("file");
     await user.selectOptions(screen.getByRole("combobox", { name: "状態で絞り込み" }), "completed");
+    await user.selectOptions(inputFilter, "systemAudio");
     expect(filterButton).toHaveClass("active");
+    await waitFor(() =>
+      expect(bridgeMocks.listHistory).toHaveBeenLastCalledWith(
+        expect.objectContaining({ inputKind: "systemAudio", status: "completed" }),
+      ),
+    );
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("combobox", { name: "状態で絞り込み" })).not.toBeInTheDocument();
 
     await user.click(filterButton);
     expect(screen.getByRole("combobox", { name: "状態で絞り込み" })).toHaveValue("completed");
+    expect(screen.getByRole("combobox", { name: "入力元で絞り込み" })).toHaveValue("systemAudio");
+  });
+
+  it("labels desktop audio distinctly in history", async () => {
+    bridgeMocks.getSnapshot.mockResolvedValue({
+      ...structuredClone(mockSnapshot),
+      sessions: structuredClone(mockSnapshot.sessions).map((session) =>
+        session.id === "session-2"
+          ? { ...session, inputKind: "systemAudio" as const, inputName: "デスクトップ音声" }
+          : session,
+      ),
+    });
+    await renderLoadedApp();
+
+    const row = document.querySelector('[data-session-id="session-2"]');
+
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("デスクトップ音声")).toBeInTheDocument();
   });
 
   it("persists the microphone and language selections when starting", async () => {

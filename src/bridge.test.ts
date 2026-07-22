@@ -57,6 +57,59 @@ beforeEach(() => {
 });
 
 describe("recoBridge", () => {
+  it("lists microphone inputs through the native Tauri command", async () => {
+    tauriMocks.invoke.mockResolvedValue({
+      inputs: [
+        { channels: 1, id: "builtin-uid", isDefault: true, name: "MacBookのマイク" },
+        { channels: 2, id: 42, isDefault: false, name: "USBマイク" },
+      ],
+    });
+
+    await expect(recoBridge.listAudioInputs()).resolves.toEqual([
+      { channels: 1, id: "builtin-uid", isDefault: true, name: "MacBookのマイク" },
+      { channels: 2, id: "42", isDefault: false, name: "USBマイク" },
+    ]);
+
+    expect(tauriMocks.invoke).toHaveBeenCalledWith("audio_list_inputs");
+  });
+
+  it("starts microphone and desktop audio with distinct engine sources", async () => {
+    tauriMocks.invoke.mockResolvedValue({ rowVersion: 1, sessionId: "session-live" });
+
+    await recoBridge.startSession({
+      deviceId: "builtin-uid",
+      inputKind: "microphone",
+      language: "Japanese",
+    });
+
+    await recoBridge.startSession({ inputKind: "systemAudio", language: null });
+
+    expect(tauriMocks.invoke).toHaveBeenNthCalledWith(1, "engine_request", {
+      command: "session.start",
+      payload: {
+        language: "Japanese",
+        source: { deviceId: "builtin-uid", type: "microphone" },
+        title: undefined,
+      },
+    });
+
+    expect(tauriMocks.invoke).toHaveBeenNthCalledWith(2, "engine_request", {
+      command: "session.start",
+      payload: { language: null, source: { type: "systemAudio" }, title: undefined },
+    });
+  });
+
+  it("rejects an unknown history source instead of mapping it to microphone", async () => {
+    tauriMocks.invoke.mockResolvedValue({
+      items: [{ ...rawSession(1, 0, null), sourceKind: "futureAudioSource" }],
+      nextCursor: null,
+    });
+
+    await expect(recoBridge.listHistory()).rejects.toThrow(
+      "Unsupported input kind: futureAudioSource",
+    );
+  });
+
   it("lists cached models through the fixed model command", async () => {
     tauriMocks.invoke.mockResolvedValue({
       models: [

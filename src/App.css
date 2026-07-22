@@ -1221,9 +1221,13 @@ button:disabled {
 
 .source-options {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   padding: 22px;
+}
+
+.dialog:has(.source-options) {
+  width: min(760px, calc(100vw - 40px));
 }
 
 .source-options button {
@@ -1253,6 +1257,12 @@ button:disabled {
     24px "SFMono-Regular",
     Consolas,
     monospace;
+}
+
+@media (max-width: 680px) {
+  .source-options {
+    grid-template-columns: 1fr;
+  }
 }
 
 .privacy-note {

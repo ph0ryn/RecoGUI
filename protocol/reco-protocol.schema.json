@@ -12,7 +12,7 @@
       "type": "object",
       "required": ["protocolVersion", "type", "requestId", "sessionId", "sequence", "payload"],
       "properties": {
-        "protocolVersion": { "const": 1 },
+        "protocolVersion": { "const": 2 },
         "type": { "enum": ["request", "response", "event"] },
         "requestId": { "type": ["string", "null"], "format": "uuid" },
         "sessionId": { "type": ["string", "null"], "format": "uuid" },
