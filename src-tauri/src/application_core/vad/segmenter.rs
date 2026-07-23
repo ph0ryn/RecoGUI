@@ -283,12 +283,10 @@ impl<M: ProbabilityModel> VadSegmenter<M> {
         {
             self.history.pop_front();
         }
-        if self
+        if let Some(mut first) = self
             .history
-            .front()
-            .is_some_and(|item| item.start_sample < history_start)
+            .pop_front_if(|item| item.start_sample < history_start)
         {
-            let mut first = self.history.pop_front().expect("front checked");
             let offset = (history_start - first.start_sample) as usize;
             first.samples.drain(..offset);
             first.start_sample = history_start;
