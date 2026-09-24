@@ -7,11 +7,6 @@ const config = {
   "*.{css,html}": "oxfmt",
   "package.json": "sort-package-json",
   "protocol/**/*.json": "oxfmt",
-  "src-python/**/*.py": [
-    "uv run --project src-python ruff check --fix --unsafe-fixes",
-    "uv run --project src-python ruff format",
-  ],
-  "src-python/pyproject.toml": "uv run --project src-python pyproject-fmt",
   "src-tauri/**/*.rs": "rustfmt --edition 2024 --config skip_children=true",
   "src-tauri/Cargo.toml": () =>
     "cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1",

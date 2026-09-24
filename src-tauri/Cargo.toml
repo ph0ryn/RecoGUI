@@ -28,8 +28,7 @@ specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 specta-typescript = "=0.0.12"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
-command-fds = { version = "0.3.3", features = ["tokio"] }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 rfd = "0.15"
 cpal = "0.18.1"
@@ -41,6 +40,7 @@ symphonia = { version = "0.6.0", default-features = false, features = ["aac", "a
 ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-native", "api-24"] }
 time = { version = "0.3.53", features = ["formatting", "macros"] }
 zip = "=8.6.0"
+qwen3-asr-mlx = { path = "crates/qwen3-asr-mlx" }
 
 [dev-dependencies]
 tempfile = "3.27.0"

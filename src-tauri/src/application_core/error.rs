@@ -42,21 +42,19 @@ pub enum CoreError {
     InvalidVadAsset,
     #[error("Silero VAD failed: {0}")]
     Vad(String),
-    #[error("worker protocol failed: {0}")]
+    #[error("ASR request validation failed: {0}")]
     WorkerProtocol(String),
-    #[error("worker request failed ({code}): {message}")]
+    #[error("ASR operation failed ({code}): {message}")]
     WorkerResponse {
         code: String,
         message: String,
         recoverable: bool,
     },
-    #[error("worker transport closed")]
+    #[error("native ASR thread closed")]
     WorkerClosed,
-    #[error("worker became unresponsive after 10 seconds without an incoming frame")]
-    WorkerUnresponsive,
-    #[error("worker process is unavailable: {0}")]
+    #[error("ASR engine is unavailable: {0}")]
     WorkerUnavailable(String),
-    #[error("worker process exited unexpectedly: {0}")]
+    #[error("native ASR thread terminated unexpectedly: {0}")]
     WorkerExited(String),
     #[error("application-core worker thread closed")]
     StoreClosed,
@@ -86,7 +84,6 @@ impl CoreError {
             Self::WorkerProtocol(_) => "workerProtocolFailure",
             Self::WorkerResponse { .. } => "workerRequestFailure",
             Self::WorkerClosed => "workerClosed",
-            Self::WorkerUnresponsive => "workerUnresponsive",
             Self::WorkerUnavailable(_) => "workerUnavailable",
             Self::WorkerExited(_) => "workerExited",
             Self::StoreClosed => "storeClosed",
@@ -108,7 +105,6 @@ impl CoreError {
                     ..
                 }
                 | Self::WorkerClosed
-                | Self::WorkerUnresponsive
                 | Self::WorkerUnavailable(_)
                 | Self::WorkerExited(_)
         )

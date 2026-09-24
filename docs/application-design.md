@@ -2,7 +2,7 @@
 
 ## 文書の役割
 
-この文書は、Rust をアプリケーション本体、Python を ASR 専用 worker とする責務境界と不変条件を定義する。
+この文書は、Rust をアプリケーション本体と ASR 実行環境にする責務境界と不変条件を定義する。
 製品要件は [requirements.md](requirements.md)、検証は [validation.md](validation.md) を正本とする。実装履歴は
 Git commit で管理し、恒久的な task/change-log 文書は追加しない。
 
@@ -16,9 +16,7 @@ flowchart LR
   Store["SQLite writer + read snapshots"]
   Media["Native media pipeline"]
   VAD["Silero VAD (ORT static)"]
-  Supervisor["ASR worker supervisor"]
-  Worker["reco-asr-worker.pyz"]
-  MLX["MLX ASR runtime"]
+  ASR["Qwen3-ASR MLX runtime"]
   Cache["Hugging Face cache"]
   Export["Rust export pipeline"]
 
@@ -27,10 +25,8 @@ flowchart LR
   Core --> Store
   Core --> Media
   Media --> VAD
-  Core --> Supervisor
-  Supervisor <-->|"RASR v1 / FD 3"| Worker
-  Worker --> MLX
-  MLX --> Cache
+  Core --> ASR
+  ASR --> Cache
   Core --> Export
   Export --> Store
 ```
@@ -48,12 +44,11 @@ close/sleep を直列化する。decode、resample、VAD、ASR、Export など�
 | Rust `ApplicationCore` | session/queue lifecycle、状態 CAS、model lease、pipeline、shutdown、sleep、Export orchestration |
 | Rust SQLite store | schema v5 の検証、専用 writer、read snapshot、履歴/検索/queue/model 設定、segment transaction |
 | Rust media pipeline | native file decode、microphone/systemAudio capture、normalizer、fingerprint、VAD、bounded ASR queue |
-| Rust worker supervisor | worker process、FD 3 socket、Hello/heartbeat、request correlation、終了・kill |
-| Python `reco_worker` | HF cache/revision 解決、MLX model load/unload、単一 speech segment の transcription |
+| Rust Qwen3-ASR engine | HF cache/revision 解決、MLX model load/unload、単一 speech segment の transcription |
 | Hugging Face cache | 既存 model snapshot/revision の保存場所 |
 
-Python worker は DB、queue、path、VAD asset、Export、Tauri、UI event を認識しない。Rust から渡される ID は opaque 値を
-echo するだけである。旧 engine/repository/sidecar/file/VAD 層、互換 adapter、fallback、feature flag、dual write は設けない。
+ASR engine は DB、queue、path、VAD asset、Export、Tauri、UI event を認識しない。Rust の actor が model lease と inference を
+管理する。旧 engine/repository/sidecar/file/VAD 層、互換 adapter、fallback、feature flag、dual write は設けない。
 
 ## ディレクトリと資産
 
@@ -61,21 +56,17 @@ echo するだけである。旧 engine/repository/sidecar/file/VAD 層、互換
 RecoGUI/
 ├── src/                         # React / TypeScript
 ├── src/generated/bindings.ts    # Specta が生成する tracked contract
-├── src-python/
-│   ├── src/reco_worker/         # ASR-only worker package
-│   ├── tests/                   # worker/protocol tests
-│   └── dist/reco-asr-worker.pyz # code-only archive
 ├── src-tauri/
-│   ├── src/                     # domain, store, media, core, supervisor, commands
+│   ├── crates/qwen3-asr-mlx/    # OminiX Qwen3-ASR の Rust 移植
+│   ├── src/                     # domain, store, media, core, ASR engine, commands
 │   └── vad/
 │       ├── LICENSE
 │       └── silero_vad.onnx
-├── fixtures/rasr-v1/             # cross-language RASR v1 fixtures
 └── docs/
 ```
 
 ONNX asset の SHA-256 は起動時に検証する。Rust 側の resource から直接読み、Application Support へコピーしない。
-Python archive は `uv run --frozen --no-dev` で on-demand 起動する。source、test、`.venv` は bundle に含めない。
+MLX の `mlx.metallib` はビルド時に生成され、macOS bundle の `Contents/MacOS/mlx.metallib` に配置する。
 
 ## Domain、SQLite、状態遷移
 
@@ -104,27 +95,12 @@ RAII で所有し、RecoGUI 自身の process を除外する。callback は all
 ring overflow、device disconnect、sequence gap、capture failure は session failure とし、sample を捨てて継続しない。
 
 Silero VAD は `ort = 2.0.0-rc.12` の CPU static execution provider を使う。64-frame context、512-frame input、hysteresis、adaptive split、
-padding、60 秒上限、flush を Rust へ移植し、既存 fixture と確率誤差 `1e-5` 以内で一致させる。Python VAD fallback は実装しない。
+padding、60 秒上限、flush を Rust へ移植し、既存 fixture と確率誤差 `1e-5` 以内で一致させる。VAD fallback は実装しない。
 
-## ASR worker protocol と supervisor
+## ASR engine
 
-Rust は worker の標準入力/出力を protocol に使わず、FD 3 の Unix socket を全二重で使用する。各 frame は little-endian の 16-byte header と
-JSON/binary payload で構成する。
-
-```text
-bytes 0..4   magic = "RASR"
-u16          version = 1
-u16          frameKind = Hello | Request | Response | Heartbeat
-u32          jsonLength (<= 65536)
-u32          binaryLength (<= 4194304)
-```
-
-worker は起動時に Hello を返し、heartbeat は 2 秒間隔で送る。10 秒通信がなければ supervisor は unresponsive として session を失敗させる。
-request は一時に一つだけ処理し、request ID の重複、未知 field/operation、version 不一致、length 不整合、過大 frame、途中 EOF は protocol fatal とする。
-operation は `models.list`、`model.load`、`segment.transcribe`、`model.unload`、`shutdown` に限定する。model load/inference に固定 45 秒 timeout は設けない。
-
-supervisor は process lifecycle、Hello、heartbeat、request/response correlation、graceful shutdown、必要時の kill を担当する。
-model一覧取得だけの worker は終了できる。active session/queue 中は同じ model lease を再利用し、Pause、完了、停止後に unload して process を終了する。
+Rust は Qwen3-ASR MLX engine を同一プロセス内で所有し、Hugging Face cache の選択 revision を load する。model load、segment inference、
+unload は actor の lifecycle から呼び出し、固定 startup timeout や外部 interpreter に依存しない。対応モデルは Qwen3-ASR 系 MLX checkpoint に限定する。
 
 ## Lifecycle sequence
 
@@ -132,14 +108,14 @@ model一覧取得だけの worker は終了できる。active session/queue 中�
 
 1. Rust が source、permission、device/tap、selected model を preflight する。失敗時は row を作らない。
 2. writer transaction で `preparing` row を作成する。
-3. worker の model load と native source 開始を actor 外で実行する。
+3. Rust ASR engine の model load と native source 開始を actor 外で実行する。
 4. 両方の成功を検証して CAS で `running` へ移し、`session.upserted` を発行する。
 
 ### Segment commit
 
 1. VAD が speech segment を確定し、Rust が segment index と job ID を採番する。
-2. bounded queue から worker へ PCM を送る。
-3. response の session/run/job/index を検証し、順序外または stale response を破棄する。
+2. bounded queue から Rust ASR engine へ PCM を送る。
+3. engine result の session/run/job/index を検証し、順序外または stale response を破棄する。
 4. text、language、aggregate、row version を一 transaction で保存し、成功後に `segment.committed` を発行する。
 
 ### Pause/Stop
@@ -150,9 +126,9 @@ app quit/system sleep は常に `stopped` を保存する。
 
 ### Resume、failure、close
 
-Resume は保存 config/model/revision/language/checkpoint/device identity を厳密に使う。旧 run の結果は無視する。worker crash は live を非再開可能 `failed`、
+Resume は保存 config/model/revision/language/checkpoint/device identity を厳密に使う。旧 run の結果は無視する。ASR engine failure は live を非再開可能 `failed`、
 file を最後の commit 位置から retry 可能な `failed` とし、queue auto advance を止める。close は queue 停止、session drain、Export cancel、DB commit、capture release、
-worker shutdown の完了後に native close を許可する。sleep は active session を `systemSleep` stop し、wake 後は再開しない。
+ASR engine unload の完了後に native close を許可する。sleep は active session を `systemSleep` stop し、wake 後は再開しない。
 
 ## Typed Tauri contract と UI event
 
@@ -171,8 +147,10 @@ buffer だけを適用する。sequence gap または rowVersion の逆行を検
 Export は Rust の read-only snapshot から生成する。`zip 8.6.0` で複数 session の ZIP を作り、同一 directory の staging に書く。finish、flush、`sync_all` 後に atomic publish し、
 cancel/error 時は staging のみ削除する。既存 destination は成功した publish 以外では変更しない。
 
+macOS bundle は Tauri の `bundle.macOS.files` で `target/<triple>/release/mlx.metallib` を `Contents/MacOS/mlx.metallib` として同梱する。
+
 ## 設計変更の gate
 
-protocol、schema、media format、lifecycle、event/command DTO の変更は、requirements、実装、cross-language fixture、validation を同じ変更境界で更新する。
-旧 protocol の互換経路、Python/Rust 共有 DB、dual write、runtime feature flag を追加してはならない。完了時には旧 engine、repository、sidecar、host PCM broker、
+protocol、schema、media format、lifecycle、event/command DTO の変更は、requirements、実装、fixture、validation を同じ変更境界で更新する。
+旧 protocol の互換経路、共有 DB、dual write、runtime feature flag を追加してはならない。完了時には旧 engine、repository、sidecar、host PCM broker、
 汎用 command dispatcher の名称と責務が検索結果に残っていないことを確認する。

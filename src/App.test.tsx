@@ -234,7 +234,7 @@ describe("RecoGUI", () => {
   it("renders typed native command errors without object coercion", async () => {
     bridgeMocks.listModels.mockRejectedValueOnce({
       code: "workerUnavailable",
-      message: "Python workerを起動できませんでした。",
+      message: "音声認識エンジンを起動できませんでした。",
       recoverable: true,
     });
 
@@ -243,7 +243,7 @@ describe("RecoGUI", () => {
     await renderLoadedApp();
     await user.click(screen.getByRole("button", { name: "設定を開く" }));
 
-    expect(await screen.findByText("Python workerを起動できませんでした。")).toBeInTheDocument();
+    expect(await screen.findByText("音声認識エンジンを起動できませんでした。")).toBeInTheDocument();
     expect(screen.queryByText("[object Object]")).not.toBeInTheDocument();
   });
 

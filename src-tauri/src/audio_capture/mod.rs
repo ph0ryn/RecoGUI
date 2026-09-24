@@ -68,7 +68,7 @@ pub enum AudioCaptureError {
     #[error("audio permission request timed out")]
     PermissionPromptTimedOut,
     #[cfg(not(target_os = "macos"))]
-    #[error("desktop audio capture requires macOS 14.2 or newer")]
+    #[error("desktop audio capture requires macOS 15.0 or newer")]
     UnsupportedOperatingSystem,
     #[error("desktop audio capture permission was denied")]
     SystemAudioPermissionDenied,

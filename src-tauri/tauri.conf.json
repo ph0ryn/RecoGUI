@@ -4,9 +4,9 @@
   "version": "../package.json",
   "identifier": "com.ph0ryn.recogui",
   "build": {
-    "beforeDevCommand": "pnpm build:python-worker && pnpm exec vite",
+    "beforeDevCommand": "pnpm exec vite",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build:python-worker && pnpm check:bindings && pnpm typecheck:typescript && pnpm exec vite build",
+    "beforeBuildCommand": "pnpm check:bindings && pnpm typecheck:typescript && pnpm exec vite build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -36,15 +36,14 @@
     "active": true,
     "targets": "all",
     "resources": {
-      "../src-python/LICENSE": "src-python/LICENSE",
-      "../src-python/pyproject.toml": "src-python/pyproject.toml",
-      "../src-python/dist/reco-asr-worker.pyz": "src-python/reco-asr-worker.pyz",
       "vad/LICENSE": "vad/LICENSE",
-      "vad/silero_vad.onnx": "vad/silero_vad.onnx",
-      "../src-python/uv.lock": "src-python/uv.lock"
+      "vad/silero_vad.onnx": "vad/silero_vad.onnx"
     },
     "macOS": {
-      "minimumSystemVersion": "14.2"
+      "files": {
+        "MacOS/mlx.metallib": "../src-tauri/target/aarch64-apple-darwin/release/mlx.metallib"
+      },
+      "minimumSystemVersion": "15.0"
     },
     "icon": [
       "icons/32x32.png",

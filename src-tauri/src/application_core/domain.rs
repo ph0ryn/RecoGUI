@@ -472,7 +472,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn split_reason_keeps_distinct_database_and_rasr_spellings() {
+    fn split_reason_keeps_distinct_database_and_json_spellings() {
         assert_eq!(SplitReason::AdaptiveSplit.as_str(), "adaptive_split");
         assert_eq!(
             serde_json::to_string(&SplitReason::AdaptiveSplit).unwrap(),

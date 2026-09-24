@@ -20,7 +20,7 @@ use crate::{
             shutdown_worker, spawn_pipeline,
         },
         store::Store,
-        worker::{CachedModel, WorkerProcess, WorkerProcessConfig},
+        worker::{AsrEngine, CachedModel},
     },
     audio_capture::{AudioCaptureManager, CaptureSource},
     native_export::{
@@ -37,7 +37,6 @@ const SEGMENT_PAGE_LIMIT: u32 = 500;
 #[derive(Clone, Debug)]
 pub struct ApplicationCoreConfig {
     pub database_path: PathBuf,
-    pub worker: WorkerProcessConfig,
     pub vad_asset: PathBuf,
 }
 
@@ -72,7 +71,6 @@ impl ApplicationCore {
         let audio = Arc::new(AudioCaptureManager::default());
         let actor = CoreActor {
             store,
-            worker_config: config.worker,
             vad_asset: config.vad_asset,
             audio: audio.clone(),
             events,
@@ -479,7 +477,6 @@ struct ExportTaskFailure {
 
 struct CoreActor {
     store: Store,
-    worker_config: WorkerProcessConfig,
     vad_asset: PathBuf,
     audio: Arc<AudioCaptureManager>,
     events: Arc<dyn EventSink>,
@@ -496,7 +493,7 @@ struct CoreActor {
     cached_models: Vec<CachedModel>,
     model_list_reply: Option<Reply<api::ModelList>>,
     exports: HashMap<String, CancellationToken>,
-    reusable_worker: Option<WorkerProcess>,
+    reusable_worker: Option<AsrEngine>,
     worker_cleanups: usize,
     shutdown: Option<ShutdownState>,
 }
@@ -714,10 +711,9 @@ impl CoreActor {
         });
         self.emit_model();
         self.model_list_reply = Some(reply);
-        let worker_config = self.worker_config.clone();
         let sender = self.sender.clone();
         tokio::spawn(async move {
-            let result = query_cached_models(worker_config).await;
+            let result = query_cached_models().await;
             let _ = sender.send(CoreCommand::ModelListFinished { result }).await;
         });
     }
@@ -931,7 +927,6 @@ impl CoreActor {
             next_segment_index: 0,
             resume_sample: 0,
             source: PipelineSource::Live { source, token },
-            worker: self.worker_config.clone(),
             loaded_worker: None,
             vad_asset: self.vad_asset.clone(),
             vad_config: pipeline_config.vad,
@@ -1168,7 +1163,6 @@ impl CoreActor {
             next_segment_index: context.next_segment_index,
             resume_sample: context.resume_sample,
             source: prepared.source,
-            worker: self.worker_config.clone(),
             loaded_worker: None,
             vad_asset: self.vad_asset.clone(),
             vad_config: prepared.config.vad,
@@ -1445,7 +1439,6 @@ impl CoreActor {
                 path: PathBuf::from(candidate.source_path),
                 identity: fingerprint.identity,
             },
-            worker: self.worker_config.clone(),
             loaded_worker,
             vad_asset: self.vad_asset.clone(),
             vad_config: pipeline_config.vad,
@@ -2144,7 +2137,7 @@ impl CoreActor {
         }
     }
 
-    fn release_worker(&mut self, worker: WorkerProcess) {
+    fn release_worker(&mut self, worker: AsrEngine) {
         self.worker_cleanups = self.worker_cleanups.saturating_add(1);
         let sender = self.sender.clone();
         tokio::spawn(async move {
@@ -2194,16 +2187,10 @@ fn prepare_queue_items(paths: Vec<PathBuf>) -> Result<Vec<NewQueueItem>, CoreErr
     Ok(items)
 }
 
-async fn query_cached_models(
-    worker_config: WorkerProcessConfig,
-) -> Result<Vec<CachedModel>, CoreError> {
-    let worker = WorkerProcess::launch(worker_config).await?;
-    let listed = worker
-        .list_models(format!("models-{}", Uuid::new_v4()))
-        .await;
-    let shutdown = worker
-        .shutdown(format!("shutdown-{}", Uuid::new_v4()))
-        .await;
+async fn query_cached_models() -> Result<Vec<CachedModel>, CoreError> {
+    let worker = AsrEngine::launch().await?;
+    let listed = worker.list_models().await;
+    let shutdown = worker.shutdown().await;
     match listed {
         Ok(result) => {
             shutdown?;
@@ -2413,9 +2400,12 @@ fn is_fatal_core_error(error: &CoreError) -> bool {
             | CoreError::StoreClosed
             | CoreError::WorkerProtocol(_)
             | CoreError::WorkerClosed
-            | CoreError::WorkerUnresponsive
             | CoreError::WorkerUnavailable(_)
             | CoreError::WorkerExited(_)
+            | CoreError::WorkerResponse {
+                recoverable: false,
+                ..
+            }
     )
 }
 
@@ -2423,10 +2413,15 @@ fn is_fatal_core_error(error: &CoreError) -> bool {
 mod tests {
     use super::*;
 
+    struct NoopEventSink;
+
+    impl EventSink for NoopEventSink {
+        fn emit(&self, _event: api::AppEvent) {}
+    }
+
     #[test]
-    fn worker_transport_failures_stop_queue_advancement() {
+    fn native_asr_failures_stop_queue_advancement() {
         assert!(is_fatal_core_error(&CoreError::WorkerClosed));
-        assert!(is_fatal_core_error(&CoreError::WorkerUnresponsive));
         assert!(is_fatal_core_error(&CoreError::WorkerUnavailable(
             "missing worker".into()
         )));
@@ -2436,5 +2431,89 @@ mod tests {
         assert!(!is_fatal_core_error(&CoreError::AudioDecode(
             "bad file".into()
         )));
+        assert!(is_fatal_core_error(&CoreError::WorkerResponse {
+            code: "transcriptionFailure".into(),
+            message: "MLX failed".into(),
+            recoverable: false,
+        }));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "requires a cached Qwen3-ASR model and a Japanese speech WAV"]
+    async fn queued_file_reaches_persisted_transcript_with_native_asr() {
+        let repo_id = std::env::var("RECOGUI_TEST_MODEL_REPO").unwrap();
+        let revision = std::env::var("RECOGUI_TEST_MODEL_REVISION").unwrap();
+        let audio_path = PathBuf::from(std::env::var("RECOGUI_TEST_AUDIO").unwrap());
+        let temporary = tempfile::tempdir().unwrap();
+        let core = ApplicationCore::start(
+            ApplicationCoreConfig {
+                database_path: temporary.path().join("reco.sqlite3"),
+                vad_asset: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vad/silero_vad.onnx"),
+            },
+            Arc::new(NoopEventSink),
+        )
+        .await
+        .unwrap();
+        let models = core.model_list().await.unwrap();
+        assert!(models.models.iter().any(|model| {
+            model.reference.repo_id == repo_id && model.reference.revision == revision
+        }));
+        core.model_select(api::ModelReference { repo_id, revision })
+            .await
+            .unwrap();
+        core.enqueue_files(vec![audio_path], None).await.unwrap();
+
+        let completed = tokio::time::timeout(std::time::Duration::from_secs(120), async {
+            loop {
+                let history = core
+                    .history(api::HistoryQuery {
+                        cursor: None,
+                        query: None,
+                        statuses: vec![],
+                        input_kinds: vec![],
+                        sort: api::HistorySort::Newest,
+                        limit: 10,
+                    })
+                    .await
+                    .unwrap();
+                if let Some(session) = history.items.into_iter().next()
+                    && matches!(
+                        session.status,
+                        api::SessionStatus::Completed | api::SessionStatus::Failed
+                    )
+                {
+                    break session;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("file transcription did not finish");
+        assert!(
+            matches!(completed.status, api::SessionStatus::Completed),
+            "{completed:?}"
+        );
+        let detail = core
+            .history_get(api::HistoryDetailQuery {
+                session_id: completed.id,
+                segment_offset: 0,
+                segment_limit: 100,
+                expected_row_version: None,
+            })
+            .await
+            .unwrap();
+        assert!(
+            detail
+                .segments
+                .iter()
+                .any(|segment| segment.text.contains("テスト"))
+        );
+        assert!(
+            detail
+                .segments
+                .iter()
+                .all(|segment| segment.language == "Japanese")
+        );
+        core.shutdown(LifecycleStopReason::AppQuit).await.unwrap();
     }
 }

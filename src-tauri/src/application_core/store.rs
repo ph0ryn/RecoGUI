@@ -2955,7 +2955,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn persisted_timestamps_are_python_compatible_and_lexically_ordered() {
+    async fn persisted_timestamps_are_rfc3339_and_lexically_ordered() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("fixture.sqlite3");
         let connection = Connection::open(&path).unwrap();

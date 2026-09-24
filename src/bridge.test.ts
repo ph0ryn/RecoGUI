@@ -209,11 +209,11 @@ describe("recoBridge", () => {
   it("turns typed native model errors into JavaScript errors", async () => {
     tauriMocks.invoke.mockRejectedValueOnce({
       code: "workerUnavailable",
-      message: "Python worker could not start.",
+      message: "ASR engine could not start.",
       recoverable: true,
     });
 
-    await expect(recoBridge.listModels()).rejects.toThrow("Python worker could not start.");
+    await expect(recoBridge.listModels()).rejects.toThrow("ASR engine could not start.");
   });
 
   it("opens the native file dialog and maps the canonical queue snapshot", async () => {

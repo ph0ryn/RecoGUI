@@ -113,7 +113,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canonical_config_matches_the_schema_v5_python_shape() {
+    fn canonical_config_matches_the_schema_v5_shape() {
         let config = default_pipeline_config().unwrap();
 
         assert_eq!(config.persisted["vad"]["max_segment_duration_ms"], 60_000);

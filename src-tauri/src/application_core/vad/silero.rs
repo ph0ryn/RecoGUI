@@ -137,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn onnx_probability_matches_the_python_runtime_probe() {
+    fn onnx_probability_matches_the_reference_probe() {
         let mut model = SileroOnnx::load(&asset()).unwrap();
         let probability = model.probability(&[0.0; VAD_FRAME_SAMPLES]).unwrap();
         assert!((probability - 0.001_669_824_1).abs() <= 1e-7);

@@ -33,12 +33,6 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-          cache-dependency-glob: src-python/uv.lock
-
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -50,9 +44,7 @@ jobs:
           workspaces: src-tauri -> target
 
       - name: Install dependencies
-        run: |
-          pnpm install --frozen-lockfile
-          uv sync --project src-python --frozen
+        run: pnpm install --frozen-lockfile
 
       - name: Verify release version
         env:

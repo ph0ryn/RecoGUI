@@ -35,7 +35,6 @@ pub fn run() {
             let core = tauri::async_runtime::block_on(ApplicationCore::start(
                 ApplicationCoreConfig {
                     database_path: paths.database,
-                    worker: paths.worker,
                     vad_asset: paths.vad_asset,
                 },
                 Arc::new(TauriEventSink::new(app.handle().clone())),

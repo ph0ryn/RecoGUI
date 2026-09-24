@@ -1,7 +1,4 @@
-//! Rust-owned application foundations that are intentionally not connected to Tauri yet.
-//!
-//! Keeping this module independent from commands and application setup lets the ownership
-//! migration land behind unit-tested boundaries before the production cutover.
+//! Rust-owned application core, independent of the Tauri command and event adapters.
 
 mod config;
 pub(crate) mod contract;

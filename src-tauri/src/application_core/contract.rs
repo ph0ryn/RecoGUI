@@ -34,9 +34,7 @@ pub fn app_error(error: &CoreError) -> api::AppError {
         CoreError::WorkerUnavailable(_) | CoreError::WorkerExited(_) | CoreError::WorkerClosed => {
             api::AppErrorCode::WorkerUnavailable
         }
-        CoreError::WorkerProtocol(_) | CoreError::WorkerUnresponsive => {
-            api::AppErrorCode::WorkerProtocolError
-        }
+        CoreError::WorkerProtocol(_) => api::AppErrorCode::WorkerProtocolError,
         CoreError::WorkerResponse { .. } => api::AppErrorCode::WorkerUnavailable,
         CoreError::Io(_) | CoreError::BlockingTask(_) => api::AppErrorCode::Internal,
     };

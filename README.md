@@ -6,7 +6,7 @@
 </p>
 <!-- rumdl-enable MD033 -->
 
-RecoGUI is a local Japanese speech-transcription app for Apple Silicon Macs. The Rust application core owns sessions, the queue, SQLite history, native audio, VAD, exports, and shutdown. A small Python worker starts on demand only to load an MLX ASR model and transcribe one speech segment at a time.
+RecoGUI is a local Japanese speech-transcription app for Apple Silicon Macs. The Rust application owns sessions, the queue, SQLite history, native audio, VAD, Qwen3-ASR transcription, exports, and shutdown.
 
 ## What You Can Do
 
@@ -20,21 +20,15 @@ Audio and transcripts stay local. Microphone and desktop audio are processed in 
 
 ## Requirements
 
-- An Apple Silicon Mac running macOS 14.2 or later
-- [`uv`](https://docs.astral.sh/uv) available on `PATH`
-- An ASR model already present in the local Hugging Face cache and supported by [`mlx-audio`](https://github.com/Blaizzy/mlx-audio)
+- An Apple Silicon Mac running macOS 15.0 or later
+- A Qwen3-ASR MLX model already present in the local Hugging Face cache
 
-End users do not need Node.js, pnpm, Rust, Python, or a checkout of this repository. RecoGUI prepares its isolated Python runtime when needed; the window remains available while that setup completes.
+RecoGUI itself does not require Python or `uv` at runtime. End users do not need Node.js, pnpm, Rust, or a checkout of this repository.
 
 ## Usage
 
 1. Download the latest build from [GitHub Releases](https://github.com/ph0ryn/RecoGUI/releases/latest).
-2. Download an ASR model to the Hugging Face cache before opening RecoGUI:
-
-   ```sh
-   hf download ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit
-   ```
-
+2. Download a Qwen3-ASR MLX model to the Hugging Face cache before opening RecoGUI. Model retrieval is outside RecoGUI and requires a separate Hugging Face Hub client.
 3. If macOS blocks the first launch of an unsigned build, remove the quarantine attribute:
 
    ```sh
@@ -58,7 +52,7 @@ End users do not need Node.js, pnpm, Rust, Python, or a checkout of this reposit
 
 ## Current Limitations
 
-- Only Apple Silicon Macs running macOS 14.2 or later are supported.
+- Only Apple Silicon Macs running macOS 15.0 or later are supported.
 - RecoGUI does not download, update, or delete models.
 - Transcripts cannot be edited or imported back into the app.
 - Original microphone and desktop audio are not retained.
@@ -74,7 +68,6 @@ The commands in this section are for contributors. End users do not need pnpm.
 
 - Node.js 24
 - pnpm 11.10.0
-- `uv` and Python 3.12–3.14
 - Rust stable with the `aarch64-apple-darwin` target
 - Xcode command line tools
 
@@ -82,11 +75,10 @@ The commands in this section are for contributors. End users do not need pnpm.
 
 ```sh
 pnpm install --frozen-lockfile
-uv sync --project src-python --frozen
 pnpm dev
 ```
 
-The development app uses the same Rust core and on-demand `reco-asr-worker.pyz` worker as a release build. Changes to Python worker code require restarting the Tauri application.
+The development app uses the same Rust ASR engine as a release build. Changes to Rust code require restarting the Tauri application.
 
 ### Verify and Build
 

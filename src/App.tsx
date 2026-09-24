@@ -172,7 +172,7 @@ function getSnippet(session: SessionEntity, query: string): string | undefined {
 
 function modelStatusText(model: ModelState): string {
   const labels: Record<ModelState["status"], string> = {
-    checking: "Python環境とモデルを確認しています。",
+    checking: "モデルを確認しています。",
     error: "モデルを確認できませんでした。",
     ready: "利用可能",
     unavailable: "選択したモデルがHFキャッシュにありません。",

@@ -13,15 +13,6 @@ dist-ssr
 *.local
 .rumdl_cache
 
-# Python
-.venv
-__pycache__
-*.py[cod]
-.pytest_cache
-.ruff_cache
-.coverage
-src-python/dist
-
 # Rust
 src-tauri/target
 

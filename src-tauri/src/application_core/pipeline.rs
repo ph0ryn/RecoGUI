@@ -10,8 +10,8 @@ use crate::{
         media::{FileIdentity, NormalizedFileDecoder},
         vad::{SileroOnnx, SpeechSegment, VadConfig, VadSegmenter},
         worker::{
-            SegmentTranscribeRequest, SegmentTranscriptionResult, WorkerOperation, WorkerProcess,
-            WorkerProcessConfig, WorkerTranscriptionConfig,
+            AsrEngine, SegmentTranscribeRequest, SegmentTranscriptionResult,
+            WorkerTranscriptionConfig,
         },
     },
     audio_capture::{AudioCaptureManager, CaptureEvent, CaptureSource, CaptureStartToken},
@@ -54,8 +54,7 @@ pub struct PipelineSpec {
     pub next_segment_index: u32,
     pub resume_sample: u64,
     pub source: PipelineSource,
-    pub worker: WorkerProcessConfig,
-    pub loaded_worker: Option<WorkerProcess>,
+    pub loaded_worker: Option<AsrEngine>,
     pub vad_asset: PathBuf,
     pub vad_config: VadConfig,
     pub transcription_config: WorkerTranscriptionConfig,
@@ -86,7 +85,7 @@ pub enum PipelineEvent {
         run_id: String,
         end: PipelineEnd,
         resume_sample: u64,
-        worker: Option<WorkerProcess>,
+        worker: Option<AsrEngine>,
     },
     Failed {
         session_id: String,
@@ -138,7 +137,7 @@ async fn run_pipeline(
     let worker = if let Some(worker) = spec.loaded_worker.take() {
         worker
     } else {
-        let worker = match WorkerProcess::launch(spec.worker.clone()).await {
+        let worker = match AsrEngine::launch().await {
             Ok(worker) => worker,
             Err(error) => {
                 cancel_reserved_source(&spec, &audio);
@@ -146,11 +145,7 @@ async fn run_pipeline(
             }
         };
         if let Err(error) = worker
-            .load_model(
-                request_id("load"),
-                spec.model_repo_id.clone(),
-                spec.model_revision.clone(),
-            )
+            .load_model(spec.model_repo_id.clone(), spec.model_revision.clone())
             .await
         {
             cancel_reserved_source(&spec, &audio);
@@ -205,8 +200,6 @@ async fn run_pipeline(
             }
             let job_id = Uuid::new_v4().to_string();
             let request = SegmentTranscribeRequest {
-                request_id: request_id("segment"),
-                operation: WorkerOperation::SegmentTranscribe,
                 session_id: spec.session_id.clone(),
                 run_id: spec.run_id.clone(),
                 job_id: job_id.clone(),
@@ -492,13 +485,9 @@ async fn stop_prepared_source(source: PreparedSource, audio: Arc<AudioCaptureMan
     }
 }
 
-pub(crate) async fn shutdown_worker(worker: WorkerProcess) {
-    let _ = worker.unload_model(request_id("unload")).await;
-    let _ = worker.shutdown(request_id("shutdown")).await;
-}
-
-fn request_id(prefix: &str) -> String {
-    format!("{prefix}-{}", Uuid::new_v4())
+pub(crate) async fn shutdown_worker(worker: AsrEngine) {
+    let _ = worker.unload_model().await;
+    let _ = worker.shutdown().await;
 }
 
 #[cfg(test)]
