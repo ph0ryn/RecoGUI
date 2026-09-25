@@ -56,6 +56,8 @@ RecoGUI itself does not require Python or `uv` at runtime. End users do not need
 - RecoGUI does not download, update, or delete models.
 - Transcripts cannot be edited or imported back into the app.
 - Original microphone and desktop audio are not retained.
+- Automatic language detection shows `Unknown` when the model does not identify a language; any transcribed text is kept.
+- Failed microphone and desktop audio sessions cannot be resumed; completed transcript segments remain available.
 - Automatic app updates are not implemented.
 - Release builds are not signed or notarized.
 - DRM-protected desktop audio may be unavailable or silent.
