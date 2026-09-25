@@ -499,6 +499,9 @@ describe("RecoGUI", () => {
     await renderLoadedApp();
 
     expect(screen.getByText("Audio stream disconnected")).toBeInTheDocument();
+    expect(
+      screen.getByText("録音は再開できません。保存済みの内容は閲覧・Exportできます。"),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "文字起こしを再開" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "文字起こしを再試行" })).not.toBeInTheDocument();
   });

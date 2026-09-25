@@ -1800,9 +1800,11 @@ function Transcript({
             <strong>{statusLabels[session.status]}</strong>
             <p>{session.errorMessage}</p>
             <small>
-              {session.status === "failed"
+              {session.status === "failed" && canResumeSession(session)
                 ? "保存済みの続きから再試行できます。"
-                : "保存済みの内容は閲覧・Exportできます。"}
+                : session.status === "failed" && isLiveInput(session.inputKind)
+                  ? "録音は再開できません。保存済みの内容は閲覧・Exportできます。"
+                  : "保存済みの内容は閲覧・Exportできます。"}
             </small>
           </div>
         )}
