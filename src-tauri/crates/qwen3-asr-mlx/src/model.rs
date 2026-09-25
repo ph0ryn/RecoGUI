@@ -786,22 +786,7 @@ impl Qwen3ASR {
             let (language, text) = if let Some(language) = requested_language {
                 (language, generated.as_str())
             } else {
-                generated
-                    .trim_start()
-                    .strip_prefix("language")
-                    .and_then(|value| {
-                        value
-                            .chars()
-                            .next()
-                            .filter(|character| character.is_whitespace())
-                            .map(|_| value.trim_start())
-                    })
-                    .and_then(|value| value.split_once("<asr_text>"))
-                    .ok_or_else(|| {
-                        Error::InvalidOutput(
-                            "ASR model did not return `language <lang><asr_text>`".into(),
-                        )
-                    })?
+                Self::parse_auto_output(&generated)
             };
             let language = language.trim();
             if language.is_empty() {
@@ -830,6 +815,29 @@ impl Qwen3ASR {
             prompt_tokens,
             token_limit_reached,
         })
+    }
+
+    fn parse_auto_output(generated: &str) -> (&str, &str) {
+        let output = generated.trim();
+        let Some((metadata, text)) = output.split_once("<asr_text>") else {
+            // The model can emit plain text or nothing for short/silent audio.
+            return ("Unknown", output);
+        };
+        let language = metadata
+            .trim_start()
+            .strip_prefix("language")
+            .and_then(|value| {
+                value
+                    .chars()
+                    .next()
+                    .is_some_and(char::is_whitespace)
+                    .then_some(value.trim_start())
+            })
+            .and_then(|value| value.lines().next())
+            .map(str::trim)
+            .filter(|language| !language.is_empty() && !language.eq_ignore_ascii_case("None"))
+            .unwrap_or("Unknown");
+        (language, text)
     }
 
     fn transcribe_samples_with_language(
@@ -1297,6 +1305,39 @@ impl Qwen3ASR {
 mod tests {
     use super::Qwen3ASR;
     use crate::error::Error;
+
+    #[test]
+    fn auto_output_keeps_plain_text_without_claiming_a_detected_language() {
+        assert_eq!(
+            Qwen3ASR::parse_auto_output("直接の文字起こし"),
+            ("Unknown", "直接の文字起こし")
+        );
+        assert_eq!(Qwen3ASR::parse_auto_output(" "), ("Unknown", ""));
+    }
+
+    #[test]
+    fn auto_output_treats_language_none_as_no_detected_speech() {
+        assert_eq!(
+            Qwen3ASR::parse_auto_output("language None<asr_text>"),
+            ("Unknown", "")
+        );
+    }
+
+    #[test]
+    fn auto_output_parses_detected_language_with_metadata_lines() {
+        assert_eq!(
+            Qwen3ASR::parse_auto_output("language Japanese\n<asr_text>こんにちは"),
+            ("Japanese", "こんにちは")
+        );
+        assert_eq!(
+            Qwen3ASR::parse_auto_output("language\tJapanese<asr_text>こんにちは"),
+            ("Japanese", "こんにちは")
+        );
+        assert_eq!(
+            Qwen3ASR::parse_auto_output("language\nJapanese<asr_text>こんにちは"),
+            ("Japanese", "こんにちは")
+        );
+    }
 
     #[test]
     fn generation_eos_ids_are_preserved_and_deduplicated() {

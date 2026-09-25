@@ -233,6 +233,9 @@ fn transcribe(
         retry_count += retries;
         token_limit_reached |= output.token_limit_reached;
         warning = warning.or(chunk_warning);
+        if output.language == "Unknown" {
+            warning.get_or_insert_with(|| "language_not_detected".into());
+        }
         if !languages
             .iter()
             .any(|language| language == &output.language)
