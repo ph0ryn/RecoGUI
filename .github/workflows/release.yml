@@ -20,7 +20,6 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 3
       CARGO_BUILD_TARGET: aarch64-apple-darwin
-      MLX_PREBUILT_PATH: ${{ runner.temp }}/mlx-prebuilt-v0.1.0-macos-arm64
       RECOGUI_CARGO_PROFILE: release
 
     steps:
@@ -62,7 +61,11 @@ jobs:
           EOF
 
       - name: Prepare prebuilt MLX
-        run: bash .github/scripts/prepare-mlx.sh
+        env:
+          MLX_PREBUILT_PATH: ${{ runner.temp }}/mlx-prebuilt-v0.1.0-macos-arm64
+        run: |
+          bash .github/scripts/prepare-mlx.sh
+          echo "MLX_PREBUILT_PATH=$MLX_PREBUILT_PATH" >> "$GITHUB_ENV"
 
       - name: Verify source
         timeout-minutes: 10
