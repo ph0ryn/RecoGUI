@@ -44,6 +44,8 @@ RecoGUI itself does not require Python or `uv` at runtime. End users do not need
 
 4. Open RecoGUI, choose the cached GGUF filename, and select microphone, desktop audio, or files as the input.
 
+Each cached GGUF quantization appears as a separate model entry. RecoGUI pairs it with `mmproj-<GGUF filename>` in the same snapshot, or with that snapshot's only Qwen3-ASR projector. Missing or ambiguous projectors produce an error.
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -99,6 +101,8 @@ pnpm exec tauri build --target aarch64-apple-darwin
 ```
 
 `pnpm build` creates a local build without a distribution bundle. See [`package.json`](package.json) for individual checks.
+
+`pnpm verify` tests ASR requests and process cleanup with a local fixture server. Real-model speech and queue tests require llama.cpp and cached GGUF assets; see [GGUF engine validation](docs/validation.md#qwen3-asr-gguf-engine).
 
 Release CI caches Rust dependencies and builds the app without compiling or bundling an ASR runtime. llama.cpp and model files are external runtime requirements. The GGUF integration was verified with llama.cpp `b11342`.
 
