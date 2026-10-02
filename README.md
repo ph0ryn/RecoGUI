@@ -21,21 +21,28 @@ Audio and transcripts stay local. Microphone and desktop audio are processed in 
 ## Requirements
 
 - An Apple Silicon Mac running macOS 15.0 or later
-- A Qwen3-ASR MLX model already present in the local Hugging Face cache
+- An installed `llama-server` from [llama.cpp](https://github.com/ggml-org/llama.cpp/releases), with Qwen3-ASR audio support
+- A Qwen3-ASR GGUF model and its mmproj already present in the same Hugging Face cache snapshot
 
 RecoGUI itself does not require Python or `uv` at runtime. End users do not need Node.js, pnpm, Rust, or a checkout of this repository.
 
 ## Usage
 
 1. Download the latest build from [GitHub Releases](https://github.com/ph0ryn/RecoGUI/releases/latest).
-2. Download a Qwen3-ASR MLX model to the Hugging Face cache before opening RecoGUI. Model retrieval is outside RecoGUI and requires a separate Hugging Face Hub client.
+2. Install llama.cpp, then download a Qwen3-ASR GGUF model and its mmproj to the Hugging Face cache. For example, with the Hugging Face Hub CLI:
+
+   ```sh
+   hf download ggml-org/Qwen3-ASR-0.6B-GGUF Qwen3-ASR-0.6B-Q8_0.gguf mmproj-Qwen3-ASR-0.6B-Q8_0.gguf
+   ```
+
+   RecoGUI finds `llama-server` on PATH or in standard Homebrew/Nix locations. To use another location, set `RECOGUI_LLAMA_SERVER` to its executable path. RecoGUI starts and stops its own local server; you do not need to run one manually.
 3. If macOS blocks the first launch, remove the quarantine attribute:
 
    ```sh
    xattr -dr com.apple.quarantine /Applications/RecoGUI.app
    ```
 
-4. Open RecoGUI, choose the cached model, and select microphone, desktop audio, or files as the input.
+4. Open RecoGUI, choose the cached GGUF filename, and select microphone, desktop audio, or files as the input.
 
 ## Keyboard Shortcuts
 
@@ -53,7 +60,8 @@ RecoGUI itself does not require Python or `uv` at runtime. End users do not need
 ## Current Limitations
 
 - Only Apple Silicon Macs running macOS 15.0 or later are supported.
-- RecoGUI does not download, update, or delete models.
+- RecoGUI does not download, update, or delete models, or install llama.cpp.
+- Existing MLX transcripts remain readable and exportable. Select a GGUF model for new sessions; sessions recorded with MLX cannot be resumed with the GGUF engine.
 - Transcripts cannot be edited or imported back into the app.
 - Original microphone and desktop audio are not retained.
 - Automatic language detection shows `Unknown` when the model does not identify a language; any transcribed text is kept.
@@ -92,7 +100,7 @@ pnpm exec tauri build --target aarch64-apple-darwin
 
 `pnpm build` creates a local build without a distribution bundle. See [`package.json`](package.json) for individual checks.
 
-Release CI uses checksum-verified prebuilt MLX libraries and the same `aarch64-apple-darwin` target and release profile for verification and packaging. It limits Cargo to three parallel jobs and the release job to 15 minutes, with verification logs shown as each check runs.
+Release CI caches Rust dependencies and builds the app without compiling or bundling an ASR runtime. llama.cpp and model files are external runtime requirements. The GGUF integration was verified with llama.cpp `b11342`.
 
 ## Project Documentation
 

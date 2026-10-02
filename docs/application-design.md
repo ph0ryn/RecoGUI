@@ -16,7 +16,8 @@ flowchart LR
   Store["SQLite writer + read snapshots"]
   Media["Native media pipeline"]
   VAD["Silero VAD (ORT static)"]
-  ASR["Qwen3-ASR MLX runtime"]
+  ASR["Rust ASR adapter"]
+  Server["External llama-server / GGUF"]
   Cache["Hugging Face cache"]
   Export["Rust export pipeline"]
 
@@ -26,7 +27,9 @@ flowchart LR
   Core --> Media
   Media --> VAD
   Core --> ASR
+  ASR -->|"loopback HTTP"| Server
   ASR --> Cache
+  Server --> Cache
   Core --> Export
   Export --> Store
 ```
@@ -44,7 +47,7 @@ close/sleep を直列化する。decode、resample、VAD、ASR、Export など�
 | Rust `ApplicationCore` | session/queue lifecycle、状態 CAS、model lease、pipeline、shutdown、sleep、Export orchestration |
 | Rust SQLite store | schema v5 の検証、専用 writer、read snapshot、履歴/検索/queue/model 設定、segment transaction |
 | Rust media pipeline | native file decode、microphone/systemAudio capture、normalizer、fingerprint、VAD、bounded ASR queue |
-| Rust Qwen3-ASR engine | HF cache/revision 解決、MLX model load/unload、単一 speech segment の transcription |
+| Rust Qwen3-ASR engine | HF cache/revision/GGUF filename 解決、llama-server の所有と終了、単一 speech segment の transcription |
 | Hugging Face cache | 既存 model snapshot/revision の保存場所 |
 
 ASR engine は DB、queue、path、VAD asset、Export、Tauri、UI event を認識しない。Rust の actor が model lease と inference を
@@ -57,7 +60,6 @@ RecoGUI/
 ├── src/                         # React / TypeScript
 ├── src/generated/bindings.ts    # Specta が生成する tracked contract
 ├── src-tauri/
-│   ├── crates/qwen3-asr-mlx/    # OminiX Qwen3-ASR の Rust 移植
 │   ├── src/                     # domain, store, media, core, ASR engine, commands
 │   └── vad/
 │       ├── LICENSE
@@ -66,7 +68,7 @@ RecoGUI/
 ```
 
 ONNX asset の SHA-256 は起動時に検証する。Rust 側の resource から直接読み、Application Support へコピーしない。
-MLX の `mlx.metallib` はビルド時に生成され、macOS bundle の `Contents/MacOS/mlx.metallib` に配置する。
+ASR runtime とモデルは外部依存とし、app bundle に同梱しない。
 
 ## Domain、SQLite、状態遷移
 
@@ -81,7 +83,7 @@ SQLite は `rusqlite 0.40.1` bundled SQLite を使用する。専用 writer thre
 segment、集計値、検出言語、row version は一 transaction で保存し、commit 成功後にのみ `segment.committed` と snapshot 更新を通知する。
 起動時には `preparing/running/pausing/stopping` だけを一 transaction で `abandoned` へ回収し、paused、file failure、queue、選択 model は保持する。
 
-保存する file の path/fingerprint、microphone UID、model repository/revision、language、`config_json`、checkpoint、segment count は
+保存する file の path/fingerprint、microphone UID、model repository/revision/GGUF filename、language、`config_json`、checkpoint、segment count は
 Resume のためだけに使う。React へ path を公開しない。queue claim は item 削除、preparing session 作成、queue revision 更新を一 transaction で行う。
 
 ## Native media pipeline
@@ -99,8 +101,17 @@ padding、60 秒上限、flush を Rust へ移植し、既存 fixture と確率�
 
 ## ASR engine
 
-Rust は Qwen3-ASR MLX engine を同一プロセス内で所有し、Hugging Face cache の選択 revision を load する。model load、segment inference、
-unload は actor の lifecycle から呼び出し、固定 startup timeout や外部 interpreter に依存しない。対応モデルは Qwen3-ASR 系 MLX checkpoint に限定する。
+Rust の専用 thread が外部 `llama-server` を所有し、Hugging Face cache の repository/revision/GGUF filename と同じ snapshot の mmproj を厳密に解決する。
+GGUF の string metadata と ASR tag を読み、decoder は `general.architecture=qwen3vl`、projector は `clip.audio.projector_type=qwen3a` として識別する。
+同名の mmproj を優先し、同名がなければ一つだけ存在する projector を使用する。欠損・曖昧な組合せはエラーとする。
+
+サーバーは loopback の空き port と起動ごとの API key で起動する。`/health` の ready を最大 180 秒待ち、子プロセスが途中終了した場合は stderr と終了状態を返す。
+`/props` で音声対応と media marker を取得し、メモリ内 WAV を base64 にして `/completion` へ送る。HTTP proxy と redirect は無効にし、リクエストの上限を 300 秒にする。
+Qwen の ChatML prompt と language prefill を使い、temperature、repetition penalty、token budget、上限時の一回 retry を維持する。
+応答から本文、検出言語、token count、stop reason を取り出し、言語タグが欠けても本文を保持して `Unknown` を返す。
+
+unload/shutdown では子プロセスを終了し、`wait` で回収する。engine 破棄は起動待ちや推論中のプロセスも終了させる。
+同じ queue の model lease は再利用する。旧 MLX session に GGUF filename を補完せず、履歴の表示・Export を維持したまま Resume を拒否する。
 
 ## Lifecycle sequence
 
@@ -147,7 +158,7 @@ buffer だけを適用する。sequence gap または rowVersion の逆行を検
 Export は Rust の read-only snapshot から生成する。`zip 8.6.0` で複数 session の ZIP を作り、同一 directory の staging に書く。finish、flush、`sync_all` 後に atomic publish し、
 cancel/error 時は staging のみ削除する。既存 destination は成功した publish 以外では変更しない。
 
-macOS bundle は Tauri の `bundle.macOS.files` で `target/<triple>/release/mlx.metallib` を `Contents/MacOS/mlx.metallib` として同梱する。
+macOS bundle に同梱する推論資産は Silero VAD の ONNX asset だけとする。llama.cpp と GGUF/mmproj は外部に配置する。
 
 ## 設計変更の gate
 

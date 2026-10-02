@@ -50,6 +50,7 @@ pub struct PipelineSpec {
     pub run_id: String,
     pub model_repo_id: String,
     pub model_revision: String,
+    pub model_file_name: String,
     pub language: Option<String>,
     pub next_segment_index: u32,
     pub resume_sample: u64,
@@ -145,7 +146,11 @@ async fn run_pipeline(
             }
         };
         if let Err(error) = worker
-            .load_model(spec.model_repo_id.clone(), spec.model_revision.clone())
+            .load_model(
+                spec.model_repo_id.clone(),
+                spec.model_revision.clone(),
+                spec.model_file_name.clone(),
+            )
             .await
         {
             cancel_reserved_source(&spec, &audio);

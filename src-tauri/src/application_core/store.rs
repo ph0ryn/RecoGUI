@@ -1423,7 +1423,13 @@ fn recover_startup(connection: &mut Connection) -> Result<usize, CoreError> {
 }
 
 fn validate_selected_model(model: &SelectedModel) -> Result<(), CoreError> {
-    if model.repo_id.trim().is_empty() || model.revision.trim().is_empty() {
+    if model.repo_id.trim().is_empty()
+        || model.revision.trim().is_empty()
+        || model
+            .file_name
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+    {
         return Err(CoreError::InvalidArgument(
             "model repository and revision must not be empty".into(),
         ));

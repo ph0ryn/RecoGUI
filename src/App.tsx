@@ -170,6 +170,10 @@ function getSnippet(session: SessionEntity, query: string): string | undefined {
   return segment?.text;
 }
 
+function modelKey(model: { repoId: string; revision: string; fileName?: string | null }): string {
+  return [model.repoId, model.revision, model.fileName ?? ""].join("\n");
+}
+
 function modelStatusText(model: ModelState): string {
   const labels: Record<ModelState["status"], string> = {
     checking: "モデルを確認しています。",
@@ -2293,13 +2297,17 @@ function SettingsDialog({
   }, []);
 
   async function selectModel(value: string): Promise<void> {
-    const selected = models.find(({ repoId, revision }) => `${repoId}\n${revision}` === value);
+    const selected = models.find((candidate) => modelKey(candidate) === value);
 
     if (!selected) return;
     setIsModelWorking(true);
     setModelListError(undefined);
     try {
-      const reference = { repoId: selected.repoId, revision: selected.revision };
+      const reference = {
+        fileName: selected.fileName,
+        repoId: selected.repoId,
+        revision: selected.revision,
+      };
 
       onModelChange(await recoBridge.selectModel(reference));
     } catch (error) {
@@ -2311,8 +2319,7 @@ function SettingsDialog({
   }
 
   const selectedModel = models.find(
-    ({ repoId, revision }) =>
-      repoId === model.selected?.repoId && revision === model.selected.revision,
+    (candidate) => model.selected !== null && modelKey(candidate) === modelKey(model.selected),
   );
   const supportedLanguages = selectedModel?.supportedLanguages ?? [];
 
@@ -2347,22 +2354,21 @@ function SettingsDialog({
               <select
                 disabled={disabled || isModelWorking}
                 onChange={(event) => void selectModel(event.target.value)}
-                value={model.selected ? `${model.selected.repoId}\n${model.selected.revision}` : ""}
+                value={model.selected ? modelKey(model.selected) : ""}
               >
                 <option disabled value="">
                   モデルを選択…
                 </option>
                 {model.selected && !selectedModel && (
-                  <option value={`${model.selected.repoId}\n${model.selected.revision}`}>
-                    {model.selected.repoId} — {model.selected.revision.slice(0, 8)} — 利用不可
+                  <option value={modelKey(model.selected)}>
+                    {model.selected.repoId} — {model.selected.fileName} —{" "}
+                    {model.selected.revision.slice(0, 8)} — 利用不可
                   </option>
                 )}
                 {models.map((candidate) => (
-                  <option
-                    key={`${candidate.repoId}:${candidate.revision}`}
-                    value={`${candidate.repoId}\n${candidate.revision}`}
-                  >
-                    {candidate.repoId} — {candidate.revision.slice(0, 8)} — {candidate.size}
+                  <option key={modelKey(candidate)} value={modelKey(candidate)}>
+                    {candidate.repoId} — {candidate.fileName} — {candidate.revision.slice(0, 8)} —{" "}
+                    {candidate.size}
                   </option>
                 ))}
               </select>

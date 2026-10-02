@@ -69,6 +69,8 @@ pub enum ResumeMode {
 pub struct ModelReference {
     pub repo_id: String,
     pub revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Type)]

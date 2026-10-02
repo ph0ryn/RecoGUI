@@ -47,6 +47,7 @@ export interface SessionDetail extends SessionSummary {
 export type ExportFormat = "txt" | "timestampedTxt" | "markdown" | "json" | "srt" | "vtt";
 
 export interface ModelReference {
+  fileName?: string | null;
   repoId: string;
   revision: string;
 }

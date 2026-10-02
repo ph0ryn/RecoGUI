@@ -20,7 +20,7 @@
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets --all-features -- -D warnings",
     "lint:typescript": "eslint && oxlint --type-aware --type-check",
     "test": "pnpm --aggregate-output /^test:/",
-    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets --all-features && cargo test --manifest-path src-tauri/Cargo.toml --locked -p qwen3-asr-mlx",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --locked --all-targets --all-features",
     "test:typescript": "vitest run",
     "typecheck": "pnpm --aggregate-output /^typecheck:/",
     "typecheck:typescript": "tsgo --noEmit",

@@ -9,6 +9,7 @@ const ASR_QUEUE_CAPACITY: u32 = 2;
 #[derive(Clone, Debug)]
 pub struct RuntimePipelineConfig {
     pub persisted: serde_json::Value,
+    pub model_file_name: Option<String>,
     pub vad: VadConfig,
     pub transcription: WorkerTranscriptionConfig,
 }
@@ -18,6 +19,8 @@ pub struct RuntimePipelineConfig {
 struct PersistedPipelineConfig {
     vad: VadConfig,
     transcription: PersistedTranscriptionConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model_file_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -37,6 +40,7 @@ impl Default for PersistedPipelineConfig {
     fn default() -> Self {
         Self {
             vad: VadConfig::default(),
+            model_file_name: None,
             transcription: PersistedTranscriptionConfig {
                 generation_tokens_per_sec: 20.0,
                 max_generation_tokens: 2_048,
@@ -51,8 +55,23 @@ impl Default for PersistedPipelineConfig {
     }
 }
 
+#[cfg(test)]
 pub fn default_pipeline_config() -> Result<RuntimePipelineConfig, CoreError> {
     resolve(PersistedPipelineConfig::default())
+}
+
+pub fn pipeline_config_for_model(
+    file_name: Option<String>,
+) -> Result<RuntimePipelineConfig, CoreError> {
+    let file_name = file_name.ok_or_else(|| {
+        CoreError::WorkerUnavailable(
+            "select a GGUF model; the saved MLX selection cannot be used".into(),
+        )
+    })?;
+    resolve(PersistedPipelineConfig {
+        model_file_name: Some(file_name),
+        ..PersistedPipelineConfig::default()
+    })
 }
 
 pub fn parse_pipeline_config(
@@ -65,6 +84,15 @@ pub fn parse_pipeline_config(
 }
 
 fn resolve(persisted: PersistedPipelineConfig) -> Result<RuntimePipelineConfig, CoreError> {
+    if persisted
+        .model_file_name
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        return Err(CoreError::InvalidArgument(
+            "saved GGUF filename is empty".into(),
+        ));
+    }
     let vad = persisted.vad.validate()?;
     let transcription = &persisted.transcription;
     if !transcription.generation_tokens_per_sec.is_finite()
@@ -95,6 +123,7 @@ fn resolve(persisted: PersistedPipelineConfig) -> Result<RuntimePipelineConfig, 
     })?;
     Ok(RuntimePipelineConfig {
         persisted: persisted_value,
+        model_file_name: persisted.model_file_name,
         vad,
         transcription: WorkerTranscriptionConfig {
             generation_tokens_per_second: transcription.generation_tokens_per_sec,
@@ -130,5 +159,21 @@ mod tests {
         let mut config = default_pipeline_config().unwrap().persisted;
         config["transcription"]["max_transcription_queue_size"] = json!(3);
         assert!(parse_pipeline_config(&config).is_err());
+    }
+
+    #[test]
+    fn gguf_filename_survives_the_session_config_round_trip() {
+        let config = pipeline_config_for_model(Some("model-Q8_0.gguf".into())).unwrap();
+        assert_eq!(config.persisted["model_file_name"], "model-Q8_0.gguf");
+        let restored = parse_pipeline_config(&config.persisted).unwrap();
+        assert_eq!(restored.model_file_name.as_deref(), Some("model-Q8_0.gguf"));
+        assert!(pipeline_config_for_model(None).is_err());
+        assert!(pipeline_config_for_model(Some(String::new())).is_err());
+        assert!(
+            parse_pipeline_config(&default_pipeline_config().unwrap().persisted)
+                .unwrap()
+                .model_file_name
+                .is_none()
+        );
     }
 }

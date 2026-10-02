@@ -266,6 +266,7 @@ pub fn cached_model(value: CachedModel) -> api::CachedModelRevision {
         reference: api::ModelReference {
             repo_id: value.repo_id,
             revision: value.revision,
+            file_name: Some(value.file_name),
         },
         last_modified: value.last_modified,
         refs: value.refs,

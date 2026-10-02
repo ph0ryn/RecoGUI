@@ -100,6 +100,7 @@ impl SegmentTranscribeRequest {
 pub struct CachedModel {
     pub repo_id: String,
     pub revision: String,
+    pub file_name: String,
     pub size: String,
     pub last_modified: String,
     pub refs: Vec<String>,

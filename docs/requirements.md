@@ -83,14 +83,18 @@ fallback は行わない。
 
 ## Model と ASR
 
-- model はアプリ外の Hugging Face cache に存在する revision を列挙し、repository ID と revision を選択・保存する。
-  download、delete、Hub search は提供しない。対応モデルは Qwen3-ASR 系の MLX checkpoint に限定する。
+- model はアプリ外の Hugging Face cache に存在する Qwen3-ASR GGUF を列挙し、repository ID、revision、GGUF filename を選択・保存する。
+  download、delete、Hub search は提供しない。decoder の ASR metadata と Qwen3 audio projector を確認し、同一 snapshot の mmproj と組み合わせる。
+  同名の `mmproj-<GGUF filename>` を優先し、それがなければ snapshot 内に一つだけ存在する Qwen3 audio projector を使用する。欠損・曖昧な組合せはエラーとする。
 - `ModelState` は `checking`、`unselected`、`unavailable`、`ready`、`error` を区別する。model 選択は load を行わず、
   active session または queue 実行中は変更を拒否する。
-- Rust は選択した revision のモデルを同一プロセス内で load/unload し、正規化済み PCM の speech segment を文字起こしする。
-- 連続 queue 中は同じ model lease を再利用し、Pause、完了、停止後は unload する。load、推論、unload の失敗は明示エラーとし、
-  外部プロセスや旧 wire protocol への fallback は行わない。
-- MLX の実行に必要な `mlx.metallib` は Rust の target artifact として生成し、macOS app bundle の `Contents/MacOS` に同梱する。
+- 外部にインストール済みの `llama-server` を必須とする。Rust は選択したモデルと mmproj を渡して子プロセスを起動し、localhost の HTTP API を通じて文字起こしする。
+  音声はメモリ内で 16 kHz mono WAV に変換し、元音声のファイルを作らない。サーバーは loopback のみで待ち受け、起動ごとに生成する API key を使う。
+- 連続 queue 中は同じ model lease と子プロセスを再利用し、Pause、完了、停止、shutdown、engine 破棄後は終了して回収する。
+  起動、推論、終了の失敗は明示エラーとし、MLX や別エンジンへの fallback は行わない。
+- app bundle に llama.cpp、MLX、モデルを同梱しない。Rust の ASR adapter だけをビルドする。
+- GGUF filename は選択設定と新規 session の `config_json.model_file_name` に保存する。既存 schema v5 の履歴と Export は維持し、
+  GGUF filename を持たない旧 MLX session の Resume は明示エラーとする。
 
 ## Tauri/React contract
 
@@ -114,7 +118,7 @@ fallback は行わない。
 ## セキュリティと対象外
 
 - React に shell、SQLite、任意 path への直接アクセスを与えない。remote content、CDN、元音声の保存は行わない。
-- 旧 NDJSON/PCM wire、旧 engine、外部プロセス、互換 adapter、feature flag、dual write、共有 DB owner、VAD fallback は
+- 旧 NDJSON/PCM wire、旧 engine、旧 sidecar プロセス、互換 adapter、feature flag、dual write、共有 DB owner、VAD fallback は
   最終成果物に残さない。
 - model download/delete、録音中の device 切替、desktop audio のアプリ選択、transcript 編集、import/restore、
   code signing/notarization は対象外とする。

@@ -40,9 +40,6 @@
       "vad/silero_vad.onnx": "vad/silero_vad.onnx"
     },
     "macOS": {
-      "files": {
-        "MacOS/mlx.metallib": "../src-tauri/target/aarch64-apple-darwin/release/mlx.metallib"
-      },
       "minimumSystemVersion": "15.0"
     },
     "icon": [

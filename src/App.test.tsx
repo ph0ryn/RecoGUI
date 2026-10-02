@@ -89,9 +89,10 @@ beforeEach(() => {
   bridgeMocks.listModels.mockResolvedValue({
     models: [
       {
+        fileName: "Qwen3-ASR-0.6B-Q8_0.gguf",
         lastModified: "2 months ago",
         refs: ["main"],
-        repoId: "ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit",
+        repoId: "ggml-org/Qwen3-ASR-0.6B-GGUF",
         revision: "7c70d18cb650655d32eafb952a74a49c6a3caad0",
         size: "2.5G",
         supportedLanguages: ["Japanese", "English"],
@@ -607,6 +608,10 @@ describe("RecoGUI", () => {
     const user = userEvent.setup();
 
     useInactiveSnapshot();
+    bridgeMocks.getSession.mockResolvedValue({
+      ...structuredClone(mockSnapshot.sessions[0]),
+      status: "paused",
+    });
     await renderLoadedApp();
     await user.click(screen.getByRole("button", { name: "完全に削除" }));
     await user.click(
@@ -937,11 +942,46 @@ describe("RecoGUI", () => {
     expect(settingsSelectors.indexOf(selector)).toBeLessThan(
       settingsSelectors.indexOf(languageSelector),
     );
-    await user.selectOptions(selector, "owner/another-model\nanother-revision");
+    await user.selectOptions(selector, "owner/another-model\nanother-revision\n");
     await waitFor(() =>
       expect(bridgeMocks.selectModel).toHaveBeenCalledWith({
         repoId: "owner/another-model",
         revision: "another-revision",
+      }),
+    );
+  });
+
+  it("selects the GGUF filename when a revision contains multiple quantizations", async () => {
+    const user = userEvent.setup();
+    useInactiveSnapshot();
+    const reference = { repoId: "ggml-org/Qwen3-ASR-0.6B-GGUF", revision: "same-revision" };
+    bridgeMocks.listModels.mockResolvedValue({
+      models: ["Q8_0", "bf16"].map((quantization) => ({
+        ...reference,
+        fileName: `Qwen3-ASR-0.6B-${quantization}.gguf`,
+        lastModified: "2026-10-02T00:00:00Z",
+        refs: ["main"],
+        size: "1.0GB",
+        supportedLanguages: ["Japanese"],
+      })),
+      state: { selected: null, status: "unselected" },
+    });
+    bridgeMocks.selectModel.mockResolvedValue({
+      selected: { ...reference, fileName: "Qwen3-ASR-0.6B-bf16.gguf" },
+      status: "ready",
+    });
+    await renderLoadedApp();
+    await user.click(screen.getByRole("button", { name: "設定を開く" }));
+    const selector = await screen.findByRole("combobox", { name: "使用するモデル" });
+    expect(
+      within(selector).getByRole("option", { name: /Qwen3-ASR-0.6B-Q8_0.gguf/ }),
+    ).toBeInTheDocument();
+    const target = within(selector).getByRole("option", { name: /Qwen3-ASR-0.6B-bf16.gguf/ });
+    await user.selectOptions(selector, target);
+    await waitFor(() =>
+      expect(bridgeMocks.selectModel).toHaveBeenCalledWith({
+        ...reference,
+        fileName: "Qwen3-ASR-0.6B-bf16.gguf",
       }),
     );
   });
