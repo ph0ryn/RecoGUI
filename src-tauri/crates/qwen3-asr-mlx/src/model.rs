@@ -1365,14 +1365,16 @@ mod tests {
 
     #[test]
     fn repetition_penalty_is_applied_before_greedy_sampling() {
-        let logits = mlx_rs::Array::from_slice(&[1.0f32, 0.9], &[1, 2]);
-        let config = super::SamplingConfig {
-            temperature: 0.0,
-            max_tokens: 8,
-            repetition_penalty: Some(2.0),
-        };
-        let sampled = Qwen3ASR::sample_with_repetition_penalty(&logits, &config, &[0]).unwrap();
-        super::eval([&sampled]).unwrap();
-        assert_eq!(sampled.item::<i32>(), 1);
+        mlx_rs::with_new_default_stream(mlx_rs::Stream::cpu(), || {
+            let logits = mlx_rs::Array::from_slice(&[1.0f32, 0.9], &[1, 2]);
+            let config = super::SamplingConfig {
+                temperature: 0.0,
+                max_tokens: 8,
+                repetition_penalty: Some(2.0),
+            };
+            let sampled = Qwen3ASR::sample_with_repetition_penalty(&logits, &config, &[0]).unwrap();
+            super::eval([&sampled]).unwrap();
+            assert_eq!(sampled.item::<i32>(), 1);
+        });
     }
 }

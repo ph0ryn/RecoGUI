@@ -6,7 +6,7 @@ on:
       - "v*"
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 permissions:
@@ -16,7 +16,12 @@ jobs:
   release:
     name: Build and release
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 15
+    env:
+      CARGO_BUILD_JOBS: 3
+      CARGO_BUILD_TARGET: aarch64-apple-darwin
+      MLX_PREBUILT_PATH: ${{ runner.temp }}/mlx-prebuilt-v0.1.0-macos-arm64
+      RECOGUI_CARGO_PROFILE: release
 
     steps:
       - name: Check out repository
@@ -38,11 +43,6 @@ jobs:
         with:
           targets: aarch64-apple-darwin
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -61,7 +61,11 @@ jobs:
           }
           EOF
 
+      - name: Prepare prebuilt MLX
+        run: bash .github/scripts/prepare-mlx.sh
+
       - name: Verify source
+        timeout-minutes: 10
         run: pnpm verify
 
       - name: Build and publish GitHub Release
