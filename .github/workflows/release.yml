@@ -74,4 +74,5 @@ jobs:
           releaseName: RecoGUI ${{ github.ref_name }}
           releaseDraft: false
           prerelease: false
-          args: --target aarch64-apple-darwin
+          tauriScript: bash .github/scripts/build-release.sh
+          args: --target aarch64-apple-darwin --bundles app --no-sign
