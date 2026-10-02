@@ -29,7 +29,7 @@ RecoGUI itself does not require Python or `uv` at runtime. End users do not need
 
 1. Download the latest build from [GitHub Releases](https://github.com/ph0ryn/RecoGUI/releases/latest).
 2. Download a Qwen3-ASR MLX model to the Hugging Face cache before opening RecoGUI. Model retrieval is outside RecoGUI and requires a separate Hugging Face Hub client.
-3. If macOS blocks the first launch of an unsigned build, remove the quarantine attribute:
+3. If macOS blocks the first launch, remove the quarantine attribute:
 
    ```sh
    xattr -dr com.apple.quarantine /Applications/RecoGUI.app
@@ -59,7 +59,7 @@ RecoGUI itself does not require Python or `uv` at runtime. End users do not need
 - Automatic language detection shows `Unknown` when the model does not identify a language; any transcribed text is kept.
 - Failed microphone and desktop audio sessions cannot be resumed; completed transcript segments remain available.
 - Automatic app updates are not implemented.
-- Release builds are not signed or notarized.
+- Release builds are ad hoc signed and are not notarized.
 - DRM-protected desktop audio may be unavailable or silent.
 
 ## Development
@@ -91,6 +91,8 @@ pnpm exec tauri build --target aarch64-apple-darwin
 ```
 
 `pnpm build` creates a local build without a distribution bundle. See [`package.json`](package.json) for individual checks.
+
+Release CI uses checksum-verified prebuilt MLX libraries and the same `aarch64-apple-darwin` target and release profile for verification and packaging. It limits Cargo to three parallel jobs and the release job to 15 minutes, with verification logs shown as each check runs.
 
 ## Project Documentation
 
