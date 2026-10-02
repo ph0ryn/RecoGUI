@@ -54,3 +54,7 @@ objc2-core-audio = { version = "0.3.2", default-features = false, features = ["A
 objc2-core-audio-types = "0.3.2"
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFDictionary"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["block2", "NSArray", "NSDictionary", "NSNotification", "NSOperation", "NSUUID"] }
+
+# macOS 27 rejects stripped proc-macro dylibs (rust-lang/rust#157750).
+[profile.release.build-override]
+strip = false
