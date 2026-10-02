@@ -1,6 +1,6 @@
-use std::env;
+use std::{env, time::Duration};
 
-use qwen3_asr_mlx::audio::load_wav;
+use qwen3_asr_mlx::{audio::load_wav, memory::memory_snapshot};
 use reco_gui_lib::application_core::{
     domain::{SplitReason, VadDiagnostics},
     worker::{AsrEngine, SegmentTranscribeRequest, WorkerTranscriptionConfig},
@@ -14,6 +14,7 @@ async fn cached_qwen3_model_transcribes_with_forced_and_detected_language() {
     let audio_path = env::var("RECOGUI_TEST_AUDIO").unwrap();
     let (samples, sample_rate) = load_wav(audio_path).unwrap();
     assert_eq!(sample_rate, 16_000);
+    let initial_memory = memory_snapshot();
 
     let worker = AsrEngine::launch().await.unwrap();
     let models = worker.list_models().await.unwrap().models;
@@ -22,7 +23,11 @@ async fn cached_qwen3_model_transcribes_with_forced_and_detected_language() {
             .iter()
             .any(|model| model.repo_id == repo_id && model.revision == revision)
     );
-    worker.load_model(repo_id, revision).await.unwrap();
+    worker
+        .load_model(repo_id.clone(), revision.clone())
+        .await
+        .unwrap();
+    eprintln!("after model load: {}", memory_snapshot());
 
     for (language, repetition_penalty) in [
         (Some("Japanese"), None),
@@ -54,6 +59,11 @@ async fn cached_qwen3_model_transcribes_with_forced_and_detected_language() {
         };
         let result = worker.transcribe_segment(&request, &samples).await.unwrap();
         eprintln!(
+            "after transcription ({} ms): {}",
+            result.diagnostics.model_total_time_ms.unwrap(),
+            memory_snapshot()
+        );
+        eprintln!(
             "language={language:?}, repetition_penalty={repetition_penalty:?}: {}",
             result.text
         );
@@ -61,6 +71,7 @@ async fn cached_qwen3_model_transcribes_with_forced_and_detected_language() {
         assert!(result.text.contains("テスト"));
         assert_eq!(result.language, "Japanese");
         assert!(result.diagnostics.generation_tokens.is_some());
+        assert!(memory_snapshot().cache < 1024 * 1024 * 1024);
     }
 
     let long_samples = samples.repeat(9);
@@ -94,4 +105,46 @@ async fn cached_qwen3_model_transcribes_with_forced_and_detected_language() {
     assert!(!long_result.text.is_empty());
     let nominal_tokens = (long_samples.len() as f32 / sample_rate as f32 * 20.0) as u32;
     assert!(long_result.diagnostics.max_tokens <= nominal_tokens + 64);
+    eprintln!(
+        "after long transcription ({} ms): {}",
+        long_result.diagnostics.model_total_time_ms.unwrap(),
+        memory_snapshot()
+    );
+    assert!(memory_snapshot().cache < 1024 * 1024 * 1024);
+
+    assert!(worker.unload_model().await.unwrap().unloaded);
+    let unloaded_memory = memory_snapshot();
+    eprintln!("after model unload: {unloaded_memory}");
+    assert_eq!(
+        unloaded_memory.cache, 0,
+        "unused GPU buffers must be released"
+    );
+    assert!(
+        // MLX retains small runtime buffers after the model is dropped.
+        unloaded_memory.active <= initial_memory.active + 64 * 1024,
+        "model GPU buffers must be released"
+    );
+    worker
+        .load_model(repo_id.clone(), revision.clone())
+        .await
+        .unwrap();
+    worker.shutdown().await.unwrap();
+    let shutdown_memory = memory_snapshot();
+    assert_eq!(shutdown_memory.cache, 0);
+    assert!(shutdown_memory.active <= initial_memory.active + 64 * 1024);
+
+    let worker = AsrEngine::launch().await.unwrap();
+    worker.load_model(repo_id, revision).await.unwrap();
+    drop(worker);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let memory = memory_snapshot();
+            if memory.cache == 0 && memory.active <= initial_memory.active + 64 * 1024 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("dropping the engine must release its GPU memory");
 }

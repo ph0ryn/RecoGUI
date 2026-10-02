@@ -1,6 +1,9 @@
 use std::{thread, time::Instant};
 
-use qwen3_asr_mlx::{Error as AsrError, Qwen3ASR, SamplingConfig, TranscriptionOutput};
+use qwen3_asr_mlx::{
+    Error as AsrError, Qwen3ASR, SamplingConfig, TranscriptionOutput,
+    memory::{clear_cache, set_cache_limit},
+};
 use tokio::sync::{mpsc, oneshot};
 
 use super::{
@@ -11,6 +14,8 @@ use crate::application_core::{domain::TranscriptionDiagnostics, error::CoreError
 
 const DRIVER_CHANNEL_CAPACITY: usize = 16;
 const ASR_CHUNK_SAMPLES: usize = 30 * 16_000;
+// Bound unused GPU buffers without limiting active weights or inference allocations.
+const MLX_CACHE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 
 enum DriverCommand {
     ListModels(oneshot::Sender<Result<ModelsListResult, CoreError>>),
@@ -124,6 +129,8 @@ impl AsrEngine {
 }
 
 fn run_engine(mut receiver: mpsc::Receiver<DriverCommand>) {
+    set_cache_limit(MLX_CACHE_LIMIT_BYTES);
+    clear_cache();
     let mut loaded: Option<(String, String, Qwen3ASR)> = None;
     while let Some(command) = receiver.blocking_recv() {
         match command {
@@ -150,6 +157,7 @@ fn run_engine(mut receiver: mpsc::Receiver<DriverCommand>) {
                     })
                 } else {
                     drop(loaded.take());
+                    clear_cache();
                     load_model(&repo_id, &revision).map(|(model, load_ms)| {
                         loaded = Some((repo_id.clone(), revision.clone(), model));
                         ModelLoadResult {
@@ -174,17 +182,20 @@ fn run_engine(mut receiver: mpsc::Receiver<DriverCommand>) {
                 let _ = reply.send(result);
             }
             DriverCommand::UnloadModel(reply) => {
-                let _ = reply.send(Ok(ModelUnloadResult {
-                    unloaded: loaded.take().is_some(),
-                }));
+                let unloaded = loaded.take().is_some();
+                clear_cache();
+                let _ = reply.send(Ok(ModelUnloadResult { unloaded }));
             }
             DriverCommand::Shutdown(reply) => {
                 drop(loaded.take());
+                clear_cache();
                 let _ = reply.send(Ok(ShutdownResult {}));
                 break;
             }
         }
     }
+    drop(loaded);
+    clear_cache();
 }
 
 fn load_model(repo_id: &str, revision: &str) -> Result<(Qwen3ASR, u64), CoreError> {

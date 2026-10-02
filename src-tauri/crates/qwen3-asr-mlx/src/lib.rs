@@ -29,6 +29,7 @@ pub mod qwen;
 
 pub use audio::{AudioConfig, MelFrontend};
 pub use error::Error;
+pub use mlx_rs_core::memory;
 pub use mlx_rs_core::{ConcatKeyValueCache, KVCache};
 pub use model::{Qwen3ASR, Qwen3ASRConfig, SamplingConfig, TranscriptionOutput};
 

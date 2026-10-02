@@ -55,7 +55,7 @@ Rust の対象は `src-tauri/Cargo.toml` を正本とする。Markdown は packa
 - 日本語 speech fixture を用いて、空 PCM、短すぎる segment、model asset 欠損、MLX runtime error が暗黙 fallback せず明示エラーになることを確認する。
 - 連続 queue の model lease 再利用、Pause/完了/停止後の unload、古い run の結果破棄を確認する。
 
-手元の cache revision と 16 kHz WAV を使う結合確認は、次の環境変数を設定して実行する。Rust test binary は隣接する
+手元の cache revision と「テスト」を含む 4〜6 秒の日本語 16 kHz WAV を使う結合確認は、次の環境変数を設定して実行する。Rust test binary は隣接する
 `mlx.metallib` を読むため、debug 実行では `target/debug/deps/mlx.metallib` から `../mlx.metallib` への symlink を用意する。
 
 ```sh
@@ -63,11 +63,13 @@ ln -sf ../mlx.metallib src-tauri/target/debug/deps/mlx.metallib
 RECOGUI_TEST_MODEL_REPO=ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit \
 RECOGUI_TEST_MODEL_REVISION=<revision> \
 RECOGUI_TEST_AUDIO=/path/to/16khz.wav \
-cargo test --manifest-path src-tauri/Cargo.toml --test native_asr -- --ignored --nocapture
+cargo test --manifest-path src-tauri/Cargo.toml --test native_asr -- --ignored --nocapture --test-threads=1
 ```
 
 このテストは日本語を language 指定あり・自動判定と repetition penalty 指定で文字起こしし、
 結果が空でなく検出言語と生成診断が返ることを確認する。
+短い音声の連続処理と 30 秒を超える音声で、推論後の GPU cache が 1 GiB 未満に収まり、unload と reload 後の shutdown で
+model buffer と未使用 cache が解放されることも確認する。MLX allocator は process 内で共有されるため、この確認は単独で実行する。
 同じ環境変数で `cargo test --manifest-path src-tauri/Cargo.toml queued_file_reaches_persisted_transcript_with_native_asr -- --ignored --nocapture`
 を実行すると、一時 DB と実ファイルを使い、queue から履歴の確定 segment まで確認できる。
 
