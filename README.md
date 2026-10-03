@@ -103,6 +103,7 @@ pnpm exec tauri build --target aarch64-apple-darwin
 `pnpm build` creates a local build without a distribution bundle. See [`package.json`](package.json) for individual checks.
 
 The desktop app links the Rust library as an `rlib`; standalone `staticlib` and `cdylib` artifacts are not generated.
+The ZIP dependency enables only the Deflate backend used by exports and the `time` feature used for ZIP timestamps, avoiding unused codecs and encryption dependencies.
 
 `pnpm verify` tests ASR requests and process cleanup with a local fixture server. Real-model speech and queue tests require llama.cpp and cached GGUF assets; see [GGUF engine validation](docs/validation.md#qwen3-asr-gguf-engine).
 

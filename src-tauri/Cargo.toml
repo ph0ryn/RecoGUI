@@ -39,7 +39,7 @@ sha2 = "0.10.9"
 symphonia = { version = "0.6.0", default-features = false, features = ["aac", "adpcm", "aiff", "alac", "all-meta", "caf", "flac", "isomp4", "mp3", "ogg", "opt-simd-neon", "pcm", "vorbis", "wav"] }
 ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-native", "api-24"] }
 time = { version = "0.3.53", features = ["formatting", "macros"] }
-zip = "=8.6.0"
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs", "time"] }
 base64 = "0.22"
 hound = "3.5"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json"] }
