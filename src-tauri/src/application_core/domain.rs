@@ -300,6 +300,8 @@ pub struct ResumeContext {
 pub struct SelectedModel {
     pub repo_id: String,
     pub revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]

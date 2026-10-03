@@ -6,7 +6,8 @@ export const mockSnapshot: EngineSnapshot = {
   activeSessionId: "session-live",
   model: {
     selected: {
-      repoId: "ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit",
+      fileName: "Qwen3-ASR-0.6B-Q8_0.gguf",
+      repoId: "ggml-org/Qwen3-ASR-0.6B-GGUF",
       revision: "7c70d18cb650655d32eafb952a74a49c6a3caad0",
     },
     status: "ready",

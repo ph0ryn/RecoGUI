@@ -1,4 +1,6 @@
 mod engine;
+mod gguf;
+mod llama_server;
 mod model_catalog;
 mod types;
 

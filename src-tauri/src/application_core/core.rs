@@ -7,7 +7,7 @@ use crate::{
     api_types as api,
     app_events::EventSink,
     application_core::{
-        config::{RuntimePipelineConfig, default_pipeline_config, parse_pipeline_config},
+        config::{RuntimePipelineConfig, parse_pipeline_config, pipeline_config_for_model},
         contract,
         domain::{
             DeleteSession, HistoryQuery as StoreHistoryQuery, LifecycleStopReason, NewQueueItem,
@@ -639,6 +639,7 @@ impl CoreActor {
                 .map(|model| api::ModelReference {
                     repo_id: model.repo_id.clone(),
                     revision: model.revision.clone(),
+                    file_name: model.file_name.clone(),
                 }),
             error: None,
         })
@@ -706,6 +707,7 @@ impl CoreActor {
                 .map(|model| api::ModelReference {
                     repo_id: model.repo_id.clone(),
                     revision: model.revision.clone(),
+                    file_name: model.file_name.clone(),
                 }),
             error: None,
         });
@@ -743,10 +745,13 @@ impl CoreActor {
             .map(|model| api::ModelReference {
                 repo_id: model.repo_id.clone(),
                 revision: model.revision.clone(),
+                file_name: model.file_name.clone(),
             });
         let selected_available = selected.as_ref().is_some_and(|selected| {
             self.cached_models.iter().any(|candidate| {
-                candidate.repo_id == selected.repo_id && candidate.revision == selected.revision
+                candidate.repo_id == selected.repo_id
+                    && candidate.revision == selected.revision
+                    && Some(&candidate.file_name) == selected.file_name.as_ref()
             })
         });
         self.model_state = Some(api::ModelState {
@@ -800,7 +805,9 @@ impl CoreActor {
             });
         }
         if !self.cached_models.iter().any(|candidate| {
-            candidate.repo_id == model.repo_id && candidate.revision == model.revision
+            candidate.repo_id == model.repo_id
+                && candidate.revision == model.revision
+                && Some(&candidate.file_name) == model.file_name.as_ref()
         }) {
             return Err(CoreError::WorkerUnavailable(format!(
                 "selected model revision is not cached: {}@{}",
@@ -810,6 +817,7 @@ impl CoreActor {
         let selected = SelectedModel {
             repo_id: model.repo_id.clone(),
             revision: model.revision.clone(),
+            file_name: model.file_name.clone(),
         };
         self.store.set_selected_model(selected.clone()).await?;
         self.selected_model = Some(selected);
@@ -867,7 +875,7 @@ impl CoreActor {
             );
             return;
         }
-        let pipeline_config = match default_pipeline_config() {
+        let pipeline_config = match pipeline_config_for_model(model.file_name.clone()) {
             Ok(config) => config,
             Err(error) => {
                 respond(reply, Err(error));
@@ -923,6 +931,9 @@ impl CoreActor {
             run_id: run_id.clone(),
             model_repo_id: model.repo_id,
             model_revision: model.revision,
+            model_file_name: pipeline_config
+                .model_file_name
+                .expect("GGUF selection was validated"),
             language: input.language,
             next_segment_index: 0,
             resume_sample: 0,
@@ -1159,6 +1170,11 @@ impl CoreActor {
             run_id: run_id.clone(),
             model_repo_id: context.model,
             model_revision: prepared.model_revision,
+            model_file_name: prepared
+                .config
+                .model_file_name
+                .clone()
+                .expect("GGUF session was validated"),
             language,
             next_segment_index: context.next_segment_index,
             resume_sample: context.resume_sample,
@@ -1405,7 +1421,7 @@ impl CoreActor {
     ) -> Result<(), CoreError> {
         let session_id = Uuid::new_v4().to_string();
         let language = self.queue_language.clone();
-        let pipeline_config = default_pipeline_config()?;
+        let pipeline_config = pipeline_config_for_model(model.file_name.clone())?;
         let receipt = self
             .store
             .claim_queue_item(
@@ -1432,6 +1448,9 @@ impl CoreActor {
             run_id: run_id.clone(),
             model_repo_id: model.repo_id,
             model_revision: model.revision,
+            model_file_name: pipeline_config
+                .model_file_name
+                .expect("GGUF selection was validated"),
             language,
             next_segment_index: 0,
             resume_sample: 0,
@@ -2221,6 +2240,9 @@ async fn prepare_resume(
         CoreError::WorkerUnavailable("saved session has no exact model revision".into())
     })?;
     let config = parse_pipeline_config(&context.config)?;
+    if config.model_file_name.is_none() {
+        return Err(CoreError::WorkerUnavailable("this session used MLX and cannot be resumed with GGUF; its transcript remains available".into()));
+    }
     let source = match context.source_kind {
         SourceKind::File => {
             let path = PathBuf::from(context.source_path.as_ref().ok_or_else(|| {
@@ -2433,9 +2455,59 @@ mod tests {
         )));
         assert!(is_fatal_core_error(&CoreError::WorkerResponse {
             code: "transcriptionFailure".into(),
-            message: "MLX failed".into(),
+            message: "llama-server failed".into(),
             recoverable: false,
         }));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn old_mlx_history_remains_readable_and_resume_fails_before_audio_capture() {
+        let temporary = tempfile::tempdir().unwrap();
+        let database_path = temporary.path().join("fixture.sqlite3");
+        let connection = rusqlite::Connection::open(&database_path).unwrap();
+        connection
+            .execute_batch(include_str!("../../../fixtures/native/schema-v5.sql"))
+            .unwrap();
+        drop(connection);
+        let core = ApplicationCore::start(
+            ApplicationCoreConfig {
+                database_path,
+                vad_asset: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vad/silero_vad.onnx"),
+            },
+            Arc::new(NoopEventSink),
+        )
+        .await
+        .unwrap();
+        let query = api::HistoryDetailQuery {
+            session_id: "session-paused".into(),
+            segment_offset: 0,
+            segment_limit: 100,
+            expected_row_version: None,
+        };
+        let before = core.history_get(query.clone()).await.unwrap();
+        assert_eq!(before.segments[0].text, "pause");
+        let rendered = core
+            .history_render(api::HistoryRender {
+                session_ids: vec!["session-paused".into()],
+                format: api::ExportFormat::Txt,
+            })
+            .await
+            .unwrap();
+        assert!(rendered.contains("pause"));
+        let error = core
+            .resume_session(api::SessionMutation {
+                session_id: "session-paused".into(),
+                expected_row_version: before.summary.row_version.clone(),
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(error, CoreError::WorkerUnavailable(ref message)
+            if message.contains("used MLX and cannot be resumed with GGUF")));
+        let after = core.history_get(query).await.unwrap();
+        assert_eq!(after.summary.row_version, before.summary.row_version);
+        assert!(matches!(after.summary.status, api::SessionStatus::Paused));
+        assert_eq!(after.segments[0].text, before.segments[0].text);
+        core.shutdown(LifecycleStopReason::AppQuit).await.unwrap();
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -2458,9 +2530,13 @@ mod tests {
         assert!(models.models.iter().any(|model| {
             model.reference.repo_id == repo_id && model.reference.revision == revision
         }));
-        core.model_select(api::ModelReference { repo_id, revision })
-            .await
-            .unwrap();
+        core.model_select(api::ModelReference {
+            repo_id,
+            revision,
+            file_name: Some(std::env::var("RECOGUI_TEST_MODEL_FILE").unwrap()),
+        })
+        .await
+        .unwrap();
         core.enqueue_files(vec![audio_path], None).await.unwrap();
 
         let completed = tokio::time::timeout(std::time::Duration::from_secs(120), async {

@@ -28,6 +28,17 @@ pnpm check:bindings
 Rust の対象は `src-tauri/Cargo.toml` を正本とする。Markdown は package に専用設定がない場合、
 `nix run nixpkgs/nixpkgs-unstable#rumdl check --fix docs/requirements.md docs/application-design.md docs/validation.md` を使用する。
 
+Release CI の dev/test debug 情報は `line-tables-only` とする。CI と同じ設定で検証する場合は次を使用する。
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=line-tables-only \
+CARGO_PROFILE_TEST_DEBUG=line-tables-only \
+pnpm verify
+```
+
+ファイル名と行番号を含む backtrace、debug assertion、整数 overflow 検査は維持し、release profile とローカル開発の設定は変更しない。
+desktop app の library は `rlib` のみを生成する。crate type を変更した場合は生成 bindings と `.app` の build を確認する。
+
 ## Fixture と Store
 
 - schema v5 の新規 fixture と既存 DB のコピーを開き、`user_version=5`、必須 table/index、FTS5、foreign keys、WAL、integrity check を確認する。
@@ -48,28 +59,28 @@ Rust の対象は `src-tauri/Cargo.toml` を正本とする。Markdown は packa
 - ASR queue 容量 2 の backpressure、最後の 512 未満 frame、resampler drain を確認する。live overflow、PCM 欠落、sequence gap、device disconnect は drop せず session failure にする。
 - microphone の platform UID 解決、permission 拒否、device 切断、systemAudio の Process Tap/aggregate device probe、RecoGUI 自身の除外、通常 speaker 出力維持、仮想 output device 非追加を実機で確認する。
 
-## Qwen3-ASR MLX engine
+## Qwen3-ASR GGUF engine
 
-- Hugging Face cache の Qwen3-ASR MLX revision を列挙し、repository ID と revision を保持したまま選択できることを確認する。
-- model load、segment transcription、unload が Rust process 内で完結し、外部 interpreter や旧 wire protocol を起動しないことを確認する。
-- 日本語 speech fixture を用いて、空 PCM、短すぎる segment、model asset 欠損、MLX runtime error が暗黙 fallback せず明示エラーになることを確認する。
+- HF cache の GGUF を filename ごとに列挙し、同じ repository/revision の複数量子化を区別して選択・保存できることを確認する。
+- model と mmproj の欠損・曖昧な組合せ、llama-server 未導入、起動中の終了、HTTP error、壊れた応答が明示エラーになることを確認する。
+- Node.js の HTTP fixture で、起動引数、API key、音声対応と marker の取得、16 kHz mono WAV のサンプル、generation 設定、token limit retry、言語未検出の本文保持を検証する。
 - 連続 queue の model lease 再利用、Pause/完了/停止後の unload、古い run の結果破棄を確認する。
+- 選択 filename が session config の保存と読み取りで変わらず、旧 MLX session に対して Resume が明示エラーになることを確認する。
 
-手元の cache revision と「テスト」を含む 4〜6 秒の日本語 16 kHz WAV を使う結合確認は、次の環境変数を設定して実行する。Rust test binary は隣接する
-`mlx.metallib` を読むため、debug 実行では `target/debug/deps/mlx.metallib` から `../mlx.metallib` への symlink を用意する。
+外部 llama-server、手元の GGUF cache revision と「テスト」を含む 4〜6 秒の日本語 16 kHz mono PCM16 WAV を使う結合確認は、次の環境変数で実行する。
 
 ```sh
-ln -sf ../mlx.metallib src-tauri/target/debug/deps/mlx.metallib
-RECOGUI_TEST_MODEL_REPO=ph0ryn/Qwen3-ASR-1.7B-JA-MLX-8bit \
+RECOGUI_LLAMA_SERVER=/path/to/llama-server \
+HF_HUB_CACHE=/path/to/huggingface/hub \
+RECOGUI_TEST_MODEL_REPO=ggml-org/Qwen3-ASR-0.6B-GGUF \
 RECOGUI_TEST_MODEL_REVISION=<revision> \
+RECOGUI_TEST_MODEL_FILE=Qwen3-ASR-0.6B-Q8_0.gguf \
 RECOGUI_TEST_AUDIO=/path/to/16khz.wav \
 cargo test --manifest-path src-tauri/Cargo.toml --test native_asr -- --ignored --nocapture --test-threads=1
 ```
 
-このテストは日本語を language 指定あり・自動判定と repetition penalty 指定で文字起こしし、
-結果が空でなく検出言語と生成診断が返ることを確認する。
-短い音声の連続処理と 30 秒を超える音声で、推論後の GPU cache が 1 GiB 未満に収まり、unload と reload 後の shutdown で
-model buffer と未使用 cache が解放されることも確認する。MLX allocator は process 内で共有されるため、この確認は単独で実行する。
+日本語指定、自動判定、repetition penalty 指定と 30 秒超の音声を処理し、本文・検出言語・生成診断を検証する。
+unload、reload、shutdown、engine 破棄後に子プロセスが残らないことも確認する。
 同じ環境変数で `cargo test --manifest-path src-tauri/Cargo.toml queued_file_reaches_persisted_transcript_with_native_asr -- --ignored --nocapture`
 を実行すると、一時 DB と実ファイルを使い、queue から履歴の確定 segment まで確認できる。
 
@@ -101,15 +112,16 @@ model buffer と未使用 cache が解放されることも確認する。MLX al
 ## Release / 実機確認
 
 1. `pnpm exec tauri build --target aarch64-apple-darwin` で `.app` を生成し、Finder 起動、macOS 15.0 以降、Apple Silicon で確認する。
-2. bundle に `Contents/MacOS/mlx.metallib` と ONNX asset が含まれ、旧 archive、旧 protocol、旧 capture event が無いことを確認する。
+2. bundle に ONNX asset が含まれ、MLX/llama.cpp の library・実行ファイルやモデルが同梱されていないことを確認する。
 3. `otool -L` で非 system の ONNX runtime dylib が無いこと、Rust resource の SHA-256 が期待値と一致することを確認する。
-4. Rust process 内で model load/inference が進み、固定 startup timeout や外部 interpreter に頼らず ready/error が通知されることを確認する。
+4. 外部 llama-server を起動して model load/inference が進み、ready/error が通知されること、終了時に子プロセスを回収することを確認する。
 5. 実機で file、microphone、Mac 全体の desktop audio、permission 拒否、device 切断、output device 変更、ASR engine failure、sleep、quit、全 Export 形式を確認する。
 6. 既存 DB の integrity、session/segment 数、paused context をコピー同士で比較する。本体 DB には migration を適用しない。
 
 ## 完了時の検索 gate
 
 旧 engine/repository/sidecar/host PCM broker、汎用 command dispatcher、動的 payload、旧 archive 名、旧 capture event、旧 CLI audio FD、
-外部プロセス、interpreter、旧 wire protocol が、実装・fixture・bundle metadata に残っていないことを検索で確認する。
+MLX dependency、interpreter、旧 wire protocol が、実装・bundle metadata に残っていないことを検索で確認する。
+ASR の外部プロセスは RecoGUI が所有する llama-server に限定し、終了後に残らないことを確認する。互換性テストの旧 MLX データは保持する。
 
 最後に `git status --short --branch` を実行し、作業ツリーを clean にする。merge、push、PR、公開は別途承認を得るまで行わない。

@@ -13,7 +13,7 @@ default-run = "reco-gui"
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "reco_gui_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -39,10 +39,10 @@ sha2 = "0.10.9"
 symphonia = { version = "0.6.0", default-features = false, features = ["aac", "adpcm", "aiff", "alac", "all-meta", "caf", "flac", "isomp4", "mp3", "ogg", "opt-simd-neon", "pcm", "vorbis", "wav"] }
 ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-native", "api-24"] }
 time = { version = "0.3.53", features = ["formatting", "macros"] }
-zip = "=8.6.0"
-qwen3-asr-mlx = { path = "crates/qwen3-asr-mlx" }
-
-[dev-dependencies]
+zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs", "time"] }
+base64 = "0.22"
+hound = "3.5"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json"] }
 tempfile = "3.27.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]

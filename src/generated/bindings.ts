@@ -5,9 +5,9 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 
 /** Commands */
 export const commands = {
-	appGetSnapshot: () => __TAURI_INVOKE<AppSnapshot>("app_get_snapshot"),
-	modelList: () => __TAURI_INVOKE<ModelList>("model_list"),
-	modelSelect: (input: ModelReference) => __TAURI_INVOKE<ModelState>("model_select", { input }),
+	appGetSnapshot: () => __TAURI_INVOKE<AppSnapshot_Serialize>("app_get_snapshot"),
+	modelList: () => __TAURI_INVOKE<ModelList_Serialize>("model_list"),
+	modelSelect: (input: ModelReference_Deserialize) => __TAURI_INVOKE<ModelState_Serialize>("model_select", { input }),
 	audioListInputs: () => __TAURI_INVOKE<AudioInput[]>("audio_list_inputs"),
 	sessionStart: (input: StartLiveSession) => __TAURI_INVOKE<SessionDetail>("session_start", { input }),
 	sessionPause: (input: SessionMutation) => __TAURI_INVOKE<SessionDetail>("session_pause", { input }),
@@ -32,7 +32,7 @@ export const commands = {
 
 /** Events */
 export const events = {
-	appEvent: makeEvent<AppEventEnvelope>("app://event"),
+	appEvent: makeEvent<AppEventEnvelope_Deserialize>("app://event"),
 };
 
 /* Types */
@@ -44,16 +44,34 @@ export type AppError = {
 
 export type AppErrorCode = "invalidInput" | "notFound" | "sessionBusy" | "sessionNotActive" | "sessionNotResumable" | "queueActive" | "queueRevisionConflict" | "modelUnavailable" | "unsupportedLanguage" | "permissionDenied" | "inputDeviceUnavailable" | "captureUnavailable" | "sourceUnavailable" | "sourceChanged" | "databaseUnavailable" | "workerUnavailable" | "workerProtocolError" | "snapshotChanged" | "exportNotActive" | "internal";
 
-export type AppEvent = { type: "session.upserted"; sequence: string; session: SessionSummary } | { type: "segment.committed"; sequence: string; sessionId: string; rowVersion: string; segmentCount: number; recognizedSegmentCount: number; characterCount: number; durationMs: number | null; segment: TranscriptSegment } | { type: "session.progress"; sequence: string; sessionId: string; runId: string; processedAudioMs: number | null; totalAudioMs: number | null; queuedSegments: number } | { type: "sessions.deleted"; sequence: string; sessionIds: string[] } | { type: "queue.changed"; sequence: string; queue: QueueSnapshot } | { type: "model.changed"; sequence: string; model: ModelState } | { type: "export.progress"; sequence: string; progress: ExportProgress } | { type: "export.finished"; sequence: string; result: ExportCompletion } | { type: "close.confirmationRequired"; sequence: string; activeSessionId: string | null; activeExportIds: string[] } | { type: "close.forceRequired"; sequence: string; activeSessionId: string | null; error: AppError } | { type: "notification.error"; sequence: string; error: AppError };
+export type AppEvent = AppEvent_Serialize | AppEvent_Deserialize;
 
-export type AppEventEnvelope = AppEvent;
+export type AppEventEnvelope = AppEventEnvelope_Serialize | AppEventEnvelope_Deserialize;
 
-export type AppSnapshot = {
+export type AppEventEnvelope_Deserialize = AppEvent_Deserialize;
+
+export type AppEventEnvelope_Serialize = AppEvent_Serialize;
+
+export type AppEvent_Deserialize = ({ type: "session.upserted"; sequence: string; session: SessionSummary }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; error?: never; model?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "segment.committed"; sequence: string; sessionId: string; rowVersion: string; segmentCount: number; recognizedSegmentCount: number; characterCount: number; durationMs: number | null; segment: TranscriptSegment }) & { activeExportIds?: never; activeSessionId?: never; error?: never; model?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; result?: never; runId?: never; session?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "session.progress"; sequence: string; sessionId: string; runId: string; processedAudioMs: number | null; totalAudioMs: number | null; queuedSegments: number }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; error?: never; model?: never; progress?: never; queue?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; segment?: never; segmentCount?: never; session?: never; sessionIds?: never } | ({ type: "sessions.deleted"; sequence: string; sessionIds: string[] }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; error?: never; model?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; totalAudioMs?: never } | ({ type: "queue.changed"; sequence: string; queue: QueueSnapshot }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; error?: never; model?: never; processedAudioMs?: never; progress?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "model.changed"; sequence: string; model: ModelState_Deserialize }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; error?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "export.progress"; sequence: string; progress: ExportProgress }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; error?: never; model?: never; processedAudioMs?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "export.finished"; sequence: string; result: ExportCompletion }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; error?: never; model?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "close.confirmationRequired"; sequence: string; activeSessionId: string | null; activeExportIds: string[] }) & { characterCount?: never; durationMs?: never; error?: never; model?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "close.forceRequired"; sequence: string; activeSessionId: string | null; error: AppError }) & { activeExportIds?: never; characterCount?: never; durationMs?: never; model?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "notification.error"; sequence: string; error: AppError }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; model?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never };
+
+export type AppEvent_Serialize = ({ type: "session.upserted"; sequence: string; session: SessionSummary }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; error?: never; model?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "segment.committed"; sequence: string; sessionId: string; rowVersion: string; segmentCount: number; recognizedSegmentCount: number; characterCount: number; durationMs: number | null; segment: TranscriptSegment }) & { activeExportIds?: never; activeSessionId?: never; error?: never; model?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; result?: never; runId?: never; session?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "session.progress"; sequence: string; sessionId: string; runId: string; processedAudioMs: number | null; totalAudioMs: number | null; queuedSegments: number }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; error?: never; model?: never; progress?: never; queue?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; segment?: never; segmentCount?: never; session?: never; sessionIds?: never } | ({ type: "sessions.deleted"; sequence: string; sessionIds: string[] }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; error?: never; model?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; totalAudioMs?: never } | ({ type: "queue.changed"; sequence: string; queue: QueueSnapshot }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; error?: never; model?: never; processedAudioMs?: never; progress?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "model.changed"; sequence: string; model: ModelState_Serialize }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; error?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "export.progress"; sequence: string; progress: ExportProgress }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; error?: never; model?: never; processedAudioMs?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "export.finished"; sequence: string; result: ExportCompletion }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; error?: never; model?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "close.confirmationRequired"; sequence: string; activeSessionId: string | null; activeExportIds: string[] }) & { characterCount?: never; durationMs?: never; error?: never; model?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "close.forceRequired"; sequence: string; activeSessionId: string | null; error: AppError }) & { activeExportIds?: never; characterCount?: never; durationMs?: never; model?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never } | ({ type: "notification.error"; sequence: string; error: AppError }) & { activeExportIds?: never; activeSessionId?: never; characterCount?: never; durationMs?: never; model?: never; processedAudioMs?: never; progress?: never; queue?: never; queuedSegments?: never; recognizedSegmentCount?: never; result?: never; rowVersion?: never; runId?: never; segment?: never; segmentCount?: never; session?: never; sessionId?: never; sessionIds?: never; totalAudioMs?: never };
+
+export type AppSnapshot = AppSnapshot_Serialize | AppSnapshot_Deserialize;
+
+export type AppSnapshot_Deserialize = {
 	sequence: string,
 	activeSession: SessionDetail | null,
 	history: HistoryPage,
 	queue: QueueSnapshot,
-	model: ModelState,
+	model: ModelState_Deserialize,
+};
+
+export type AppSnapshot_Serialize = {
+	sequence: string,
+	activeSession: SessionDetail | null,
+	history: HistoryPage,
+	queue: QueueSnapshot,
+	model: ModelState_Serialize,
 };
 
 export type AudioInput = {
@@ -63,12 +81,21 @@ export type AudioInput = {
 	name: string,
 };
 
-export type CachedModelRevision = {
+export type CachedModelRevision = CachedModelRevision_Serialize | CachedModelRevision_Deserialize;
+
+export type CachedModelRevision_Deserialize = {
 	lastModified: string,
 	refs: string[],
 	size: string,
 	supportedLanguages: string[],
-} & ModelReference;
+} & ModelReference_Deserialize;
+
+export type CachedModelRevision_Serialize = {
+	lastModified: string,
+	refs: string[],
+	size: string,
+	supportedLanguages: string[],
+} & ModelReference_Serialize;
 
 export type CloseResolution = "cancel" | "stopAndQuit" | "forceQuit";
 
@@ -152,19 +179,43 @@ export type InputKind = "file" | "microphone" | "systemAudio";
 
 export type LiveSource = { type: "microphone"; deviceId: string | null } | { type: "systemAudio" };
 
-export type ModelList = {
-	models: CachedModelRevision[],
-	state: ModelState,
+export type ModelList = ModelList_Serialize | ModelList_Deserialize;
+
+export type ModelList_Deserialize = {
+	models: CachedModelRevision_Deserialize[],
+	state: ModelState_Deserialize,
 };
 
-export type ModelReference = {
+export type ModelList_Serialize = {
+	models: CachedModelRevision_Serialize[],
+	state: ModelState_Serialize,
+};
+
+export type ModelReference = ModelReference_Serialize | ModelReference_Deserialize;
+
+export type ModelReference_Deserialize = {
 	repoId: string,
 	revision: string,
+	fileName?: string | null,
 };
 
-export type ModelState = {
+export type ModelReference_Serialize = {
+	repoId: string,
+	revision: string,
+	fileName?: string | null,
+};
+
+export type ModelState = ModelState_Serialize | ModelState_Deserialize;
+
+export type ModelState_Deserialize = {
 	status: ModelStatus,
-	selected: ModelReference | null,
+	selected: ModelReference_Deserialize | null,
+	error: AppError | null,
+};
+
+export type ModelState_Serialize = {
+	status: ModelStatus,
+	selected: ModelReference_Serialize | null,
 	error: AppError | null,
 };
 
