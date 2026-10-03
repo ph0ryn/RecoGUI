@@ -28,6 +28,17 @@ pnpm check:bindings
 Rust の対象は `src-tauri/Cargo.toml` を正本とする。Markdown は package に専用設定がない場合、
 `nix run nixpkgs/nixpkgs-unstable#rumdl check --fix docs/requirements.md docs/application-design.md docs/validation.md` を使用する。
 
+Release CI の dev/test debug 情報は `line-tables-only` とする。CI と同じ設定で検証する場合は次を使用する。
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=line-tables-only \
+CARGO_PROFILE_TEST_DEBUG=line-tables-only \
+pnpm verify
+```
+
+ファイル名と行番号を含む backtrace、debug assertion、整数 overflow 検査は維持し、release profile とローカル開発の設定は変更しない。
+desktop app の library は `rlib` のみを生成する。crate type を変更した場合は生成 bindings と `.app` の build を確認する。
+
 ## Fixture と Store
 
 - schema v5 の新規 fixture と既存 DB のコピーを開き、`user_version=5`、必須 table/index、FTS5、foreign keys、WAL、integrity check を確認する。

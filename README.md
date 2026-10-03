@@ -106,7 +106,7 @@ The desktop app links the Rust library as an `rlib`; standalone `staticlib` and 
 
 `pnpm verify` tests ASR requests and process cleanup with a local fixture server. Real-model speech and queue tests require llama.cpp and cached GGUF assets; see [GGUF engine validation](docs/validation.md#qwen3-asr-gguf-engine).
 
-Release CI caches Rust dependencies and builds the app without compiling or bundling an ASR runtime. llama.cpp and model files are external runtime requirements. The GGUF integration was verified with llama.cpp `b11342`.
+Release CI caches Rust dependencies and uses `line-tables-only` debug information for dev/test builds, retaining backtrace file/line information, debug assertions, and overflow checks. Local development keeps full debug information. CI builds the app without compiling or bundling an ASR runtime. llama.cpp and model files are external runtime requirements. The GGUF integration was verified with llama.cpp `b11342`.
 
 ## Project Documentation
 
